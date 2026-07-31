@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Plumb — posture &amp; movement companion</title>
+<style>
+  :root {
+    --paper: #F1F5F6;
+    --paper-line: #C9D3D6;
+    --ink: #1F2A2E;
+    --ink-soft: #57676C;
+    --good: #2C6E8E;
+    --good-bg: #E4EEF1;
+    --alert: #C98A2C;
+    --alert-bg: #FBEEDC;
+    --danger: #C0492F;
+    --danger-bg: #FBE7E2;
+    --panel: #FFFFFF;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    background:
+      linear-gradient(var(--paper-line) 1px, transparent 1px) 0 0 / 100% 28px,
+      linear-gradient(90deg, var(--paper-line) 1px, transparent 1px) 0 0 / 28px 100%,
+      var(--paper);
+    background-blend-mode: normal;
+    min-height: 100vh;
+  }
+
+  header {
+    padding: 20px 24px 10px;
+  }
+
+  header .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  header h1 {
+    margin: 4px 0 4px;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  header p {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 14px;
+    max-width: 60ch;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
+    gap: 18px;
+    padding: 18px 24px 40px;
+  }
+
+  @media (max-width: 860px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--paper-line);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+
+  .video-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #12191c;
+    border-radius: calc(var(--radius) - 2px);
+    overflow: hidden;
+  }
+
+  video, canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1); /* mirror, feels natural */
+  }
+
+  .video-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9FB0B5;
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
+  }
+
+  .privacy-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 10px;
+  }
+  .privacy-note .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--good);
+    flex-shrink: 0;
+  }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  button {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: 7px;
+    border: 1px solid var(--ink);
+    background: var(--ink);
+    color: #fff;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--ink);
+    border-color: var(--paper-line);
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  button.secondary:hover:not(:disabled) { border-color: var(--ink); }
+
+  .side { display: flex; flex-direction: column; gap: 14px; }
+
+  .status-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px;
+  }
+  .status-card.good { background: var(--good-bg); }
+  .status-card.alert { background: var(--alert-bg); }
+  .status-card.idle { background: #F3F1EC; }
+
+  .status-label { font-size: 13px; color: var(--ink-soft); margin-bottom: 2px; }
+  .status-value { font-size: 18px; font-weight: 700; }
+
+  .gauge-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 4px;
+  }
+  .gauge-reading {
+    font-family: var(--mono);
+    font-size: 34px;
+    font-weight: 600;
+    margin-top: -34px;
+  }
+  .gauge-caption {
+    font-size: 12px;
+    color: var(--ink-soft);
+    text-align: center;
+    margin-top: 4px;
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--paper-line);
+    font-size: 13px;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .val {
+    font-family: var(--mono);
+    font-weight: 600;
+  }
+
+  .slider-row { margin-bottom: 12px; }
+  .slider-row label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-bottom: 4px;
+  }
+  .slider-row label .v { font-family: var(--mono); color: var(--ink); }
+  input[type="range"] { width: 100%; }
+
+  .section-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 0 0 10px;
+  }
+
+  footer {
+    padding: 0 24px 30px;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+  footer a { color: var(--good); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Plumb / posture &amp; movement companion</div>
+  <h1>Sit like the line is true.</h1>
+  <p>A protractor for your posture and a nudge to get up — everything below runs in this browser tab. Nothing from your camera is ever uploaded anywhere.</p>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="video-wrap" id="videoWrap">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="video-placeholder" id="placeholder">Camera is off. Click "Start camera" to begin — this app only looks at angles between a few body points, it never records or sends the video anywhere.</div>
+    </div>
+
+    <div class="privacy-note"><span class="dot"></span> Video stays on this device. Only small numbers (angles, timestamps) ever get saved, and only to this browser's local storage.</div>
+
+    <div class="controls">
+      <button id="startBtn">Start camera</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+      <button id="calibrateBtn" class="secondary" disabled>Calibrate good posture</button>
+      <button id="testVoiceBtn" class="secondary">Test voice</button>
+      <button id="muteBtn" class="secondary">Mute voice: off</button>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="panel status-card idle" id="statusCard">
+      <svg width="34" height="34" viewBox="0 0 34 34" id="statusIcon">
+        <circle cx="17" cy="17" r="15" fill="none" stroke="currentColor" stroke-width="2.5"/>
+      </svg>
+      <div>
+        <div class="status-label">Posture status</div>
+        <div class="status-value" id="statusValue">Not started</div>
+      </div>
+    </div>
+
+    <div class="panel gauge-wrap">
+      <svg width="220" height="130" viewBox="0 0 220 130">
+        <path d="M 20 110 A 90 90 0 0 1 200 110" fill="none" stroke="var(--paper-line)" stroke-width="10" stroke-linecap="round"/>
+        <path id="gaugeArc" d="M 20 110 A 90 90 0 0 1 200 110" fill="none" stroke="var(--good)" stroke-width="10" stroke-linecap="round" stroke-dasharray="0 400"/>
+        <g id="needleGroup" transform="rotate(0 110 110)">
+          <line x1="110" y1="110" x2="110" y2="34" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="110" cy="110" r="5" fill="var(--ink)"/>
+        </g>
+      </svg>
+      <div class="gauge-reading" id="gaugeReading">--°</div>
+      <div class="gauge-caption" id="gaugeCaption">Forward-head angle relative to your calibrated baseline</div>
+    </div>
+
+    <div class="panel">
+      <div class="section-title">Today</div>
+      <div class="stat-row"><span>Session time</span><span class="val" id="statSession">0m</span></div>
+      <div class="stat-row"><span>Time slouching</span><span class="val" id="statSlouch">0m (0%)</span></div>
+      <div class="stat-row"><span>Posture nudges</span><span class="val" id="statPostureNudges">0</span></div>
+      <div class="stat-row"><span>Move nudges</span><span class="val" id="statMoveNudges">0</span></div>
+      <div class="stat-row"><span>Since you last moved</span><span class="val" id="statSinceMove">--</span></div>
+      <div class="controls" style="margin-top:12px;">
+        <button id="exportBtn" class="secondary">Export log for GitHub</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="section-title">Sensitivity</div>
+      <div class="slider-row">
+        <label>Slouch tolerance <span class="v" id="toleranceVal">15°</span></label>
+        <input type="range" id="toleranceSlider" min="5" max="35" value="15" />
+      </div>
+      <div class="slider-row">
+        <label>Sustained before nudge <span class="v" id="sustainVal">8s</span></label>
+        <input type="range" id="sustainSlider" min="3" max="30" value="8" />
+      </div>
+      <div class="slider-row">
+        <label>Move reminder every <span class="v" id="moveVal">20 min</span></label>
+        <input type="range" id="moveSlider" min="5" max="60" value="20" />
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Model files load once from Google's public MediaPipe CDN, then run locally in your browser (GPU/WASM). Logs export as one JSON file — drop it into <code>logs/posture-log.json</code> in your repo and push to get a weekly AI summary. See <code>README.md</code> for setup.
+</footer>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const placeholder = document.getElementById('placeholder');
+
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const calibrateBtn = document.getElementById('calibrateBtn');
+const testVoiceBtn = document.getElementById('testVoiceBtn');
+const muteBtn = document.getElementById('muteBtn');
+const exportBtn = document.getElementById('exportBtn');
+
+const statusCard = document.getElementById('statusCard');
+const statusValue = document.getElementById('statusValue');
+const gaugeReading = document.getElementById('gaugeReading');
+const gaugeCaption = document.getElementById('gaugeCaption');
+const needleGroup = document.getElementById('needleGroup');
+const gaugeArc = document.getElementById('gaugeArc');
+
+const statSession = document.getElementById('statSession');
+const statSlouch = document.getElementById('statSlouch');
+const statPostureNudges = document.getElementById('statPostureNudges');
+const statMoveNudges = document.getElementById('statMoveNudges');
+const statSinceMove = document.getElementById('statSinceMove');
+
+const toleranceSlider = document.getElementById('toleranceSlider');
+const sustainSlider = document.getElementById('sustainSlider');
+const moveSlider = document.getElementById('moveSlider');
+const toleranceVal = document.getElementById('toleranceVal');
+const sustainVal = document.getElementById('sustainVal');
+const moveVal = document.getElementById('moveVal');
+
+let landmarker = null;
+let running = false;
+let rafId = null;
+let muted = false;
+
+let baselineAngle = null;
+let lastMoveSampleAt = 0;
+let lastMoveSamplePos = null;
+let lastMovedAt = Date.now();
+let slouchStartedAt = null;
+let lastPostureNudgeAt = 0;
+let lastFrameTime = performance.now();
+
+const today = () => new Date().toISOString().slice(0, 10);
+const LOG_KEY = (d) => `plumb:${d}`;
+
+let stats = loadTodayStats();
+
+function loadTodayStats() {
+  const raw = localStorage.getItem(LOG_KEY(today()));
+  if (raw) return JSON.parse(raw);
+  return { date: today(), sessionSeconds: 0, slouchSeconds: 0, moveNudges: 0, postureNudges: 0 };
+}
+
+function saveStats() {
+  localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
+}
+
+function getAllStoredDays() {
+  const days = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('plumb:')) {
+      days.push(JSON.parse(localStorage.getItem(key)));
+    }
+  }
+  return days.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function speak(text) {
+  if (muted || !('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0;
+  u.pitch = 1.0;
+  window.speechSynthesis.speak(u);
+}
+
+const POSTURE_PHRASES = [
+  "Shoulders back, chin level — you've drifted forward.",
+  "Posture check — you're leaning into the screen again.",
+  "Sit tall for a second, you've been slouching a while."
+];
+const MOVE_PHRASES = [
+  "Time to stand up and shake it out for a minute.",
+  "You've been still a while — a short walk would help.",
+  "Get up and move — your body's been in one position too long."
+];
+let postureIdx = 0, moveIdx = 0;
+
+async function initModel() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  landmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+}
+
+async function startCamera() {
+  startBtn.disabled = true;
+  startBtn.textContent = "Loading model…";
+  try {
+    if (!landmarker) await initModel();
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    overlay.width = video.videoWidth || 640;
+    overlay.height = video.videoHeight || 480;
+    placeholder.style.display = 'none';
+    running = true;
+    stopBtn.disabled = false;
+    calibrateBtn.disabled = false;
+    startBtn.textContent = "Start camera";
+    lastMovedAt = Date.now();
+    lastFrameTime = performance.now();
+    loop();
+  } catch (err) {
+    placeholder.textContent = "Couldn't access the camera: " + err.message + ". Check browser permissions and that you're on HTTPS or localhost.";
+    startBtn.disabled = false;
+    startBtn.textContent = "Start camera";
+  }
+}
+
+function stopCamera() {
+  running = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  const stream = video.srcObject;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+  placeholder.style.display = 'flex';
+  placeholder.textContent = 'Camera is off. Click "Start camera" to begin — this app only looks at angles between a few body points, it never records or sends the video anywhere.';
+  stopBtn.disabled = true;
+  calibrateBtn.disabled = true;
+  saveStats();
+}
+
+function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+function forwardAngle(earMid, shoulderMid) {
+  const dx = Math.abs(earMid.x - shoulderMid.x);
+  const dy = shoulderMid.y - earMid.y; // positive when ear is above shoulder
+  return Math.atan2(dx, Math.max(dy, 0.0001)) * (180 / Math.PI);
+}
+
+function updateGauge(deviation) {
+  const clamped = Math.max(-40, Math.min(40, deviation));
+  const angleDeg = (clamped / 40) * 90; // -90..90 across the arc
+  needleGroup.setAttribute('transform', `rotate(${angleDeg} 110 110)`);
+  gaugeReading.textContent = (baselineAngle === null ? '--' : (deviation >= 0 ? '+' : '') + deviation.toFixed(0)) + '°';
+  const isAlert = baselineAngle !== null && deviation > Number(toleranceSlider.value);
+  gaugeArc.setAttribute('stroke', isAlert ? 'var(--alert)' : 'var(--good)');
+}
+
+function setStatus(mode, text) {
+  statusCard.classList.remove('good', 'alert', 'idle');
+  statusCard.classList.add(mode);
+  statusValue.textContent = text;
+}
+
+function fmtMinSec(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  return `${m}m`;
+}
+
+function refreshStatDisplay() {
+  statSession.textContent = fmtMinSec(stats.sessionSeconds);
+  const pct = stats.sessionSeconds ? Math.round((stats.slouchSeconds / stats.sessionSeconds) * 100) : 0;
+  statSlouch.textContent = `${fmtMinSec(stats.slouchSeconds)} (${pct}%)`;
+  statPostureNudges.textContent = stats.postureNudges;
+  statMoveNudges.textContent = stats.moveNudges;
+  const sinceMove = Math.floor((Date.now() - lastMovedAt) / 1000);
+  const mm = String(Math.floor(sinceMove / 60)).padStart(2, '0');
+  const ss = String(sinceMove % 60).padStart(2, '0');
+  statSinceMove.textContent = `${mm}:${ss}`;
+}
+
+function loop() {
+  if (!running) return;
+  const now = performance.now();
+  const elapsedSec = (now - lastFrameTime) / 1000;
+  lastFrameTime = now;
+
+  const result = landmarker.detectForVideo(video, now);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
+
+    // draw a few reference points
+    ctx.fillStyle = 'rgba(44,110,142,0.9)';
+    [leftEar, rightEar, leftSh, rightSh].forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x * overlay.width, p.y * overlay.height, 5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    const earMid = midpoint(leftEar, rightEar);
+    const shMid = midpoint(leftSh, rightSh);
+    const angle = forwardAngle(earMid, shMid);
+
+    stats.sessionSeconds += elapsedSec;
+
+    if (baselineAngle === null) {
+      updateGauge(0);
+      setStatus('idle', 'Calibrate to begin tracking');
+    } else {
+      const deviation = angle - baselineAngle;
+      updateGauge(deviation);
+      const tolerance = Number(toleranceSlider.value);
+      const sustainMs = Number(sustainSlider.value) * 1000;
+      const isSlouching = deviation > tolerance;
+
+      if (isSlouching) {
+        stats.slouchSeconds += elapsedSec;
+        if (slouchStartedAt === null) slouchStartedAt = Date.now();
+        const slouchedFor = Date.now() - slouchStartedAt;
+        setStatus('alert', `Slouching — ${Math.round(slouchedFor / 1000)}s`);
+        if (slouchedFor > sustainMs && Date.now() - lastPostureNudgeAt > 120000) {
+          speak(POSTURE_PHRASES[postureIdx % POSTURE_PHRASES.length]);
+          postureIdx++;
+          stats.postureNudges++;
+          lastPostureNudgeAt = Date.now();
+        }
+      } else {
+        slouchStartedAt = null;
+        setStatus('good', 'Sitting well');
+      }
+    }
+
+    // movement sampling, throttled to ~1x/sec
+    if (now - lastMoveSampleAt > 1000) {
+      if (lastMoveSamplePos) {
+        const d = Math.hypot(shMid.x - lastMoveSamplePos.x, shMid.y - lastMoveSamplePos.y);
+        if (d > 0.02) lastMovedAt = Date.now();
+      }
+      lastMoveSamplePos = shMid;
+      lastMoveSampleAt = now;
+    }
+
+    const moveReminderMs = Number(moveSlider.value) * 60000;
+    if (Date.now() - lastMovedAt > moveReminderMs) {
+      speak(MOVE_PHRASES[moveIdx % MOVE_PHRASES.length]);
+      moveIdx++;
+      stats.moveNudges++;
+      lastMovedAt = Date.now(); // re-arm for next window
+    }
+  } else {
+    setStatus('idle', 'No person detected');
+  }
+
+  refreshStatDisplay();
+  rafId = requestAnimationFrame(loop);
+}
+
+// periodic save so a refresh doesn't lose today's stats
+setInterval(saveStats, 10000);
+window.addEventListener('beforeunload', saveStats);
+
+startBtn.addEventListener('click', startCamera);
+stopBtn.addEventListener('click', stopCamera);
+calibrateBtn.addEventListener('click', () => {
+  // grab the current instantaneous angle as baseline using one more detection pass
+  const now = performance.now();
+  const result = landmarker.detectForVideo(video, now);
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const earMid = midpoint(lm[7], lm[8]);
+    const shMid = midpoint(lm[11], lm[12]);
+    baselineAngle = forwardAngle(earMid, shMid);
+    gaugeCaption.textContent = `Calibrated at ${baselineAngle.toFixed(1)}° — sit like this for "good"`;
+    speak("Calibrated. That's your good posture.");
+  }
+});
+testVoiceBtn.addEventListener('click', () => speak("This is what a nudge sounds like."));
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  muteBtn.textContent = `Mute voice: ${muted ? 'on' : 'off'}`;
+});
+exportBtn.addEventListener('click', () => {
+  saveStats();
+  const days = getAllStoredDays();
+  const blob = new Blob([JSON.stringify(days, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'posture-log.json';
+  a.click();
+});
+
+toleranceSlider.addEventListener('input', () => toleranceVal.textContent = `${toleranceSlider.value}°`);
+sustainSlider.addEventListener('input', () => sustainVal.textContent = `${sustainSlider.value}s`);
+moveSlider.addEventListener('input', () => moveVal.textContent = `${moveSlider.value} min`);
+
+setInterval(refreshStatDisplay, 1000);
+</script>
+
+</body>
+</html>
