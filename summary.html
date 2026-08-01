@@ -11,10 +11,7 @@
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
-  body {
-    margin: 0; font-family: var(--sans); color: var(--ink); background: var(--paper);
-    min-height: 100vh;
-  }
+  body { margin: 0; font-family: var(--sans); color: var(--ink); background: var(--paper); min-height: 100vh; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 32px 24px 60px; }
   .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); }
   h1 { margin: 4px 0 20px; font-size: 26px; }
@@ -25,8 +22,8 @@
   .stat { text-align: center; }
   .stat .n { font-family: var(--mono); font-size: 24px; font-weight: 700; }
   .stat .l { font-size: 12px; color: var(--ink-soft); }
-  #chart { width: 100%; height: 160px; }
   .empty { color: var(--ink-soft); font-size: 14px; }
+  a.back { font-size: 13px; color: var(--good); }
 </style>
 </head>
 <body>
@@ -34,6 +31,7 @@
   <div class="eyebrow">Plumb / weekly summary</div>
   <h1>What the last two weeks looked like</h1>
   <div id="content" class="panel"><p class="empty">Loading…</p></div>
+  <a class="back" href="./">&larr; Back to the live tracker</a>
 </div>
 
 <script>
@@ -41,8 +39,13 @@ async function load() {
   const el = document.getElementById('content');
   try {
     const res = await fetch('./data/summary.json', { cache: 'no-store' });
-    if (!res.ok) throw new Error('not found yet');
+    if (!res.ok) throw new Error('not found');
     const data = await res.json();
+
+    if (!data.summary || !data.stats || data.stats.daysLogged === 0) {
+      el.innerHTML = `<p class="empty">No summary yet. Once you've tracked at least one day and it's synced, the weekly summary will appear here after the GitHub Action runs (Mondays, or trigger it manually from the Actions tab).</p>`;
+      return;
+    }
 
     const s = data.stats;
     const maxSlouch = Math.max(1, ...s.days.map(d => d.slouchMinutes));
@@ -63,10 +66,10 @@ async function load() {
         <div class="stat"><div class="n">${s.slouchRatePct}%</div><div class="l">Time slouching</div></div>
         <div class="stat"><div class="n">${s.totalMoveNudges}</div><div class="l">Move nudges</div></div>
       </div>
-      <div id="chart" style="display:flex;align-items:flex-end;gap:4px;margin-top:20px;height:100px;">${bars}</div>
+      <div style="display:flex;align-items:flex-end;gap:4px;margin-top:20px;height:100px;">${bars}</div>
     `;
   } catch (e) {
-    el.innerHTML = `<p class="empty">No summary yet. Export a log from the main app, drop it in <code>logs/posture-log.json</code>, and push — the weekly summary shows up here after the GitHub Action runs (or trigger it manually from the Actions tab).</p>`;
+    el.innerHTML = `<p class="empty">No summary yet. Once you've tracked at least one day and it's synced, the weekly summary will appear here after the GitHub Action runs.</p>`;
   }
 }
 load();

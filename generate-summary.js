@@ -1,43 +1,36 @@
-// Reads everything in /logs, aggregates stats, asks the Anthropic API for a short
-// written summary, and writes the result to /data/summary.json for summary.html to read.
-//
-// Requires an ANTHROPIC_API_KEY environment variable (set as a GitHub Actions secret).
-// Uses Node's built-in fetch (Node 18+).
+// Reads the last ~2 weeks of rows from Supabase, asks the Anthropic API for a short
+// written summary, and writes the result to public/data/summary.json (served statically
+// by the built site). Requires SUPABASE_URL, SUPABASE_SERVICE_KEY, and ANTHROPIC_API_KEY
+// as GitHub Actions secrets. Uses Node's built-in fetch (Node 18+).
 
 const fs = require('fs');
 const path = require('path');
 
-const LOGS_DIR = path.join(__dirname, '..', 'logs');
-const OUTPUT_PATH = path.join(__dirname, '..', 'data', 'summary.json');
-const MODEL = 'claude-haiku-4-5-20251001'; // cheap + plenty for a short summary of small numeric logs
+const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'data', 'summary.json');
+const MODEL = 'claude-haiku-4-5-20251001'; // cheap + plenty for summarizing a handful of numbers
 
-function loadLogs() {
-  if (!fs.existsSync(LOGS_DIR)) return [];
-  const entries = [];
-  for (const file of fs.readdirSync(LOGS_DIR)) {
-    if (!file.endsWith('.json')) continue;
-    const parsed = JSON.parse(fs.readFileSync(path.join(LOGS_DIR, file), 'utf8'));
-    if (Array.isArray(parsed)) entries.push(...parsed);
-    else entries.push(parsed);
-  }
-  // de-dupe by date (keep whichever entry appears last)
-  const byDate = {};
-  for (const e of entries) {
-    if (e && e.date) byDate[e.date] = e;
-  }
-  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+async function fetchRows() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY;
+  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_KEY not set (add as repo secrets).');
+
+  const res = await fetch(`${url}/rest/v1/posture_logs?select=*&order=date.asc&limit=100`, {
+    headers: { apikey: key, Authorization: `Bearer ${key}` }
+  });
+  if (!res.ok) throw new Error(`Supabase read error ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
-function aggregate(logs) {
-  const recent = logs.slice(-14);
+function aggregate(rows) {
+  const recent = rows.slice(-14);
   const toMinutes = (s) => Math.round((s || 0) / 60);
 
-  const days = recent.map(d => ({
-    date: d.date,
-    sessionMinutes: toMinutes(d.sessionSeconds),
-    slouchMinutes: toMinutes(d.slouchSeconds),
-    postureNudges: d.postureNudges || 0,
-    moveNudges: d.moveNudges || 0
+  const days = recent.map((r) => ({
+    date: r.date,
+    sessionMinutes: toMinutes(r.session_seconds),
+    slouchMinutes: toMinutes(r.slouch_seconds),
+    postureNudges: r.posture_nudges || 0,
+    moveNudges: r.move_nudges || 0
   }));
 
   const totalSession = days.reduce((s, d) => s + d.sessionMinutes, 0);
@@ -56,9 +49,10 @@ function aggregate(logs) {
 
 async function getSummary(stats) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set (add it as a repo secret).');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set (add as a repo secret).');
 
-  const prompt = `Here is a person's posture and movement tracking log for their last ${stats.daysLogged} tracked days ` +
+  const prompt =
+    `Here is a person's posture and movement tracking log for their last ${stats.daysLogged} tracked days ` +
     `(from a webcam-based tracker that measures forward-head angle and time spent stationary — no video or images, just these numbers):\n\n` +
     `${JSON.stringify(stats.days, null, 2)}\n\n` +
     `Write a short (4-6 sentence) plain-prose summary. Note any real patterns (specific days that are worse, ` +
@@ -73,43 +67,35 @@ async function getSummary(stats) {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01'
     },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 400,
-      messages: [{ role: 'user', content: prompt }]
-    })
+    body: JSON.stringify({ model: MODEL, max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${errText}`);
-  }
+  if (!response.ok) throw new Error(`Anthropic API error ${response.status}: ${await response.text()}`);
 
   const data = await response.json();
-  const textBlock = (data.content || []).find(b => b.type === 'text');
+  const textBlock = (data.content || []).find((b) => b.type === 'text');
   return textBlock ? textBlock.text.trim() : '(no summary text returned)';
 }
 
 (async () => {
-  const logs = loadLogs();
+  const rows = await fetchRows();
 
-  if (logs.length === 0) {
-    console.log('No logs found in /logs yet — nothing to summarize.');
+  if (!rows || rows.length === 0) {
+    console.log('No rows in Supabase yet — nothing to summarize.');
     process.exit(0);
   }
 
-  const stats = aggregate(logs);
-  const summaryText = await getSummary(stats);
+  const stats = aggregate(rows);
+  const summary = await getSummary(stats);
 
   fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(OUTPUT_PATH, JSON.stringify({
-    generatedAt: new Date().toISOString(),
-    stats,
-    summary: summaryText
-  }, null, 2));
+  fs.writeFileSync(
+    OUTPUT_PATH,
+    JSON.stringify({ generatedAt: new Date().toISOString(), stats, summary }, null, 2)
+  );
 
   console.log('Wrote summary to', OUTPUT_PATH);
-})().catch(err => {
+})().catch((err) => {
   console.error(err);
   process.exit(1);
 });
