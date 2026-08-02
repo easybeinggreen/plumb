@@ -121,7 +121,7 @@ async function syncToSupabase() {
         'Content-Type': 'application/json',
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        Prefer: 'resolution=merge-duplicates'
+        Prefer: 'resolution=merge-duplicates,return=minimal'
       },
       body: JSON.stringify([
         {
@@ -153,6 +153,15 @@ async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
     testVoiceBtn.textContent = 'Loading voice…';
+    // The library hardcodes multi-threaded WASM via navigator.hardwareConcurrency,
+    // which requires cross-origin-isolation headers GitHub Pages doesn't send.
+    // Reporting 1 core routes it to single-threaded execution instead, which
+    // works without those headers (a bit slower per line, still fine for short nudges).
+    try {
+      Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true });
+    } catch (e) {
+      // not overridable in this browser — proceed anyway, original error may resurface
+    }
     piperSession = await piperTTS.TtsSession.create({
       voiceId,
       wasmPaths: PIPER_WASM_PATHS,
