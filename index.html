@@ -57,7 +57,6 @@
     position: relative; width: 100%; aspect-ratio: 4 / 3;
     background: #12191c; border-radius: calc(var(--radius) - 2px); overflow: hidden;
   }
-  /* Only the video and its overlay use absolute positioning and mirroring */
   #video, #overlay {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     transform: scaleX(-1);
@@ -156,6 +155,7 @@
       </select>
       <button id="testVoiceBtn" class="secondary">Test voice</button>
       <button id="muteBtn" class="secondary">Mute voice: off</button>
+      <button id="bgAudioBtn" class="secondary">Background nudges: off</button>
     </div>
     <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking configuration…</span></div>
   </div>
@@ -182,8 +182,9 @@
       <div class="stat-row"><span>Session time</span><span class="val" id="statSession">0m</span></div>
       <div class="stat-row"><span>Time slouching</span><span class="val" id="statSlouch">0m (0%)</span></div>
       <div class="stat-row"><span>Posture nudges</span><span class="val" id="statPostureNudges">0</span></div>
-      <div class="stat-row"><span>Move nudges</span><span class="val" id="statMoveNudges">0</span></div>
-      <div class="stat-row"><span>Since you last moved</span><span class="val" id="statSinceMove">--</span></div>
+      <div class="stat-row"><span>Break nudges</span><span class="val" id="statBreakNudges">0</span></div>
+      <div class="stat-row"><span>Breaks taken</span><span class="val" id="statBreaksTaken">0</span></div>
+      <div class="stat-row"><span>Since last break</span><span class="val" id="statSinceBreak">--</span></div>
       <div class="controls" style="margin-top:12px;">
         <button id="exportBtn" class="secondary">Download local backup</button>
       </div>
@@ -192,20 +193,20 @@
     <div class="panel">
       <div class="section-title">Sensitivity</div>
       <div class="slider-row">
-        <label>Slouch tolerance <span class="v" id="toleranceVal">15°</span></label>
-        <input type="range" id="toleranceSlider" min="5" max="35" value="15" />
+        <label>Lateral tolerance <span class="v" id="toleranceVal">0.20</span></label>
+        <input type="range" id="toleranceSlider" min="0.05" max="0.50" value="0.20" step="0.01" />
+      </div>
+      <div class="slider-row">
+        <label>Compression tolerance <span class="v" id="compressionToleranceVal">0.10</span></label>
+        <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
       </div>
       <div class="slider-row">
         <label>Sustained before nudge <span class="v" id="sustainVal">8s</span></label>
         <input type="range" id="sustainSlider" min="3" max="30" value="8" />
       </div>
       <div class="slider-row">
-        <label>Move reminder every <span class="v" id="moveVal">20 min</span></label>
-        <input type="range" id="moveSlider" min="5" max="60" value="20" />
-      </div>
-      <div class="slider-row">
-        <label>Movement sensitivity <span class="v" id="moveThresholdVal">3%</span></label>
-        <input type="range" id="moveThresholdSlider" min="1" max="8" value="3" />
+        <label>Break reminder after <span class="v" id="breakVal">60 min</span></label>
+        <input type="range" id="breakSlider" min="15" max="180" value="60" />
       </div>
     </div>
   </div>
