@@ -24,15 +24,10 @@ const voiceSelect = document.getElementById('voiceSelect');
 const statusCard = document.getElementById('statusCard');
 const statusValue = document.getElementById('statusValue');
 
-// Old gauge elements – we’ll keep them but they will no longer be updated
-const gaugeReading = document.getElementById('gaugeReading');
-const gaugeCaption = document.getElementById('gaugeCaption');
-const needleGroup = document.getElementById('needleGroup');
-const gaugeArc = document.getElementById('gaugeArc');
-
-// New 2D posture map canvas (add this to your HTML)
+// Posture map canvas (replaces old gauge)
 const postureMap = document.getElementById('postureMap');
 const pmCtx = postureMap.getContext('2d');
+const gaugeCaption = document.getElementById('gaugeCaption');
 
 const statSession = document.getElementById('statSession');
 const statSlouch = document.getElementById('statSlouch');
@@ -58,17 +53,16 @@ let running = false;
 let rafId = null;
 let muted = false;
 
-let baselineAngle = null;        // forward head angle (old gauge)
-let baselineNeckRatio = null;
-let baselineLateral = null;      // lateral deviation (new map)
-let baselineForward = null;      // forward lean z-diff (new map)
+let baselineAngle = null;        // not used for map, but kept for old gauge reference
+let baselineNeckRatio = null;   // calibration for neck compression
+let baselineLateral = null;     // calibration for lateral (side-to-side)
 
 let lastMoveSampleAt = 0;
 let lastMoveSamplePos = null;
 let lastMovedAt = Date.now();
 let slouchStartedAt = null;
 let lastPostureNudgeAt = 0;
-let lastMoveNudgeAt = 0;         // for move nudge cooldown
+let lastMoveNudgeAt = 0;
 let lastFrameTime = performance.now();
 
 let currentVoiceId = localStorage.getItem('plumb:voice') || voiceSelect.value;
@@ -178,7 +172,7 @@ async function ensureAudioUnlocked() {
   return true;
 }
 
-// Unlock audio on first user interaction (Start camera click or Test voice)
+// Unlock audio on first user interaction
 document.addEventListener('click', ensureAudioUnlocked, { once: true });
 
 async function ensurePiperVoice(voiceId) {
@@ -246,12 +240,8 @@ const MOVE_PHRASES = [
 let postureIdx = 0, moveIdx = 0;
 
 // ---- Math helpers ----
-function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
-
-function forwardAngle(earMid, shoulderMid) {
-  const dx = earMid.x - shoulderMid.x;   // signed!
-  const dy = shoulderMid.y - earMid.y;
-  return Math.atan2(dx, Math.max(dy, 0.0001)) * (180 / Math.PI);
+function midpoint(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 };
 }
 
 function neckCompressionRatio(earMid, shoulderMid, leftSh, rightSh) {
@@ -263,11 +253,6 @@ function neckCompressionRatio(earMid, shoulderMid, leftSh, rightSh) {
 function lateralDeviation(earMid, shMid, leftSh, rightSh) {
   const shoulderWidth = Math.hypot(leftSh.x - rightSh.x, leftSh.y - rightSh.y) || 0.0001;
   return (earMid.x - shMid.x) / shoulderWidth; // negative = left, positive = right
-}
-
-function forwardDeviation(nose, shMid) {
-  // z: usually -1 (far) to 1 (close)
-  return nose.z - shMid.z; // positive = nose closer (leaning forward)
 }
 
 // ---- Pose detection ----
@@ -316,7 +301,6 @@ async function startCamera() {
     lastFrameTime = performance.now();
     // Prefetch voice model
     ensurePiperVoice(currentVoiceId);
-    // Ensure audio is unlocked (already done on first click, but safe to call again)
     await ensureAudioUnlocked();
     loop();
   } catch (err) {
@@ -402,10 +386,11 @@ function refreshStatDisplay() {
   statSinceMove.textContent = `${mm}:${ss}`;
 }
 
-function drawPostureMap(lateral, forward) {
+// Draw 2D posture map: x = lateral (left/right), y = neck compression (slump)
+function drawPostureMap(lateral, compression) {
   const w = postureMap.width, h = postureMap.height;
   pmCtx.clearRect(0, 0, w, h);
-  
+
   // Crosshair
   pmCtx.strokeStyle = '#ccc';
   pmCtx.lineWidth = 1;
@@ -413,37 +398,39 @@ function drawPostureMap(lateral, forward) {
   pmCtx.moveTo(w/2, 0); pmCtx.lineTo(w/2, h);
   pmCtx.moveTo(0, h/2); pmCtx.lineTo(w, h/2);
   pmCtx.stroke();
-  
-  // Scale: max displacement 45% of canvas
+
+  // Scale factors: lateral range ~±0.5, compression range maybe ±0.2 – we'll stretch to fill
   const scaleX = w * 0.45;
   const scaleY = h * 0.45;
-  const dotX = w/2 + lateral * scaleX * 2;   // sensitivity multiplier
-  const dotY = h/2 - forward * scaleY * 2;
-  
+  // lateral: positive = right, compression: positive = more compressed (slump) -> down
+  const dotX = w/2 + lateral * scaleX * 2;
+  const dotY = h/2 + compression * scaleY * 5; // higher multiplier to make small neck changes visible
+
   const clampedX = Math.max(8, Math.min(w-8, dotX));
   const clampedY = Math.max(8, Math.min(h-8, dotY));
-  
+
+  // Color based on distance from center
   const distFromCenter = Math.hypot((clampedX - w/2)/scaleX, (clampedY - h/2)/scaleY);
   pmCtx.fillStyle = distFromCenter > 0.5 ? '#C0492F' : distFromCenter > 0.25 ? '#C98A2C' : '#2C6E8E';
   pmCtx.beginPath();
   pmCtx.arc(clampedX, clampedY, 7, 0, 2*Math.PI);
   pmCtx.fill();
-  
-  // Optionally label axes
+
+  // Axis labels
   pmCtx.fillStyle = '#57676C';
   pmCtx.font = '10px sans-serif';
   pmCtx.textAlign = 'center';
-  pmCtx.fillText('Left', 10, h/2 + 3);
-  pmCtx.fillText('Right', w-10, h/2 + 3);
-  pmCtx.fillText('Forward', w/2, 12);
-  pmCtx.fillText('Back', w/2, h-4);
+  pmCtx.fillText('Left', 12, h/2 + 3);
+  pmCtx.fillText('Right', w-12, h/2 + 3);
+  pmCtx.fillText('Tall', w/2, 14);
+  pmCtx.fillText('Slump', w/2, h-4);
 }
 
 // ---- Main tracking loop ----
 function loop() {
   if (!running) return;
   const now = performance.now();
-  // Cap elapsed time to avoid massive jumps (e.g., after tab is hidden)
+  // Cap elapsed time to avoid massive jumps after tab hidden
   const elapsedSec = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
 
@@ -455,6 +442,7 @@ function loop() {
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
     const nose = lm[0];
 
+    // Draw tracking dots on ears and shoulders
     ctx.fillStyle = 'rgba(44,110,142,0.9)';
     [leftEar, rightEar, leftSh, rightSh].forEach((p) => {
       ctx.beginPath();
@@ -464,28 +452,30 @@ function loop() {
 
     const earMid = midpoint(leftEar, rightEar);
     const shMid = midpoint(leftSh, rightSh);
-    const angle = forwardAngle(earMid, shMid); // signed lateral angle
 
     stats.sessionSeconds += elapsedSec;
 
-    if (baselineAngle === null) {
-      // Still update the 2D map with raw deviations (not yet calibrated)
-      const rawLateral = lateralDeviation(earMid, shMid, leftSh, rightSh);
-      const rawForward = forwardDeviation(nose, shMid);
-      drawPostureMap(rawLateral, rawForward);
+    // Compute deviations
+    const lateral = baselineLateral !== null
+      ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral
+      : 0;
+    const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
+    const compression = baselineNeckRatio !== null
+      ? baselineNeckRatio - neckRatio   // positive = more compressed (slump)
+      : 0;
+
+    // Draw the map with lateral and compression
+    drawPostureMap(lateral, compression);
+
+    if (baselineLateral === null || baselineNeckRatio === null) {
       setStatus('idle', 'Calibrate to begin tracking');
     } else {
-      const lateral = lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral;
-      const forward = forwardDeviation(nose, shMid) - baselineForward;
-      drawPostureMap(lateral, forward);
-
       const tolerance = Number(toleranceSlider.value);
       const sustainMs = Number(sustainSlider.value) * 1000;
 
-      // Slouch detection: lateral (absolute) > tolerance OR neck compression
-      const isLateralSlouch = Math.abs(lateral) > tolerance * 0.02; // scale lateral threshold (0.02 is approximate)
-      const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
-      const isCompressed = baselineNeckRatio !== null && neckRatio < baselineNeckRatio * 0.85;
+      // Slouch detection: lateral deviation > tolerance (scaled) OR neck compression
+      const isLateralSlouch = Math.abs(lateral) > tolerance * 0.02; // scale factor
+      const isCompressed = compression > 0.1; // threshold for compression (adjustable)
       const isSlouching = isLateralSlouch || isCompressed;
 
       if (isSlouching) {
@@ -493,7 +483,7 @@ function loop() {
         if (slouchStartedAt === null) slouchStartedAt = Date.now();
         const slouchedFor = Date.now() - slouchStartedAt;
         setStatus('alert', `Slouching — ${Math.round(slouchedFor / 1000)}s`);
-        // Posture nudge cooldown set to 30 seconds for testing (adjust as needed)
+        // Nudge after sustained time + cooldown (30s)
         if (slouchedFor > sustainMs && Date.now() - lastPostureNudgeAt > 30000) {
           console.log('Posture nudge fired at', new Date().toLocaleTimeString());
           speak(POSTURE_PHRASES[postureIdx % POSTURE_PHRASES.length]);
@@ -507,7 +497,7 @@ function loop() {
       }
     }
 
-    // Movement detection (independent of calibration)
+    // Movement detection (always active, even without calibration)
     if (now - lastMoveSampleAt > 1000) {
       if (lastMoveSamplePos) {
         const d = Math.hypot(shMid.x - lastMoveSamplePos.x, shMid.y - lastMoveSamplePos.y);
@@ -521,14 +511,14 @@ function loop() {
     }
 
     const moveReminderMs = Number(moveSlider.value) * 60000;
-    // Move nudge cooldown (60s) to prevent repetitive alerts
+    // Move nudge cooldown (60s)
     if (Date.now() - lastMovedAt > moveReminderMs && Date.now() - lastMoveNudgeAt > 60000) {
       console.log('Move nudge fired at', new Date().toLocaleTimeString());
       speak(MOVE_PHRASES[moveIdx % MOVE_PHRASES.length]);
       moveIdx++;
       stats.moveNudges++;
       lastMoveNudgeAt = Date.now();
-      lastMovedAt = Date.now(); // reset timer after nudge
+      lastMovedAt = Date.now(); // reset timer
     }
   } else {
     setStatus('idle', 'No person detected');
@@ -538,13 +528,7 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- Wiring ----
-setInterval(saveStats, 10000);
-window.addEventListener('beforeunload', saveStats);
-
-startBtn.addEventListener('click', startCamera);
-stopBtn.addEventListener('click', stopCamera);
-
+// ---- Calibration ----
 calibrateBtn.addEventListener('click', () => {
   const now = performance.now();
   const result = landmarker.detectForVideo(video, now);
@@ -554,15 +538,20 @@ calibrateBtn.addEventListener('click', () => {
     const shMid = midpoint(lm[11], lm[12]);
     const nose = lm[0];
 
-    baselineAngle = forwardAngle(earMid, shMid);
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
-    baselineForward = forwardDeviation(nose, shMid);
 
-    gaugeCaption.textContent = `Calibrated at ${baselineAngle.toFixed(1)}° — sit like this for "good"`;
+    gaugeCaption.textContent = 'Posture calibrated. Sit like that.';
     speak("Calibrated. That's your good posture.");
   }
 });
+
+// ---- Event wiring ----
+setInterval(saveStats, 10000);
+window.addEventListener('beforeunload', saveStats);
+
+startBtn.addEventListener('click', startCamera);
+stopBtn.addEventListener('click', stopCamera);
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
 muteBtn.addEventListener('click', () => {
