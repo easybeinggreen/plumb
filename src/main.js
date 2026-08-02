@@ -36,9 +36,11 @@ const statSinceMove = document.getElementById('statSinceMove');
 const toleranceSlider = document.getElementById('toleranceSlider');
 const sustainSlider = document.getElementById('sustainSlider');
 const moveSlider = document.getElementById('moveSlider');
+const moveThresholdSlider = document.getElementById('moveThresholdSlider');
 const toleranceVal = document.getElementById('toleranceVal');
 const sustainVal = document.getElementById('sustainVal');
 const moveVal = document.getElementById('moveVal');
+const moveThresholdVal = document.getElementById('moveThresholdVal');
 
 const syncDot = document.getElementById('syncDot');
 const syncText = document.getElementById('syncText');
@@ -50,6 +52,7 @@ let rafId = null;
 let muted = false;
 
 let baselineAngle = null;
+let baselineNeckRatio = null;
 let lastMoveSampleAt = 0;
 let lastMoveSamplePos = null;
 let lastMovedAt = Date.now();
@@ -57,9 +60,20 @@ let slouchStartedAt = null;
 let lastPostureNudgeAt = 0;
 let lastFrameTime = performance.now();
 
-let currentVoiceId = voiceSelect.value;
-let piperReady = false;
-let piperLoading = false;
+let currentVoiceId = localStorage.getItem('plumb:voice') || voiceSelect.value;
+voiceSelect.value = currentVoiceId;
+let piperSession = null;
+let piperSessionVoice = null;
+
+// The library's built-in default points at a stale file on cdnjs that no
+// longer resolves correctly. This pins it to a CDN mirror on the exact
+// onnxruntime-web version actually bundled with the app, avoiding both the
+// broken default and any version mismatch.
+const PIPER_WASM_PATHS = {
+  onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/',
+  piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
+  piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
+};
 
 const today = () => new Date().toISOString().slice(0, 10);
 const LOG_KEY = (d) => `plumb:${d}`;
@@ -136,26 +150,25 @@ function saveStats() {
 
 // ---- Voice (Piper local neural TTS, with browser TTS as fallback) ----
 async function ensurePiperVoice(voiceId) {
-  if (piperReady === voiceId) return true;
-  if (piperLoading) return false;
-  piperLoading = true;
+  if (piperSession && piperSessionVoice === voiceId) return true;
   try {
-    const stored = await piperTTS.stored();
-    if (!stored.includes(voiceId)) {
-      testVoiceBtn.textContent = 'Downloading voice…';
-      await piperTTS.download(voiceId, (progress) => {
-        const pct = Math.round((progress.loaded * 100) / progress.total);
+    testVoiceBtn.textContent = 'Loading voice…';
+    piperSession = await piperTTS.TtsSession.create({
+      voiceId,
+      wasmPaths: PIPER_WASM_PATHS,
+      progress: (p) => {
+        const pct = Math.round((p.loaded * 100) / p.total);
         testVoiceBtn.textContent = `Downloading voice… ${pct}%`;
-      });
-      testVoiceBtn.textContent = 'Test voice';
-    }
-    piperReady = voiceId;
+      }
+    });
+    await piperSession.waitReady;
+    piperSessionVoice = voiceId;
+    testVoiceBtn.textContent = 'Test voice';
     return true;
   } catch (err) {
     console.warn('Piper unavailable, will fall back to browser voice:', err);
+    testVoiceBtn.textContent = 'Test voice';
     return false;
-  } finally {
-    piperLoading = false;
   }
 }
 
@@ -164,7 +177,7 @@ async function speak(text) {
   try {
     const ok = await ensurePiperVoice(currentVoiceId);
     if (ok) {
-      const wav = await piperTTS.predict({ text, voiceId: currentVoiceId });
+      const wav = await piperSession.predict(text);
       const audio = new Audio(URL.createObjectURL(wav));
       audio.play();
       return;
@@ -256,6 +269,15 @@ function forwardAngle(earMid, shoulderMid) {
   return Math.atan2(dx, Math.max(dy, 0.0001)) * (180 / Math.PI);
 }
 
+// Second slouch signal: how compressed the shoulder-to-ear gap is, relative to
+// shoulder width (so it stays consistent even if you sit closer/further from
+// the camera). Catches "sinking down" slouching that the angle alone misses.
+function neckCompressionRatio(earMid, shoulderMid, leftSh, rightSh) {
+  const gap = Math.max(shoulderMid.y - earMid.y, 0.0001);
+  const shoulderWidth = Math.hypot(leftSh.x - rightSh.x, leftSh.y - rightSh.y) || 0.0001;
+  return gap / shoulderWidth;
+}
+
 function updateGauge(deviation) {
   const clamped = Math.max(-40, Math.min(40, deviation));
   const angleDeg = (clamped / 40) * 90;
@@ -320,7 +342,10 @@ function loop() {
       updateGauge(deviation);
       const tolerance = Number(toleranceSlider.value);
       const sustainMs = Number(sustainSlider.value) * 1000;
-      const isSlouching = deviation > tolerance;
+
+      const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
+      const isCompressed = baselineNeckRatio !== null && neckRatio < baselineNeckRatio * 0.85;
+      const isSlouching = deviation > tolerance || isCompressed;
 
       if (isSlouching) {
         stats.slouchSeconds += elapsedSec;
@@ -342,7 +367,8 @@ function loop() {
     if (now - lastMoveSampleAt > 1000) {
       if (lastMoveSamplePos) {
         const d = Math.hypot(shMid.x - lastMoveSamplePos.x, shMid.y - lastMoveSamplePos.y);
-        if (d > 0.02) lastMovedAt = Date.now();
+        const moveThreshold = Number(moveThresholdSlider.value) / 100; // slider is in "percent of frame"
+        if (d > moveThreshold) lastMovedAt = Date.now();
       }
       lastMoveSamplePos = shMid;
       lastMoveSampleAt = now;
@@ -378,6 +404,7 @@ calibrateBtn.addEventListener('click', () => {
     const earMid = midpoint(lm[7], lm[8]);
     const shMid = midpoint(lm[11], lm[12]);
     baselineAngle = forwardAngle(earMid, shMid);
+    baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     gaugeCaption.textContent = `Calibrated at ${baselineAngle.toFixed(1)}° — sit like this for "good"`;
     speak("Calibrated. That's your good posture.");
   }
@@ -388,7 +415,11 @@ muteBtn.addEventListener('click', () => {
   muted = !muted;
   muteBtn.textContent = `Mute voice: ${muted ? 'on' : 'off'}`;
 });
-voiceSelect.addEventListener('change', () => { currentVoiceId = voiceSelect.value; });
+voiceSelect.addEventListener('change', () => {
+  localStorage.setItem('plumb:voice', voiceSelect.value);
+  testVoiceBtn.textContent = 'Reloading for new voice…';
+  location.reload();
+});
 
 exportBtn.addEventListener('click', () => {
   saveStatsLocal();
@@ -403,5 +434,6 @@ exportBtn.addEventListener('click', () => {
 toleranceSlider.addEventListener('input', () => (toleranceVal.textContent = `${toleranceSlider.value}°`));
 sustainSlider.addEventListener('input', () => (sustainVal.textContent = `${sustainSlider.value}s`));
 moveSlider.addEventListener('input', () => (moveVal.textContent = `${moveSlider.value} min`));
+moveThresholdSlider.addEventListener('input', () => (moveThresholdVal.textContent = `${moveThresholdSlider.value}%`));
 
 setInterval(refreshStatDisplay, 1000);
