@@ -1,7 +1,7 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 
-// ---- Supabase config (safe to expose — protected by RLS) ----
+// ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SYNC_CONFIGURED = SUPABASE_URL.startsWith('http') && !!SUPABASE_ANON_KEY;
@@ -18,13 +18,13 @@ const cameraSelect = document.getElementById('cameraSelect');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const testVoiceBtn = document.getElementById('testVoiceBtn');
 const muteBtn = document.getElementById('muteBtn');
+const bgAudioBtn = document.getElementById('bgAudioBtn');
 const exportBtn = document.getElementById('exportBtn');
 const voiceSelect = document.getElementById('voiceSelect');
 
 const statusCard = document.getElementById('statusCard');
 const statusValue = document.getElementById('statusValue');
 
-// Posture map canvas (replaces old gauge)
 const postureMap = document.getElementById('postureMap');
 const pmCtx = postureMap.getContext('2d');
 const gaugeCaption = document.getElementById('gaugeCaption');
@@ -32,17 +32,18 @@ const gaugeCaption = document.getElementById('gaugeCaption');
 const statSession = document.getElementById('statSession');
 const statSlouch = document.getElementById('statSlouch');
 const statPostureNudges = document.getElementById('statPostureNudges');
-const statMoveNudges = document.getElementById('statMoveNudges');
-const statSinceMove = document.getElementById('statSinceMove');
+const statBreakNudges = document.getElementById('statBreakNudges');
+const statBreaksTaken = document.getElementById('statBreaksTaken');
+const statSinceBreak = document.getElementById('statSinceBreak');
 
 const toleranceSlider = document.getElementById('toleranceSlider');
+const compressionToleranceSlider = document.getElementById('compressionToleranceSlider');
 const sustainSlider = document.getElementById('sustainSlider');
-const moveSlider = document.getElementById('moveSlider');
-const moveThresholdSlider = document.getElementById('moveThresholdSlider');
+const breakSlider = document.getElementById('breakSlider');
 const toleranceVal = document.getElementById('toleranceVal');
+const compressionToleranceVal = document.getElementById('compressionToleranceVal');
 const sustainVal = document.getElementById('sustainVal');
-const moveVal = document.getElementById('moveVal');
-const moveThresholdVal = document.getElementById('moveThresholdVal');
+const breakVal = document.getElementById('breakVal');
 
 const syncDot = document.getElementById('syncDot');
 const syncText = document.getElementById('syncText');
@@ -52,28 +53,35 @@ let landmarker = null;
 let running = false;
 let rafId = null;
 let muted = false;
+let bgAudioEnabled = false;   // background audio keep-alive
 
-let baselineAngle = null;        // not used for map, but kept for old gauge reference
-let baselineNeckRatio = null;   // calibration for neck compression
-let baselineLateral = null;     // calibration for lateral (side-to-side)
+let baselineLateral = null;      // lateral ratio at calibration
+let baselineNeckRatio = null;    // neck compression ratio at calibration
 
-let lastMoveSampleAt = 0;
-let lastMoveSamplePos = null;
-let lastMovedAt = Date.now();
+let lastFrameTime = performance.now();
+
+// Slouch / posture timers
 let slouchStartedAt = null;
 let lastPostureNudgeAt = 0;
-let lastMoveNudgeAt = 0;
-let lastFrameTime = performance.now();
+
+// Break / presence logic
+let presenceStart = null;        // when continuous presence began (for break prompts)
+let isPersonPresent = false;
+let lastBreakEnd = null;         // timestamp when person reappeared after a break
+let breakStart = null;           // timestamp when absence began
+let breaksTaken = 0;
+let lastBreakNudgeAt = 0;
+
+// Audio context and background silent loop
+let audioCtx = null;
+let silentAudioEl = null;        // <audio> element for keep-alive
 
 let currentVoiceId = localStorage.getItem('plumb:voice') || voiceSelect.value;
 voiceSelect.value = currentVoiceId;
 let piperSession = null;
 let piperSessionVoice = null;
 
-// Audio context for reliable playback
-let audioCtx = null;
-
-// Piper WASM paths (keep your current config)
+// Piper WASM paths
 const PIPER_WASM_PATHS = {
   onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/',
   piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
@@ -87,11 +95,28 @@ let stats = loadTodayStats();
 
 function loadTodayStats() {
   const raw = localStorage.getItem(LOG_KEY(today()));
-  if (raw) return JSON.parse(raw);
-  return { date: today(), sessionSeconds: 0, slouchSeconds: 0, moveNudges: 0, postureNudges: 0 };
+  if (raw) {
+    try {
+      const s = JSON.parse(raw);
+      // If the stored date doesn't match today (e.g. leftover from yesterday), start fresh
+      if (s.date !== today()) throw new Error('stale');
+      return s;
+    } catch (e) {
+      // corrupted or stale, start fresh
+    }
+  }
+  return {
+    date: today(),
+    sessionSeconds: 0,
+    slouchSeconds: 0,
+    postureNudges: 0,
+    breakNudges: 0,
+    breaksTaken: 0
+  };
 }
 
 function saveStatsLocal() {
+  stats.breaksTaken = breaksTaken;  // keep current break count
   localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
 }
 
@@ -99,7 +124,11 @@ function getAllStoredDays() {
   const days = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && key.startsWith('plumb:')) days.push(JSON.parse(localStorage.getItem(key)));
+    if (key && key.startsWith('plumb:')) {
+      try {
+        days.push(JSON.parse(localStorage.getItem(key)));
+      } catch (e) {}
+    }
   }
   return days.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -134,7 +163,8 @@ async function syncToSupabase() {
           session_seconds: Math.round(stats.sessionSeconds),
           slouch_seconds: Math.round(stats.slouchSeconds),
           posture_nudges: stats.postureNudges,
-          move_nudges: stats.moveNudges,
+          break_nudges: stats.breakNudges,
+          breaks_taken: stats.breaksTaken,
           updated_at: new Date().toISOString()
         }
       ]),
@@ -156,7 +186,7 @@ function saveStats() {
   syncToSupabase();
 }
 
-// ---- Audio unlock and voice ----
+// ---- Audio unlock & keep-alive ----
 async function ensureAudioUnlocked() {
   if (!audioCtx) {
     try {
@@ -172,14 +202,33 @@ async function ensureAudioUnlocked() {
   return true;
 }
 
-// Unlock audio on first user interaction
-document.addEventListener('click', ensureAudioUnlocked, { once: true });
+// Background silent audio loop to prevent AudioContext suspension
+function startBgSilentAudio() {
+  if (!silentAudioEl) {
+    silentAudioEl = new Audio();
+    // A short silent WAV (base64) – just enough to be valid and inaudible
+    silentAudioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+    silentAudioEl.loop = true;
+    silentAudioEl.volume = 0.001;  // almost inaudible
+  }
+  silentAudioEl.play().catch(e => console.warn('silent audio play blocked:', e));
+  bgAudioEnabled = true;
+  bgAudioBtn.textContent = 'Background nudges: on';
+}
 
+function stopBgSilentAudio() {
+  if (silentAudioEl) {
+    silentAudioEl.pause();
+  }
+  bgAudioEnabled = false;
+  bgAudioBtn.textContent = 'Background nudges: off';
+}
+
+// ---- Voice ----
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
     testVoiceBtn.textContent = 'Loading voice…';
-    // Force single‑threaded WASM to avoid cross‑origin isolation issues
     try {
       Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true });
     } catch (e) {}
@@ -218,26 +267,56 @@ async function speak(text) {
       return;
     }
   } catch (err) {
-    console.warn('Piper synthesis failed, falling back to browser voice:', err);
+    console.warn('Piper synthesis failed, falling back to browser TTS:', err);
   }
+  // Fallback to browser SpeechSynthesis
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
+    // Optionally select a voice from the stored preference
+    const savedVoice = localStorage.getItem('plumb:speechVoice');
+    if (savedVoice) {
+      const voices = window.speechSynthesis.getVoices();
+      const match = voices.find(v => v.name === savedVoice);
+      if (match) u.voice = match;
+    }
     window.speechSynthesis.speak(u);
   }
 }
 
-const POSTURE_PHRASES = [
-  "Shoulders back, chin level — you've drifted forward.",
-  "Posture check — you're leaning into the screen again.",
-  "Sit tall for a second, you've been slouching a while."
+// Phrase collections
+const LEFT_PHRASES = [
+  "You're leaning to the left — straighten up.",
+  "Left side drift — bring your head back to centre.",
+  "Your head is tilting left — correct that lean."
 ];
-const MOVE_PHRASES = [
-  "Time to stand up and shake it out for a minute.",
-  "You've been still a while — a short walk would help.",
-  "Get up and move — your body's been in one position too long."
+const RIGHT_PHRASES = [
+  "Leaning right — bring your head back to centre.",
+  "Right side drift — straighten up please.",
+  "Your head is tilting right — correct that lean."
 ];
-let postureIdx = 0, moveIdx = 0;
+const SLUMP_PHRASES = [
+  "You're slumping down — sit taller, lift your chest.",
+  "Neck sinking — lengthen your spine.",
+  "Shoulders dropping — open up and sit tall.",
+  "You've sunk into a slump — reset your posture."
+];
+const BREAK_PROMPT_PHRASES = [
+  "Time to take a break! Stand up, stretch, and enjoy — come back refreshed.",
+  "You've been sitting a while. Step away for a moment and come back soon.",
+  "Your body deserves a break — get up, walk around, then return.",
+  "Take a short break — enjoy it and come back when you're ready."
+];
+const WELCOME_BACK_SHORT = [
+  "Welcome back — that was a short break.",
+  "Quick break — good to have you back."
+];
+const WELCOME_BACK_LONG = [
+  "Welcome back — you had a nice long break.",
+  "Great break — you're back feeling refreshed."
+];
+
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, breakIdx = 0, welcomeIdx = 0;
 
 // ---- Math helpers ----
 function midpoint(a, b) {
@@ -286,7 +365,6 @@ async function startCamera() {
     };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject = stream;
-    // Wait for metadata so canvas has correct dimensions
     await new Promise((resolve) => (video.onloadedmetadata = resolve));
     overlay.width = video.videoWidth;
     overlay.height = video.videoHeight;
@@ -297,11 +375,16 @@ async function startCamera() {
     stopBtn.disabled = false;
     calibrateBtn.disabled = false;
     startBtn.textContent = 'Start camera';
-    lastMovedAt = Date.now();
     lastFrameTime = performance.now();
-    // Prefetch voice model
+    // Reset break/presence state
+    presenceStart = null;
+    lastBreakEnd = Date.now();  // treat start as after a break
+    breakStart = null;
+    isPersonPresent = false;
+    breaksTaken = stats.breaksTaken; // load from today's stats if any
     ensurePiperVoice(currentVoiceId);
     await ensureAudioUnlocked();
+    if (bgAudioEnabled) startBgSilentAudio();
     loop();
   } catch (err) {
     placeholder.textContent = `Couldn't access the camera: ${err.message}. Check browser permissions and that you're on HTTPS or localhost.`;
@@ -321,6 +404,7 @@ function stopCamera() {
     'Camera is off. Click "Start camera" to begin — this app only looks at angles between a few body points, it never records or sends the video anywhere.';
   stopBtn.disabled = true;
   calibrateBtn.disabled = true;
+  stopBgSilentAudio();
   saveStats();
 }
 
@@ -365,7 +449,7 @@ cameraSelect.addEventListener('change', () => {
   }
 });
 
-// ---- UI update helpers ----
+// ---- UI helpers ----
 function setStatus(mode, text) {
   statusCard.classList.remove('good', 'alert', 'idle');
   statusCard.classList.add(mode);
@@ -379,14 +463,18 @@ function refreshStatDisplay() {
   const pct = stats.sessionSeconds ? Math.round((stats.slouchSeconds / stats.sessionSeconds) * 100) : 0;
   statSlouch.textContent = `${fmtMinSec(stats.slouchSeconds)} (${pct}%)`;
   statPostureNudges.textContent = stats.postureNudges;
-  statMoveNudges.textContent = stats.moveNudges;
-  const sinceMove = Math.floor((Date.now() - lastMovedAt) / 1000);
-  const mm = String(Math.floor(sinceMove / 60)).padStart(2, '0');
-  const ss = String(sinceMove % 60).padStart(2, '0');
-  statSinceMove.textContent = `${mm}:${ss}`;
+  statBreakNudges.textContent = stats.breakNudges;
+  statBreaksTaken.textContent = breaksTaken;
+  const sinceBreak = lastBreakEnd ? Math.floor((Date.now() - lastBreakEnd) / 1000) : 0;
+  if (sinceBreak > 0) {
+    const mm = String(Math.floor(sinceBreak / 60)).padStart(2, '0');
+    const ss = String(sinceBreak % 60).padStart(2, '0');
+    statSinceBreak.textContent = `${mm}:${ss}`;
+  } else {
+    statSinceBreak.textContent = '--';
+  }
 }
 
-// Draw 2D posture map: x = lateral (left/right), y = neck compression (slump)
 function drawPostureMap(lateral, compression) {
   const w = postureMap.width, h = postureMap.height;
   pmCtx.clearRect(0, 0, w, h);
@@ -399,19 +487,25 @@ function drawPostureMap(lateral, compression) {
   pmCtx.moveTo(0, h/2); pmCtx.lineTo(w, h/2);
   pmCtx.stroke();
 
-  // Scale factors: lateral range ~±0.5, compression range maybe ±0.2 – we'll stretch to fill
+  // Scale factors
   const scaleX = w * 0.45;
   const scaleY = h * 0.45;
-  // lateral: positive = right, compression: positive = more compressed (slump) -> down
-  const dotX = w/2 + lateral * scaleX * 2;
-  const dotY = h/2 + compression * scaleY * 5; // higher multiplier to make small neck changes visible
+  // Flip lateral so left on screen = left dot (mirroring the user view)
+  const dotX = w/2 - lateral * scaleX * 2;
+  const dotY = h/2 + compression * scaleY * 5; // positive compression = down
 
   const clampedX = Math.max(8, Math.min(w-8, dotX));
   const clampedY = Math.max(8, Math.min(h-8, dotY));
 
-  // Color based on distance from center
   const distFromCenter = Math.hypot((clampedX - w/2)/scaleX, (clampedY - h/2)/scaleY);
-  pmCtx.fillStyle = distFromCenter > 0.5 ? '#C0492F' : distFromCenter > 0.25 ? '#C98A2C' : '#2C6E8E';
+  // Green (centre) -> Amber (moderate) -> Red (far)
+  if (distFromCenter > 0.5) {
+    pmCtx.fillStyle = '#C0492F'; // red
+  } else if (distFromCenter > 0.25) {
+    pmCtx.fillStyle = '#C98A2C'; // amber
+  } else {
+    pmCtx.fillStyle = '#27AE60'; // green
+  }
   pmCtx.beginPath();
   pmCtx.arc(clampedX, clampedY, 7, 0, 2*Math.PI);
   pmCtx.fill();
@@ -426,11 +520,10 @@ function drawPostureMap(lateral, compression) {
   pmCtx.fillText('Slump', w/2, h-4);
 }
 
-// ---- Main tracking loop ----
+// ---- Main loop ----
 function loop() {
   if (!running) return;
   const now = performance.now();
-  // Cap elapsed time to avoid massive jumps after tab hidden
   const elapsedSec = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
 
@@ -440,9 +533,7 @@ function loop() {
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
-    const nose = lm[0];
 
-    // Draw tracking dots on ears and shoulders
     ctx.fillStyle = 'rgba(44,110,142,0.9)';
     [leftEar, rightEar, leftSh, rightSh].forEach((p) => {
       ctx.beginPath();
@@ -455,6 +546,34 @@ function loop() {
 
     stats.sessionSeconds += elapsedSec;
 
+    // Break / presence tracking
+    const wasPresent = isPersonPresent;
+    isPersonPresent = true;
+
+    if (!wasPresent) {
+      // Person just reappeared
+      const nowTime = Date.now();
+      if (breakStart) {
+        const breakDuration = nowTime - breakStart;
+        if (breakDuration > 30000) { // only count breaks > 30 seconds
+          breaksTaken++;
+        }
+        const mins = Math.round(breakDuration / 60000);
+        const welcomeMsg = mins >= 5
+          ? WELCOME_BACK_LONG[welcomeIdx % WELCOME_BACK_LONG.length]
+          : WELCOME_BACK_SHORT[welcomeIdx % WELCOME_BACK_SHORT.length];
+        speak(welcomeMsg);
+        welcomeIdx++;
+        // Reset break state
+        breakStart = null;
+        lastBreakEnd = nowTime;
+      } else {
+        // just started for the first time
+        lastBreakEnd = nowTime;
+      }
+      presenceStart = nowTime; // start of new continuous presence
+    }
+
     // Compute deviations
     const lateral = baselineLateral !== null
       ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral
@@ -464,30 +583,43 @@ function loop() {
       ? baselineNeckRatio - neckRatio   // positive = more compressed (slump)
       : 0;
 
-    // Draw the map with lateral and compression
     drawPostureMap(lateral, compression);
 
     if (baselineLateral === null || baselineNeckRatio === null) {
       setStatus('idle', 'Calibrate to begin tracking');
     } else {
-      const tolerance = Number(toleranceSlider.value);
+      const lateralTolerance = Number(toleranceSlider.value);   // e.g., 0.20
+      const compressionTolerance = Number(compressionToleranceSlider.value); // e.g., 0.10
       const sustainMs = Number(sustainSlider.value) * 1000;
 
-      // Slouch detection: lateral deviation > tolerance (scaled) OR neck compression
-      const isLateralSlouch = Math.abs(lateral) > tolerance * 0.02; // scale factor
-      const isCompressed = compression > 0.1; // threshold for compression (adjustable)
-      const isSlouching = isLateralSlouch || isCompressed;
+      const isLateralLeft = lateral < -lateralTolerance;
+      const isLateralRight = lateral > lateralTolerance;
+      const isCompressed = compression > compressionTolerance;
+
+      const isSlouching = isLateralLeft || isLateralRight || isCompressed;
 
       if (isSlouching) {
         stats.slouchSeconds += elapsedSec;
         if (slouchStartedAt === null) slouchStartedAt = Date.now();
         const slouchedFor = Date.now() - slouchStartedAt;
         setStatus('alert', `Slouching — ${Math.round(slouchedFor / 1000)}s`);
-        // Nudge after sustained time + cooldown (30s)
         if (slouchedFor > sustainMs && Date.now() - lastPostureNudgeAt > 30000) {
-          console.log('Posture nudge fired at', new Date().toLocaleTimeString());
-          speak(POSTURE_PHRASES[postureIdx % POSTURE_PHRASES.length]);
-          postureIdx++;
+          // Determine dominant deviation for phrase selection
+          let phrases;
+          if (isCompressed && (!isLateralLeft && !isLateralRight || compression > Math.abs(lateral))) {
+            phrases = SLUMP_PHRASES;
+            slumpIdx++;
+            speak(phrases[(slumpIdx - 1) % phrases.length]);
+          } else if (isLateralLeft && (!isLateralRight || lateralTolerance > 0)) {
+            phrases = LEFT_PHRASES;
+            leftIdx++;
+            speak(phrases[(leftIdx - 1) % phrases.length]);
+          } else {
+            phrases = RIGHT_PHRASES;
+            rightIdx++;
+            speak(phrases[(rightIdx - 1) % phrases.length]);
+          }
+          console.log('Posture nudge fired', new Date().toLocaleTimeString());
           stats.postureNudges++;
           lastPostureNudgeAt = Date.now();
         }
@@ -495,33 +627,29 @@ function loop() {
         slouchStartedAt = null;
         setStatus('good', 'Sitting well');
       }
-    }
 
-    // Movement detection (always active, even without calibration)
-    if (now - lastMoveSampleAt > 1000) {
-      if (lastMoveSamplePos) {
-        const d = Math.hypot(shMid.x - lastMoveSamplePos.x, shMid.y - lastMoveSamplePos.y);
-        const moveThreshold = Number(moveThresholdSlider.value) / 100;
-        if (d > moveThreshold) {
-          lastMovedAt = Date.now();
+      // Break prompt logic (continuous presence)
+      if (presenceStart) {
+        const continuousMinutes = (Date.now() - presenceStart) / 60000;
+        const breakInterval = Number(breakSlider.value); // minutes
+        if (continuousMinutes >= breakInterval && Date.now() - lastBreakNudgeAt > 60000) {
+          speak(BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length]);
+          breakIdx++;
+          stats.breakNudges++;
+          lastBreakNudgeAt = Date.now();
+          // We do NOT reset presenceStart here; it continues until an actual break.
         }
       }
-      lastMoveSamplePos = shMid;
-      lastMoveSampleAt = now;
-    }
-
-    const moveReminderMs = Number(moveSlider.value) * 60000;
-    // Move nudge cooldown (60s)
-    if (Date.now() - lastMovedAt > moveReminderMs && Date.now() - lastMoveNudgeAt > 60000) {
-      console.log('Move nudge fired at', new Date().toLocaleTimeString());
-      speak(MOVE_PHRASES[moveIdx % MOVE_PHRASES.length]);
-      moveIdx++;
-      stats.moveNudges++;
-      lastMoveNudgeAt = Date.now();
-      lastMovedAt = Date.now(); // reset timer
     }
   } else {
-    setStatus('idle', 'No person detected');
+    // No person detected
+    if (isPersonPresent) {
+      // Person just left
+      breakStart = Date.now();
+      isPersonPresent = false;
+      slouchStartedAt = null;  // stop slouch accumulation
+      setStatus('idle', 'No person detected');
+    }
   }
 
   refreshStatDisplay();
@@ -536,11 +664,8 @@ calibrateBtn.addEventListener('click', () => {
     const lm = result.landmarks[0];
     const earMid = midpoint(lm[7], lm[8]);
     const shMid = midpoint(lm[11], lm[12]);
-    const nose = lm[0];
-
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
-
     gaugeCaption.textContent = 'Posture calibrated. Sit like that.';
     speak("Calibrated. That's your good posture.");
   }
@@ -558,6 +683,13 @@ muteBtn.addEventListener('click', () => {
   muted = !muted;
   muteBtn.textContent = `Mute voice: ${muted ? 'on' : 'off'}`;
 });
+bgAudioBtn.addEventListener('click', () => {
+  if (bgAudioEnabled) {
+    stopBgSilentAudio();
+  } else {
+    startBgSilentAudio();
+  }
+});
 voiceSelect.addEventListener('change', () => {
   localStorage.setItem('plumb:voice', voiceSelect.value);
   testVoiceBtn.textContent = 'Reloading for new voice…';
@@ -574,9 +706,10 @@ exportBtn.addEventListener('click', () => {
   a.click();
 });
 
-toleranceSlider.addEventListener('input', () => (toleranceVal.textContent = `${toleranceSlider.value}°`));
+// Slider updates
+toleranceSlider.addEventListener('input', () => (toleranceVal.textContent = toleranceSlider.value));
+compressionToleranceSlider.addEventListener('input', () => (compressionToleranceVal.textContent = compressionToleranceSlider.value));
 sustainSlider.addEventListener('input', () => (sustainVal.textContent = `${sustainSlider.value}s`));
-moveSlider.addEventListener('input', () => (moveVal.textContent = `${moveSlider.value} min`));
-moveThresholdSlider.addEventListener('input', () => (moveThresholdVal.textContent = `${moveThresholdSlider.value}%`));
+breakSlider.addEventListener('input', () => (breakVal.textContent = `${breakSlider.value} min`));
 
 setInterval(refreshStatDisplay, 1000);
