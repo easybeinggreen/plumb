@@ -14,6 +14,7 @@ const placeholder = document.getElementById('placeholder');
 
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
+const cameraSelect = document.getElementById('cameraSelect');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const testVoiceBtn = document.getElementById('testVoiceBtn');
 const muteBtn = document.getElementById('muteBtn');
@@ -234,9 +235,18 @@ async function startCamera() {
   startBtn.textContent = 'Loading model…';
   try {
     if (!landmarker) await initModel();
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    const constraints = {
+      video: {
+        width: 640,
+        height: 480,
+        ...(cameraSelect.value ? { deviceId: { exact: cameraSelect.value } } : {})
+      },
+      audio: false
+    };
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject = stream;
     await video.play();
+    populateCameraList(); // labels are now available post-permission
     overlay.width = video.videoWidth || 640;
     overlay.height = video.videoHeight || 480;
     placeholder.style.display = 'none';
@@ -271,6 +281,50 @@ function stopCamera() {
 }
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+// ---- Camera picker ----
+// Device labels are only available once camera permission has been granted at
+// least once, so this gets called both at load (best effort, may show generic
+// names) and again right after the first successful getUserMedia call.
+async function populateCameraList() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter((d) => d.kind === 'videoinput');
+    if (cams.length === 0) return;
+
+    const saved = localStorage.getItem('plumb:cameraId');
+    const previous = cameraSelect.value;
+
+    cameraSelect.innerHTML = '<option value="">Default camera</option>';
+    cams.forEach((cam, i) => {
+      const opt = document.createElement('option');
+      opt.value = cam.deviceId;
+      opt.textContent = cam.label || `Camera ${i + 1}`;
+      cameraSelect.appendChild(opt);
+    });
+
+    if (saved && cams.some((c) => c.deviceId === saved)) {
+      cameraSelect.value = saved;
+    } else if (previous && cams.some((c) => c.deviceId === previous)) {
+      cameraSelect.value = previous;
+    }
+  } catch (err) {
+    console.warn('Could not list cameras:', err);
+  }
+}
+
+populateCameraList();
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', populateCameraList);
+}
+
+cameraSelect.addEventListener('change', () => {
+  localStorage.setItem('plumb:cameraId', cameraSelect.value);
+  if (running) {
+    stopCamera();
+    startCamera();
+  }
+});
 
 function forwardAngle(earMid, shoulderMid) {
   const dx = Math.abs(earMid.x - shoulderMid.x);
