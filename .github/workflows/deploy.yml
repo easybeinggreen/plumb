@@ -20,6 +20,7 @@ jobs:
   prepare-summary:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    continue-on-error: true          # don't block the rest of the workflow on failure
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'          # ← changed from 20
+          node-version: '22'
 
       - name: Generate AI summary from Supabase
         env:
@@ -37,6 +38,7 @@ jobs:
         run: node scripts/generate-summary.js
 
       - name: Commit updated summary
+        if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -46,7 +48,8 @@ jobs:
 
   build-and-deploy:
     needs: prepare-summary
-    if: always() && (needs.prepare-summary.result == 'success' || needs.prepare-summary.result == 'skipped')
+    # Always run, even if prepare-summary fails or is skipped
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -58,7 +61,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'          # ← changed from 20
+          node-version: '22'
 
       - run: npm install
 
