@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'          # ← changed from 20
 
       - name: Generate AI summary from Supabase
         env:
@@ -58,7 +58,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'          # ← changed from 20
 
       - run: npm install
 
