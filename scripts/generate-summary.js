@@ -1,19 +1,19 @@
-// Reads the last ~2 weeks of rows from Supabase, asks the Anthropic API for a short
-// written summary, and writes the result to public/data/summary.json.
-// Requires SUPABASE_URL, SUPABASE_SERVICE_KEY, and ANTHROPIC_API_KEY as GitHub Actions secrets.
+// Reads the last ~2 weeks of rows from Supabase, asks Anthropic for a summary,
+// and writes the result to public/data/summary.json.
+// Requires SUPABASE_URL, SUPABASE_SERVICE_KEY, and ANTHROPIC_API_KEY as secrets.
 
 const fs = require('fs');
 const path = require('path');
 
 const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'data', 'summary.json');
-const MODEL = 'claude-haiku-4-5-20251001'; // cheap and good enough
+const MODEL = 'claude-haiku-4-5-20251001';
 
 async function fetchRows() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_KEY;
   if (!url || !key) {
-    console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables.');
-    process.exit(1);
+    console.warn('SUPABASE_URL or SUPABASE_SERVICE_KEY not set – skipping summary generation.');
+    return null;
   }
 
   const res = await fetch(`${url}/rest/v1/posture_logs?select=*&order=date.asc&limit=100`, {
@@ -22,7 +22,7 @@ async function fetchRows() {
 
   if (!res.ok) {
     console.error(`Supabase read error ${res.status}: ${await res.text()}`);
-    process.exit(1);
+    return null;
   }
 
   const data = await res.json();
@@ -62,8 +62,8 @@ function aggregate(rows) {
 async function getSummary(stats) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error('ANTHROPIC_API_KEY not set – cannot generate summary.');
-    process.exit(1);
+    console.warn('ANTHROPIC_API_KEY not set – summary will be empty.');
+    return null;
   }
 
   const prompt =
@@ -86,41 +86,45 @@ async function getSummary(stats) {
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    console.error(`Anthropic API error ${response.status}: ${err}`);
-    process.exit(1);
+    console.error(`Anthropic API error ${response.status}: ${await response.text()}`);
+    return null;
   }
 
   const data = await response.json();
   const textBlock = (data.content || []).find((b) => b.type === 'text');
-  return textBlock ? textBlock.text.trim() : '(no summary text returned)';
+  return textBlock ? textBlock.text.trim() : null;
 }
 
 (async () => {
   const rows = await fetchRows();
 
-  if (!rows || rows.length === 0) {
-    console.log('No rows in Supabase yet — nothing to summarize.');
-    // Write an empty summary so the file exists
-    fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-    fs.writeFileSync(
-      OUTPUT_PATH,
-      JSON.stringify({ generatedAt: new Date().toISOString(), stats: null, summary: "No data yet." }, null, 2)
-    );
-    process.exit(0);
+  let summaryObj = {
+    generatedAt: new Date().toISOString(),
+    stats: null,
+    summary: "No data available yet."
+  };
+
+  if (rows && rows.length > 0) {
+    const stats = aggregate(rows);
+    const summaryText = await getSummary(stats);
+    summaryObj = {
+      generatedAt: new Date().toISOString(),
+      stats,
+      summary: summaryText || "Summary not available (API key missing or error)."
+    };
+  } else if (rows) {
+    // rows fetched but empty
+    summaryObj = {
+      generatedAt: new Date().toISOString(),
+      stats: null,
+      summary: "No tracking data yet."
+    };
   }
 
-  const stats = aggregate(rows);
-  const summary = await getSummary(stats);
-
   fs.mkdirSync(path.dirname(OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(
-    OUTPUT_PATH,
-    JSON.stringify({ generatedAt: new Date().toISOString(), stats, summary }, null, 2)
-  );
-
+  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(summaryObj, null, 2));
   console.log('Wrote summary to', OUTPUT_PATH);
 })().catch((err) => {
   console.error('Script failed:', err.message);
-  process.exit(1);
+  process.exit(1);   // only fail on unexpected errors
 });
