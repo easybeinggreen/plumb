@@ -1,3 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Plumb — posture &amp; movement companion</title>
+<style>
+  :root {
+    --paper: #F1F5F6;
+    --paper-line: #C9D3D6;
+    --ink: #1F2A2E;
+    --ink-soft: #57676C;
+    --good: #2C6E8E;
+    --good-bg: #E4EEF1;
+    --alert: #C98A2C;
+    --alert-bg: #FBEEDC;
+    --danger: #C0492F;
+    --danger-bg: #FBE7E2;
+    --panel: #FFFFFF;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    background:
+      linear-gradient(var(--paper-line) 1px, transparent 1px) 0 0 / 100% 28px,
+      linear-gradient(90deg, var(--paper-line) 1px, transparent 1px) 0 0 / 28px 100%,
+      var(--paper);
+    min-height: 100vh;
+  }
+
+  header { padding: 20px 24px 10px; }
+  header .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-soft);
+  }
+  header h1 { margin: 4px 0 4px; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--ink-soft); font-size: 14px; max-width: 60ch; }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
+    gap: 18px;
+    padding: 18px 24px 40px;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--paper-line); border-radius: var(--radius); padding: 16px; }
+
+  .video-wrap {
+    position: relative; width: 100%; aspect-ratio: 4 / 3;
+    background: #12191c; border-radius: calc(var(--radius) - 2px); overflow: hidden;
+  }
+  #video, #overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    transform: scaleX(-1);
+  }
+  .video-placeholder {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #9FB0B5; font-size: 13px; text-align: center; padding: 24px;
+  }
+
+  .privacy-note {
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); margin-top: 10px;
+  }
+  .privacy-note .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex-shrink: 0; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+  button {
+    font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 9px 14px;
+    border-radius: 7px; border: 1px solid var(--ink); background: var(--ink); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--ink); border-color: var(--paper-line); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.secondary:hover:not(:disabled) { border-color: var(--ink); }
+
+  select {
+    font-family: var(--sans); font-size: 13px; padding: 8px 10px; border-radius: 7px;
+    border: 1px solid var(--paper-line); background: #fff; color: var(--ink);
+  }
+
+  .side { display: flex; flex-direction: column; gap: 14px; }
+
+  .status-card { display: flex; align-items: center; gap: 14px; padding: 14px; }
+  .status-card.good { background: var(--good-bg); }
+  .status-card.alert { background: var(--alert-bg); }
+  .status-card.idle { background: #F3F1EC; }
+  .status-label { font-size: 13px; color: var(--ink-soft); margin-bottom: 2px; }
+  .status-value { font-size: 18px; font-weight: 700; }
+
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
+  .gauge-caption { font-size: 12px; color: var(--ink-soft); text-align: center; margin-top: 4px; }
+
+  .stat-row {
+    display: flex; justify-content: space-between; padding: 7px 0;
+    border-bottom: 1px dashed var(--paper-line); font-size: 13px;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row .val { font-family: var(--mono); font-weight: 600; }
+
+  .slider-row { margin-bottom: 12px; }
+  .slider-row label { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
+  .slider-row label .v { font-family: var(--mono); color: var(--ink); }
+  input[type="range"] { width: 100%; }
+
+  .section-title {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-soft); margin: 0 0 10px;
+  }
+
+  .sync-note { font-size: 12px; color: var(--ink-soft); margin-top: 10px; display: flex; align-items: center; gap: 6px; }
+  .sync-note .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--paper-line); flex-shrink: 0; }
+  .sync-note .dot.ok { background: var(--good); }
+  .sync-note .dot.err { background: var(--danger); }
+
+  footer { padding: 0 24px 30px; font-size: 12px; color: var(--ink-soft); }
+  footer a { color: var(--good); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">Plumb / posture &amp; movement companion</div>
+  <h1>Sit like the line is true.</h1>
+  <p>A protractor for your posture and a nudge to get up — everything runs in this browser tab. Nothing from your camera is ever uploaded anywhere.</p>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="video-wrap" id="videoWrap">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="video-placeholder" id="placeholder">Camera is off. Click "Start camera" to begin — this app only looks at angles between a few body points, it never records or sends the video anywhere.</div>
+    </div>
+
+    <div class="privacy-note"><span class="dot"></span> Video stays on this device. Only small numbers (angles, timestamps) ever get saved.</div>
+
+    <div class="controls">
+      <button id="startBtn">Start camera</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+      <select id="cameraSelect"><option value="">Default camera</option></select>
+      <button id="calibrateBtn" class="secondary" disabled>Calibrate good posture</button>
+      <select id="voiceSelect">
+        <option value="en_US-hfc_female-medium">Voice: US female</option>
+        <option value="en_US-hfc_male-medium">Voice: US male</option>
+        <option value="en_GB-alan-medium">Voice: British male</option>
+        <option value="en_US-lessac-medium">Voice: US narrator</option>
+      </select>
+      <button id="testVoiceBtn" class="secondary">Test voice</button>
+      <button id="muteBtn" class="secondary">Mute voice: off</button>
+      <button id="bgAudioBtn" class="secondary">Background nudges: off</button>
+    </div>
+    <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking configuration…</span></div>
+  </div>
+
   <div class="side">
     <div class="panel status-card idle" id="statusCard">
       <svg width="34" height="34" viewBox="0 0 34 34" id="statusIcon">
@@ -56,3 +218,12 @@
       </div>
     </div>
   </div>
+</main>
+
+<footer>
+  Voice nudges use a local neural TTS model (Piper) that downloads once (~15-25MB) and then runs fully offline. Stats auto-sync to Supabase every ~10s while running — no manual export needed. See <code>README.md</code> for setup.
+</footer>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
