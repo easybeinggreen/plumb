@@ -47,41 +47,45 @@ const breakVal = document.getElementById('breakVal');
 
 const syncDot = document.getElementById('syncDot');
 const syncText = document.getElementById('syncText');
+const alertFeed = document.getElementById('alertFeed');
 
 // ---- State ----
 let landmarker = null;
 let running = false;
 let rafId = null;
 let muted = false;
-let bgAudioEnabled = false;   // background audio keep-alive
+let bgAudioEnabled = false;
 
-let baselineLateral = null;      // lateral ratio at calibration
-let baselineNeckRatio = null;    // neck compression ratio at calibration
+let baselineLateral = null;
+let baselineNeckRatio = null;
 
 let lastFrameTime = performance.now();
 
 // Slouch / posture timers
 let slouchStartedAt = null;
+let slouchType = null;           // 'lateral_left', 'lateral_right', 'compression'
 let lastPostureNudgeAt = 0;
 
 // Break / presence logic
-let presenceStart = null;        // when continuous presence began (for break prompts)
+let presenceStart = null;
 let isPersonPresent = false;
-let lastBreakEnd = null;         // timestamp when person reappeared after a break
-let breakStart = null;           // timestamp when absence began
+let lastBreakEnd = null;
+let breakStart = null;
 let breaksTaken = 0;
 let lastBreakNudgeAt = 0;
 
+// Event buffer (flushed to Supabase every 30 seconds)
+let eventBuffer = [];
+
 // Audio context and background silent loop
 let audioCtx = null;
-let silentAudioEl = null;        // <audio> element for keep-alive
+let silentAudioEl = null;
 
 let currentVoiceId = localStorage.getItem('plumb:voice') || voiceSelect.value;
 voiceSelect.value = currentVoiceId;
 let piperSession = null;
 let piperSessionVoice = null;
 
-// Piper WASM paths
 const PIPER_WASM_PATHS = {
   onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/',
   piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
@@ -93,17 +97,46 @@ const LOG_KEY = (d) => `plumb:${d}`;
 
 let stats = loadTodayStats();
 
+// ---- Multi-device merge: fetch today's remote stats on startup ----
+async function mergeRemoteStats() {
+  if (!SYNC_CONFIGURED) return;
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/posture_logs?date=eq.${stats.date}&select=*`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      }
+    );
+    if (!res.ok) throw new Error('fetch failed');
+    const rows = await res.json();
+    if (rows.length > 0) {
+      const remote = rows[0];
+      // Use the larger of local or remote totals (since local may have been running before sync)
+      stats.sessionSeconds = Math.max(stats.sessionSeconds, remote.session_seconds || 0);
+      stats.slouchSeconds = Math.max(stats.slouchSeconds, remote.slouch_seconds || 0);
+      stats.postureNudges = Math.max(stats.postureNudges, remote.posture_nudges || 0);
+      stats.breakNudges = Math.max(stats.breakNudges, remote.break_nudges || 0);
+      stats.breaksTaken = Math.max(stats.breaksTaken, remote.breaks_taken || 0);
+      // Also update local in-memory break counter
+      breaksTaken = stats.breaksTaken;
+      console.log('Merged remote stats:', stats);
+    }
+  } catch (err) {
+    console.warn('Could not merge remote stats:', err);
+  }
+}
+
 function loadTodayStats() {
   const raw = localStorage.getItem(LOG_KEY(today()));
   if (raw) {
     try {
       const s = JSON.parse(raw);
-      // If the stored date doesn't match today (e.g. leftover from yesterday), start fresh
       if (s.date !== today()) throw new Error('stale');
       return s;
-    } catch (e) {
-      // corrupted or stale, start fresh
-    }
+    } catch (e) {}
   }
   return {
     date: today(),
@@ -116,7 +149,7 @@ function loadTodayStats() {
 }
 
 function saveStatsLocal() {
-  stats.breaksTaken = breaksTaken;  // keep current break count
+  stats.breaksTaken = breaksTaken;
   localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
 }
 
@@ -125,9 +158,7 @@ function getAllStoredDays() {
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key && key.startsWith('plumb:')) {
-      try {
-        days.push(JSON.parse(localStorage.getItem(key)));
-      } catch (e) {}
+      try { days.push(JSON.parse(localStorage.getItem(key))); } catch (e) {}
     }
   }
   return days.sort((a, b) => a.date.localeCompare(b.date));
@@ -181,9 +212,54 @@ async function syncToSupabase() {
   }
 }
 
+async function flushEvents() {
+  if (!SYNC_CONFIGURED || eventBuffer.length === 0) return;
+  const toSend = [...eventBuffer];
+  eventBuffer = [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'return=minimal'
+      },
+      body: JSON.stringify(toSend)
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn('Event upload failed:', res.status, errText);
+      // Put events back so we can retry later
+      eventBuffer.push(...toSend);
+    }
+  } catch (err) {
+    console.warn('Event upload error:', err);
+    eventBuffer.push(...toSend);
+  }
+}
+
 function saveStats() {
   saveStatsLocal();
   syncToSupabase();
+  flushEvents();
+}
+
+// ---- Alert feed (on-screen log) ----
+function addAlertToFeed(type, message) {
+  const now = new Date();
+  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const item = document.createElement('div');
+  item.style.marginBottom = '4px';
+  item.innerHTML = `<span style="font-family:var(--mono);">${time}</span> <span style="color:var(--ink);">${message}</span>`;
+  if (alertFeed.children.length === 1 && alertFeed.children[0].innerText === 'No alerts yet') {
+    alertFeed.innerHTML = '';
+  }
+  alertFeed.insertBefore(item, alertFeed.firstChild);
+  // Keep only last 20 entries
+  while (alertFeed.children.length > 20) {
+    alertFeed.removeChild(alertFeed.lastChild);
+  }
 }
 
 // ---- Audio unlock & keep-alive ----
@@ -202,14 +278,12 @@ async function ensureAudioUnlocked() {
   return true;
 }
 
-// Background silent audio loop to prevent AudioContext suspension
 function startBgSilentAudio() {
   if (!silentAudioEl) {
     silentAudioEl = new Audio();
-    // A short silent WAV (base64) – just enough to be valid and inaudible
     silentAudioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
     silentAudioEl.loop = true;
-    silentAudioEl.volume = 0.001;  // almost inaudible
+    silentAudioEl.volume = 0.001;
   }
   silentAudioEl.play().catch(e => console.warn('silent audio play blocked:', e));
   bgAudioEnabled = true;
@@ -269,11 +343,9 @@ async function speak(text) {
   } catch (err) {
     console.warn('Piper synthesis failed, falling back to browser TTS:', err);
   }
-  // Fallback to browser SpeechSynthesis
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    // Optionally select a voice from the stored preference
     const savedVoice = localStorage.getItem('plumb:speechVoice');
     if (savedVoice) {
       const voices = window.speechSynthesis.getVoices();
@@ -284,7 +356,7 @@ async function speak(text) {
   }
 }
 
-// Phrase collections
+// ---- Phrases ----
 const LEFT_PHRASES = [
   "You're leaning to the left — straighten up.",
   "Left side drift — bring your head back to centre.",
@@ -331,7 +403,7 @@ function neckCompressionRatio(earMid, shoulderMid, leftSh, rightSh) {
 
 function lateralDeviation(earMid, shMid, leftSh, rightSh) {
   const shoulderWidth = Math.hypot(leftSh.x - rightSh.x, leftSh.y - rightSh.y) || 0.0001;
-  return (earMid.x - shMid.x) / shoulderWidth; // negative = left, positive = right
+  return (earMid.x - shMid.x) / shoulderWidth; // negative = left
 }
 
 // ---- Pose detection ----
@@ -376,12 +448,16 @@ async function startCamera() {
     calibrateBtn.disabled = false;
     startBtn.textContent = 'Start camera';
     lastFrameTime = performance.now();
-    // Reset break/presence state
+
+    // Merge remote stats before tracking begins
+    await mergeRemoteStats();
+
     presenceStart = null;
-    lastBreakEnd = Date.now();  // treat start as after a break
+    lastBreakEnd = Date.now();
     breakStart = null;
     isPersonPresent = false;
-    breaksTaken = stats.breaksTaken; // load from today's stats if any
+    breaksTaken = stats.breaksTaken;
+
     ensurePiperVoice(currentVoiceId);
     await ensureAudioUnlocked();
     if (bgAudioEnabled) startBgSilentAudio();
@@ -479,7 +555,6 @@ function drawPostureMap(lateral, compression) {
   const w = postureMap.width, h = postureMap.height;
   pmCtx.clearRect(0, 0, w, h);
 
-  // Crosshair
   pmCtx.strokeStyle = '#ccc';
   pmCtx.lineWidth = 1;
   pmCtx.beginPath();
@@ -487,30 +562,26 @@ function drawPostureMap(lateral, compression) {
   pmCtx.moveTo(0, h/2); pmCtx.lineTo(w, h/2);
   pmCtx.stroke();
 
-  // Scale factors
   const scaleX = w * 0.45;
   const scaleY = h * 0.45;
-  // Flip lateral so left on screen = left dot (mirroring the user view)
   const dotX = w/2 - lateral * scaleX * 2;
-  const dotY = h/2 + compression * scaleY * 5; // positive compression = down
+  const dotY = h/2 + compression * scaleY * 5;
 
   const clampedX = Math.max(8, Math.min(w-8, dotX));
   const clampedY = Math.max(8, Math.min(h-8, dotY));
 
   const distFromCenter = Math.hypot((clampedX - w/2)/scaleX, (clampedY - h/2)/scaleY);
-  // Green (centre) -> Amber (moderate) -> Red (far)
   if (distFromCenter > 0.5) {
-    pmCtx.fillStyle = '#C0492F'; // red
+    pmCtx.fillStyle = '#C0492F';
   } else if (distFromCenter > 0.25) {
-    pmCtx.fillStyle = '#C98A2C'; // amber
+    pmCtx.fillStyle = '#C98A2C';
   } else {
-    pmCtx.fillStyle = '#27AE60'; // green
+    pmCtx.fillStyle = '#27AE60';
   }
   pmCtx.beginPath();
   pmCtx.arc(clampedX, clampedY, 7, 0, 2*Math.PI);
   pmCtx.fill();
 
-  // Axis labels
   pmCtx.fillStyle = '#57676C';
   pmCtx.font = '10px sans-serif';
   pmCtx.textAlign = 'center';
@@ -520,12 +591,47 @@ function drawPostureMap(lateral, compression) {
   pmCtx.fillText('Slump', w/2, h-4);
 }
 
+// ---- Event logging (slouch start/end) ----
+function logSlouchEvent(type, startTime, endTime) {
+  const duration = Math.round((endTime - startTime) / 1000);
+  if (duration <= 0) return;
+  eventBuffer.push({
+    date: today(),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type,
+    duration_seconds: duration
+  });
+}
+
+// ---- Day change detection ----
+function maybeSwitchDay() {
+  const current = today();
+  if (stats.date !== current) {
+    saveStats();
+    stats = {
+      date: current,
+      sessionSeconds: 0,
+      slouchSeconds: 0,
+      postureNudges: 0,
+      breakNudges: 0,
+      breaksTaken: 0
+    };
+    breaksTaken = 0;
+    presenceStart = null;
+    lastBreakEnd = Date.now();
+    speak("Good morning! A new day of posture tracking has started.");
+  }
+}
+
 // ---- Main loop ----
 function loop() {
   if (!running) return;
   const now = performance.now();
   const elapsedSec = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
+
+  maybeSwitchDay();
 
   const result = landmarker.detectForVideo(video, now);
   ctx.clearRect(0, 0, overlay.width, overlay.height);
@@ -551,11 +657,10 @@ function loop() {
     isPersonPresent = true;
 
     if (!wasPresent) {
-      // Person just reappeared
       const nowTime = Date.now();
       if (breakStart) {
         const breakDuration = nowTime - breakStart;
-        if (breakDuration > 30000) { // only count breaks > 30 seconds
+        if (breakDuration > 30000) {
           breaksTaken++;
         }
         const mins = Math.round(breakDuration / 60000);
@@ -563,24 +668,20 @@ function loop() {
           ? WELCOME_BACK_LONG[welcomeIdx % WELCOME_BACK_LONG.length]
           : WELCOME_BACK_SHORT[welcomeIdx % WELCOME_BACK_SHORT.length];
         speak(welcomeMsg);
+        addAlertToFeed('break', `Returned from break (${mins} min)`);
         welcomeIdx++;
-        // Reset break state
-        breakStart = null;
-        lastBreakEnd = nowTime;
-      } else {
-        // just started for the first time
-        lastBreakEnd = nowTime;
       }
-      presenceStart = nowTime; // start of new continuous presence
+      breakStart = null;
+      lastBreakEnd = nowTime;
+      presenceStart = nowTime;
     }
 
-    // Compute deviations
     const lateral = baselineLateral !== null
       ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral
       : 0;
     const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
     const compression = baselineNeckRatio !== null
-      ? baselineNeckRatio - neckRatio   // positive = more compressed (slump)
+      ? baselineNeckRatio - neckRatio
       : 0;
 
     drawPostureMap(lateral, compression);
@@ -588,8 +689,8 @@ function loop() {
     if (baselineLateral === null || baselineNeckRatio === null) {
       setStatus('idle', 'Calibrate to begin tracking');
     } else {
-      const lateralTolerance = Number(toleranceSlider.value);   // e.g., 0.20
-      const compressionTolerance = Number(compressionToleranceSlider.value); // e.g., 0.10
+      const lateralTolerance = Number(toleranceSlider.value);
+      const compressionTolerance = Number(compressionToleranceSlider.value);
       const sustainMs = Number(sustainSlider.value) * 1000;
 
       const isLateralLeft = lateral < -lateralTolerance;
@@ -597,57 +698,68 @@ function loop() {
       const isCompressed = compression > compressionTolerance;
 
       const isSlouching = isLateralLeft || isLateralRight || isCompressed;
+      const currentType = isLateralLeft ? 'lateral_left' : isLateralRight ? 'lateral_right' : isCompressed ? 'compression' : null;
 
       if (isSlouching) {
         stats.slouchSeconds += elapsedSec;
-        if (slouchStartedAt === null) slouchStartedAt = Date.now();
+        if (slouchStartedAt === null) {
+          slouchStartedAt = Date.now();
+          slouchType = currentType;
+        }
         const slouchedFor = Date.now() - slouchStartedAt;
         setStatus('alert', `Slouching — ${Math.round(slouchedFor / 1000)}s`);
         if (slouchedFor > sustainMs && Date.now() - lastPostureNudgeAt > 30000) {
-          // Determine dominant deviation for phrase selection
-          let phrases;
-          if (isCompressed && (!isLateralLeft && !isLateralRight || compression > Math.abs(lateral))) {
-            phrases = SLUMP_PHRASES;
+          let phrase;
+          if (currentType === 'compression') {
+            phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length];
             slumpIdx++;
-            speak(phrases[(slumpIdx - 1) % phrases.length]);
-          } else if (isLateralLeft && (!isLateralRight || lateralTolerance > 0)) {
-            phrases = LEFT_PHRASES;
+          } else if (currentType === 'lateral_left') {
+            phrase = LEFT_PHRASES[leftIdx % LEFT_PHRASES.length];
             leftIdx++;
-            speak(phrases[(leftIdx - 1) % phrases.length]);
           } else {
-            phrases = RIGHT_PHRASES;
+            phrase = RIGHT_PHRASES[rightIdx % RIGHT_PHRASES.length];
             rightIdx++;
-            speak(phrases[(rightIdx - 1) % phrases.length]);
           }
-          console.log('Posture nudge fired', new Date().toLocaleTimeString());
+          speak(phrase);
+          addAlertToFeed(currentType, phrase);
           stats.postureNudges++;
           lastPostureNudgeAt = Date.now();
         }
       } else {
+        // Slouch ended
+        if (slouchStartedAt !== null) {
+          logSlouchEvent(slouchType, slouchStartedAt, Date.now());
+        }
         slouchStartedAt = null;
+        slouchType = null;
         setStatus('good', 'Sitting well');
       }
 
-      // Break prompt logic (continuous presence)
+      // Break prompt
       if (presenceStart) {
         const continuousMinutes = (Date.now() - presenceStart) / 60000;
-        const breakInterval = Number(breakSlider.value); // minutes
+        const breakInterval = Number(breakSlider.value);
         if (continuousMinutes >= breakInterval && Date.now() - lastBreakNudgeAt > 60000) {
-          speak(BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length]);
+          const phrase = BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length];
+          speak(phrase);
+          addAlertToFeed('break_prompt', phrase);
           breakIdx++;
           stats.breakNudges++;
           lastBreakNudgeAt = Date.now();
-          // We do NOT reset presenceStart here; it continues until an actual break.
         }
       }
     }
   } else {
     // No person detected
     if (isPersonPresent) {
-      // Person just left
+      // Person left – end any ongoing slouch event
+      if (slouchStartedAt !== null) {
+        logSlouchEvent(slouchType, slouchStartedAt, Date.now());
+        slouchStartedAt = null;
+        slouchType = null;
+      }
       breakStart = Date.now();
       isPersonPresent = false;
-      slouchStartedAt = null;  // stop slouch accumulation
       setStatus('idle', 'No person detected');
     }
   }
@@ -672,7 +784,13 @@ calibrateBtn.addEventListener('click', () => {
 });
 
 // ---- Event wiring ----
-setInterval(saveStats, 10000);
+// Day change check + save every 10s
+maybeSwitchDay();
+setInterval(() => {
+  maybeSwitchDay();
+  saveStats();
+}, 10000);
+
 window.addEventListener('beforeunload', saveStats);
 
 startBtn.addEventListener('click', startCamera);
@@ -706,7 +824,6 @@ exportBtn.addEventListener('click', () => {
   a.click();
 });
 
-// Slider updates
 toleranceSlider.addEventListener('input', () => (toleranceVal.textContent = toleranceSlider.value));
 compressionToleranceSlider.addEventListener('input', () => (compressionToleranceVal.textContent = compressionToleranceSlider.value));
 sustainSlider.addEventListener('input', () => (sustainVal.textContent = `${sustainSlider.value}s`));
