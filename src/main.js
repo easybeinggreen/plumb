@@ -92,7 +92,10 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const LOG_KEY = (d) => `plumb:${d}`;
 
 let stats = loadTodayStats();
