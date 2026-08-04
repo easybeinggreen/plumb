@@ -19,7 +19,7 @@ const calibrateBtn = document.getElementById('calibrateBtn');
 const testVoiceBtn = document.getElementById('testVoiceBtn');
 const muteBtn = document.getElementById('muteBtn');
 const bgAudioBtn = document.getElementById('bgAudioBtn');
-const exportBtn = document.getElementById('exportBtn');
+const reportBtn = document.getElementById('reportBtn');
 const voiceSelect = document.getElementById('voiceSelect');
 
 const statusCard = document.getElementById('statusCard');
@@ -28,13 +28,6 @@ const statusValue = document.getElementById('statusValue');
 const postureMap = document.getElementById('postureMap');
 const pmCtx = postureMap.getContext('2d');
 const gaugeCaption = document.getElementById('gaugeCaption');
-
-const statSession = document.getElementById('statSession');
-const statSlouch = document.getElementById('statSlouch');
-const statPostureNudges = document.getElementById('statPostureNudges');
-const statBreakNudges = document.getElementById('statBreakNudges');
-const statBreaksTaken = document.getElementById('statBreaksTaken');
-const statSinceBreak = document.getElementById('statSinceBreak');
 
 const toleranceSlider = document.getElementById('toleranceSlider');
 const compressionToleranceSlider = document.getElementById('compressionToleranceSlider');
@@ -48,6 +41,15 @@ const breakVal = document.getElementById('breakVal');
 const syncDot = document.getElementById('syncDot');
 const syncText = document.getElementById('syncText');
 const alertFeed = document.getElementById('alertFeed');
+
+// Report modal elements
+const modalOverlay = document.getElementById('modalOverlay');
+const modalClose = document.getElementById('modalClose');
+const modalTabs = document.getElementById('modalTabs');
+const reportSummary = document.getElementById('reportSummary');
+const slouchChartCtx = document.getElementById('slouchChart').getContext('2d');
+
+let currentChart = null;
 
 // ---- State ----
 let landmarker = null;
@@ -69,24 +71,23 @@ let lastPostureNudgeAt = 0;
 // Break / presence logic
 let presenceStart = null;
 let isPersonPresent = false;
-let lastBreakEnd = null;
-let breakStart = null;
+let lastBreakEnd = null;          // when the last break ended (person returned)
+let breakStart = null;            // when current break began
 let breaksTaken = 0;
 let lastBreakNudgeAt = 0;
 
-// Event buffer
+// Event buffer (flush every 10s)
 let eventBuffer = [];
 
 // Audio context and background silent loop
 let audioCtx = null;
 let silentAudioEl = null;
 
-// Voice selection: value can be a Piper voice ID or a SpeechSynthesis voice name
+// Voice selection
 let currentVoiceId = localStorage.getItem('plumb:voice') || '';
 let piperSession = null;
 let piperSessionVoice = null;
 
-// Piper WASM paths
 const PIPER_WASM_PATHS = {
   onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/',
   piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
@@ -100,6 +101,7 @@ const today = () => {
 };
 
 const LOG_KEY = (d) => `plumb:${d}`;
+const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
 
 let stats = loadTodayStats();
 
@@ -136,7 +138,14 @@ function loadTodayStats() {
       return s;
     } catch (e) {}
   }
-  return { date: today(), sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
+  return {
+    date: today(),
+    sessionSeconds: 0,
+    slouchSeconds: 0,
+    postureNudges: 0,
+    breakNudges: 0,
+    breaksTaken: 0
+  };
 }
 
 function saveStatsLocal() {
@@ -203,7 +212,6 @@ async function syncToSupabase() {
 
 async function flushEvents() {
   if (!SYNC_CONFIGURED || eventBuffer.length === 0) return;
-  console.log('Flushing', eventBuffer.length, 'events'); 
   const toSend = [...eventBuffer];
   eventBuffer = [];
   try {
@@ -219,11 +227,11 @@ async function flushEvents() {
     });
     if (!res.ok) {
       const errText = await res.text();
-      console.warn('Event upload failed:', res.status, errText);
+      console.error('Event upload failed:', res.status, errText);
       eventBuffer.push(...toSend);
     }
   } catch (err) {
-    console.warn('Event upload error:', err);
+    console.error('Event upload error:', err);
     eventBuffer.push(...toSend);
   }
 }
@@ -253,13 +261,24 @@ function addAlertToFeed(type, message) {
 // ---- Event logging ----
 function logSlouchEvent(type, startTime, endTime) {
   const duration = Math.round((endTime - startTime) / 1000);
-  console.log('logSlouchEvent called', type, duration); // <-- ADD THIS
   if (duration <= 0) return;
   eventBuffer.push({
     date: today(),
     start_time: new Date(startTime).toISOString(),
     end_time: new Date(endTime).toISOString(),
     type,
+    duration_seconds: duration
+  });
+}
+
+function logBreakEvent(startTime, endTime) {
+  const duration = Math.round((endTime - startTime) / 1000);
+  if (duration <= 0) return;
+  eventBuffer.push({
+    date: today(),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type: 'break',
     duration_seconds: duration
   });
 }
@@ -272,6 +291,20 @@ function logCalibrationEvent() {
     type: 'calibration',
     duration_seconds: 0
   });
+}
+
+// ---- Retrospective break detection ----
+function logRetrospectiveBreak() {
+  const lastEndStr = localStorage.getItem(LAST_SESSION_END_KEY);
+  if (!lastEndStr) return;
+  const lastEnd = new Date(lastEndStr).getTime();
+  const now = Date.now();
+  const gapMinutes = (now - lastEnd) / 60000;
+  if (gapMinutes >= 1) {
+    // Log a break for the period the app was closed
+    logBreakEvent(lastEnd, now);
+    breaksTaken++;
+  }
 }
 
 // ---- Audio unlock & keep-alive ----
@@ -301,21 +334,17 @@ function stopBgSilentAudio() {
   bgAudioBtn.textContent = 'Background nudges: off';
 }
 
-// ---- Voice system (dynamic SpeechSynthesis + Piper fallback) ----
+// ---- Voice system ----
 function populateVoiceList() {
   if (!window.speechSynthesis) return;
   const voices = window.speechSynthesis.getVoices();
   if (voices.length === 0) return;
 
-  // Save current selected value (if any)
   const currentVal = voiceSelect.value;
-
-  // Clear and rebuild options
   voiceSelect.innerHTML = '';
 
-  // Group: Browser voices (only good English ones)
-  const englishVoices = voices.filter(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Microsoft') || v.name.includes('Samantha') || v.name.includes('Daniel')));
-  // If none found, include all English voices
+  const englishVoices = voices.filter(v => v.lang.startsWith('en') &&
+    (v.name.includes('Google') || v.name.includes('Microsoft') || v.name.includes('Samantha') || v.name.includes('Daniel')));
   const usedVoices = englishVoices.length > 0 ? englishVoices : voices.filter(v => v.lang.startsWith('en'));
 
   if (usedVoices.length > 0) {
@@ -330,7 +359,6 @@ function populateVoiceList() {
     voiceSelect.appendChild(optgroup);
   }
 
-  // Group: Piper offline voices
   const piperVoices = [
     { id: 'en_US-hfc_female-medium', name: 'Piper: US female' },
     { id: 'en_US-hfc_male-medium', name: 'Piper: US male' },
@@ -347,22 +375,16 @@ function populateVoiceList() {
   });
   voiceSelect.appendChild(piperGroup);
 
-  // Restore previous selection if it still exists
   if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
     voiceSelect.value = currentVal;
-  } else if (currentVoiceId) {
-    // fallback to stored preference
-    if ([...voiceSelect.options].some(o => o.value === currentVoiceId)) {
-      voiceSelect.value = currentVoiceId;
-    }
+  } else if (currentVoiceId && [...voiceSelect.options].some(o => o.value === currentVoiceId)) {
+    voiceSelect.value = currentVoiceId;
   } else {
-    // Default: first available browser voice, else Piper US female
     if (usedVoices.length > 0) voiceSelect.value = usedVoices[0].name;
     else voiceSelect.value = 'en_US-hfc_female-medium';
   }
 }
 
-// Initialize voice list
 if (window.speechSynthesis) {
   populateVoiceList();
   window.speechSynthesis.onvoiceschanged = populateVoiceList;
@@ -371,7 +393,7 @@ if (window.speechSynthesis) {
 voiceSelect.addEventListener('change', () => {
   currentVoiceId = voiceSelect.value;
   localStorage.setItem('plumb:voice', currentVoiceId);
-  testVoiceBtn.textContent = 'Test voice'; // reset
+  testVoiceBtn.textContent = 'Test voice';
 });
 
 async function speak(text) {
@@ -379,7 +401,6 @@ async function speak(text) {
   const unlocked = await ensureAudioUnlocked();
   if (!unlocked) return;
 
-  // If selected voice is a SpeechSynthesis voice (not a Piper ID)
   const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v => v.name === currentVoiceId);
   if (isBrowserVoice) {
     if ('speechSynthesis' in window) {
@@ -393,7 +414,6 @@ async function speak(text) {
     }
   }
 
-  // Otherwise use Piper
   try {
     const ok = await ensurePiperVoice(currentVoiceId);
     if (ok) {
@@ -409,7 +429,6 @@ async function speak(text) {
     console.warn('Piper synthesis failed, falling back to browser TTS:', err);
   }
 
-  // Ultimate fallback to any browser TTS
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -532,17 +551,20 @@ async function startCamera() {
     stopBtn.disabled = false;
     calibrateBtn.disabled = false;
 
-    // Button states (fixed colours)
     startBtn.textContent = 'Camera started';
-    startBtn.style.backgroundColor = '#2C6E8E';   // good
+    startBtn.style.backgroundColor = '#2C6E8E';
     startBtn.style.borderColor = '#2C6E8E';
-    startBtn.disabled = true; // prevent double start
+    startBtn.disabled = true;
 
     calibrateBtn.textContent = 'Calibrate posture';
-    calibrateBtn.style.backgroundColor = '#C0492F'; // danger
+    calibrateBtn.style.backgroundColor = '#C0492F';
     calibrateBtn.style.borderColor = '#C0492F';
 
     lastFrameTime = performance.now();
+
+    // Log retrospective break since last session end
+    logRetrospectiveBreak();
+
     await mergeRemoteStats();
 
     presenceStart = null;
@@ -568,12 +590,14 @@ function stopCamera() {
   running = false;
   if (rafId) cancelAnimationFrame(rafId);
 
-  // Log any ongoing slouch before stopping
   if (slouchStartedAt !== null) {
     logSlouchEvent(slouchType, slouchStartedAt, Date.now());
     slouchStartedAt = null;
     slouchType = null;
   }
+
+  // Save last session end timestamp
+  localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
 
   const stream = video.srcObject;
   if (stream) stream.getTracks().forEach((t) => t.stop());
@@ -584,7 +608,6 @@ function stopCamera() {
   stopBtn.disabled = true;
   calibrateBtn.disabled = true;
 
-  // Reset buttons
   startBtn.disabled = false;
   startBtn.textContent = 'Start camera';
   startBtn.style.backgroundColor = '';
@@ -597,7 +620,7 @@ function stopCamera() {
   saveStats();
 }
 
-// ---- Camera picker (unchanged) ----
+// ---- Camera picker ----
 async function populateCameraList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -643,25 +666,6 @@ function setStatus(mode, text) {
   statusCard.classList.remove('good', 'alert', 'idle');
   statusCard.classList.add(mode);
   statusValue.textContent = text;
-}
-
-function fmtMinSec(totalSeconds) { return `${Math.floor(totalSeconds / 60)}m`; }
-
-function refreshStatDisplay() {
-  statSession.textContent = fmtMinSec(stats.sessionSeconds);
-  const pct = stats.sessionSeconds ? Math.round((stats.slouchSeconds / stats.sessionSeconds) * 100) : 0;
-  statSlouch.textContent = `${fmtMinSec(stats.slouchSeconds)} (${pct}%)`;
-  statPostureNudges.textContent = stats.postureNudges;
-  statBreakNudges.textContent = stats.breakNudges;
-  statBreaksTaken.textContent = breaksTaken;
-  const sinceBreak = lastBreakEnd ? Math.floor((Date.now() - lastBreakEnd) / 1000) : 0;
-  if (sinceBreak > 0) {
-    const mm = String(Math.floor(sinceBreak / 60)).padStart(2, '0');
-    const ss = String(sinceBreak % 60).padStart(2, '0');
-    statSinceBreak.textContent = `${mm}:${ss}`;
-  } else {
-    statSinceBreak.textContent = '--';
-  }
 }
 
 function drawPostureMap(lateral, compression) {
@@ -746,7 +750,10 @@ function loop() {
       const nowTime = Date.now();
       if (breakStart) {
         const breakDuration = nowTime - breakStart;
-        if (breakDuration > 30000) breaksTaken++;
+        if (breakDuration > 30000) {
+          breaksTaken++;
+          logBreakEvent(breakStart, nowTime);
+        }
         const mins = Math.round(breakDuration / 60000);
         const welcomeMsg = mins >= 5
           ? WELCOME_BACK_LONG[welcomeIdx % WELCOME_BACK_LONG.length]
@@ -773,8 +780,8 @@ function loop() {
       const compressionTolerance = Number(compressionToleranceSlider.value);
       const sustainMs = Number(sustainSlider.value) * 1000;
 
-      const isLateralLeft = lateral > lateralTolerance;       // positive = left
-      const isLateralRight = lateral < -lateralTolerance;     // negative = right
+      const isLateralLeft = lateral > lateralTolerance;
+      const isLateralRight = lateral < -lateralTolerance;
       const isCompressed = compression > compressionTolerance;
 
       const isSlouching = isLateralLeft || isLateralRight || isCompressed;
@@ -814,7 +821,6 @@ function loop() {
         setStatus('good', 'Sitting well');
       }
 
-      // Break prompt
       if (presenceStart) {
         const continuousMinutes = (Date.now() - presenceStart) / 60000;
         const breakInterval = Number(breakSlider.value);
@@ -841,11 +847,10 @@ function loop() {
     }
   }
 
-  refreshStatDisplay();
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- Calibration (with event logging) ----
+// ---- Calibration ----
 calibrateBtn.addEventListener('click', () => {
   const now = performance.now();
   const result = landmarker.detectForVideo(video, now);
@@ -860,10 +865,235 @@ calibrateBtn.addEventListener('click', () => {
     addAlertToFeed('calibration', 'Posture calibrated');
     logCalibrationEvent();
 
-    // Update button
     calibrateBtn.textContent = 'Posture calibrated';
-    calibrateBtn.style.backgroundColor = '#2C6E8E'; // good
+    calibrateBtn.style.backgroundColor = '#2C6E8E';
     calibrateBtn.style.borderColor = '#2C6E8E';
+  }
+});
+
+// ---- Report modal logic ----
+async function fetchEventsForRange(startDate, endDate) {
+  if (!SYNC_CONFIGURED) return [];
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/posture_events?date=gte.${startDate}&date=lte.${endDate}&order=date.asc,start_time.asc`,
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
+    );
+    if (!res.ok) throw new Error('fetch failed');
+    return await res.json();
+  } catch (err) {
+    console.warn('Failed to fetch events:', err);
+    return [];
+  }
+}
+
+async function fetchDailyLogs(startDate, endDate) {
+  if (!SYNC_CONFIGURED) return [];
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/posture_logs?date=gte.${startDate}&date=lte.${endDate}&order=date.asc`,
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
+    );
+    if (!res.ok) throw new Error('fetch failed');
+    return await res.json();
+  } catch (err) {
+    console.warn('Failed to fetch logs:', err);
+    return [];
+  }
+}
+
+function aggregateDayFromEvents(events) {
+  const day = { break: 0, good: 0, left: 0, right: 0, slump: 0, breaks: 0 };
+  events.forEach(e => {
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'break') {
+      day.break += dur;
+      day.breaks++;
+    } else if (e.type === 'lateral_left') day.left += dur;
+    else if (e.type === 'lateral_right') day.right += dur;
+    else if (e.type === 'compression') day.slump += dur;
+  });
+  return day;
+}
+
+function buildChartData(days, eventsMap) {
+  const dates = Object.keys(eventsMap).sort();
+  const datasets = [];
+  const labels = dates.map(d => {
+    const date = new Date(d + 'T00:00:00');
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  });
+
+  const breakData = dates.map(d => Math.round((eventsMap[d].break || 0) / 60));
+  const goodData = dates.map(d => {
+    const totalSession = eventsMap[d].sessionSeconds || 0;
+    const slouchTotal = eventsMap[d].left + eventsMap[d].right + eventsMap[d].slump;
+    const good = Math.max(0, totalSession - slouchTotal);
+    return Math.round(good / 60);
+  });
+  const leftData = dates.map(d => Math.round((eventsMap[d].left || 0) / 60));
+  const rightData = dates.map(d => Math.round((eventsMap[d].right || 0) / 60));
+  const slumpData = dates.map(d => Math.round((eventsMap[d].slump || 0) / 60));
+
+  return {
+    labels,
+    datasets: [
+      {
+        label: 'Break',
+        data: breakData,
+        backgroundColor: '#B0BEC5',
+        borderColor: '#90A4AE',
+        borderWidth: 1
+      },
+      {
+        label: 'Good posture',
+        data: goodData,
+        backgroundColor: '#27AE60',
+        borderColor: '#219A52',
+        borderWidth: 1
+      },
+      {
+        label: 'Slouch left',
+        data: leftData,
+        backgroundColor: '#E74C3C',
+        borderColor: '#C0392B',
+        borderWidth: 1
+      },
+      {
+        label: 'Slouch right',
+        data: rightData,
+        backgroundColor: '#F39C12',
+        borderColor: '#D68910',
+        borderWidth: 1
+      },
+      {
+        label: 'Slump',
+        data: slumpData,
+        backgroundColor: '#8E44AD',
+        borderColor: '#7D3C98',
+        borderWidth: 1
+      }
+    ]
+  };
+}
+
+function computeSummary(day) {
+  const session = day.sessionSeconds || 0;
+  const slouch = day.left + day.right + day.slump;
+  const breakTime = day.break || 0;
+  const total = session + breakTime;
+  const slouchPct = total ? Math.round((slouch / total) * 100) : 0;
+  const breakPct = total ? Math.round((breakTime / total) * 100) : 0;
+  const avgBreak = day.breaks ? Math.round(breakTime / day.breaks / 60) : 0;
+  return { totalMinutes: Math.round(total / 60), slouchPct, breakPct, avgBreak, breaks: day.breaks };
+}
+
+async function showReport(range) {
+  let start, end;
+  const currentDate = today();
+  if (range === 'today') {
+    start = currentDate;
+    end = currentDate;
+  } else if (range === 'week') {
+    const d = new Date(currentDate + 'T00:00:00');
+    d.setDate(d.getDate() - 6);
+    start = d.toISOString().slice(0, 10);
+    end = currentDate;
+  } else if (range === 'month') {
+    const d = new Date(currentDate + 'T00:00:00');
+    d.setDate(d.getDate() - 29);
+    start = d.toISOString().slice(0, 10);
+    end = currentDate;
+  }
+
+  const events = await fetchEventsForRange(start, end);
+  const logs = await fetchDailyLogs(start, end);
+
+  // Merge logs with events per day
+  const eventsMap = {};
+  events.forEach(e => {
+    const d = e.date;
+    if (!eventsMap[d]) eventsMap[d] = { break: 0, good: 0, left: 0, right: 0, slump: 0, breaks: 0 };
+    aggregateDayFromEvents([e]); // we'll do a proper aggregation
+  });
+  // Better: aggregate all events
+  eventsMap.clear = () => {};
+  events.forEach(e => {
+    const d = e.date;
+    if (!eventsMap[d]) eventsMap[d] = { break: 0, good: 0, left: 0, right: 0, slump: 0, breaks: 0 };
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'break') {
+      eventsMap[d].break += dur;
+      eventsMap[d].breaks++;
+    } else if (e.type === 'lateral_left') eventsMap[d].left += dur;
+    else if (e.type === 'lateral_right') eventsMap[d].right += dur;
+    else if (e.type === 'compression') eventsMap[d].slump += dur;
+  });
+  // Add session seconds from logs
+  logs.forEach(log => {
+    const d = log.date;
+    if (!eventsMap[d]) eventsMap[d] = { break: 0, good: 0, left: 0, right: 0, slump: 0, breaks: 0 };
+    eventsMap[d].sessionSeconds = log.session_seconds || 0;
+  });
+
+  const chartData = buildChartData(Object.keys(eventsMap), eventsMap);
+
+  // Overall summary for the range
+  const allSummary = Object.values(eventsMap).reduce((acc, day) => {
+    const sess = day.sessionSeconds || 0;
+    const slouch = day.left + day.right + day.slump;
+    const bt = day.break || 0;
+    acc.totalBreak += bt;
+    acc.totalSession += sess;
+    acc.totalSlouch += slouch;
+    acc.totalBreaks += day.breaks;
+    return acc;
+  }, { totalBreak: 0, totalSession: 0, totalSlouch: 0, totalBreaks: 0 });
+  const totalOverall = allSummary.totalBreak + allSummary.totalSession;
+  const overallSlouchPct = totalOverall ? Math.round((allSummary.totalSlouch / totalOverall) * 100) : 0;
+  const overallAvgBreak = allSummary.totalBreaks ? Math.round(allSummary.totalBreak / allSummary.totalBreaks / 60) : 0;
+
+  reportSummary.innerHTML = `
+    <div class="metric"><div class="value">${Math.round(totalOverall / 60)}m</div><div class="label">Monitored time</div></div>
+    <div class="metric"><div class="value">${overallSlouchPct}%</div><div class="label">Slouch %</div></div>
+    <div class="metric"><div class="value">${allSummary.totalBreaks}</div><div class="label">Breaks</div></div>
+    <div class="metric"><div class="value">${overallAvgBreak}m</div><div class="label">Avg break</div></div>
+  `;
+
+  if (currentChart) currentChart.destroy();
+  currentChart = new Chart(slouchChartCtx, {
+    type: 'bar',
+    data: chartData,
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, title: { display: true, text: 'Minutes' } }
+      },
+      plugins: {
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
+      }
+    }
+  });
+}
+
+// Modal event listeners
+reportBtn.addEventListener('click', () => {
+  modalOverlay.classList.add('open');
+  const activeTab = document.querySelector('.tab.active');
+  showReport(activeTab ? activeTab.dataset.range : 'today');
+});
+
+modalClose.addEventListener('click', () => {
+  modalOverlay.classList.remove('open');
+});
+
+modalTabs.addEventListener('click', (e) => {
+  if (e.target.classList.contains('tab')) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    e.target.classList.add('active');
+    showReport(e.target.dataset.range);
   }
 });
 
@@ -880,6 +1110,7 @@ window.addEventListener('beforeunload', () => {
     slouchStartedAt = null;
     slouchType = null;
   }
+  localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   saveStats();
 });
 
@@ -896,8 +1127,6 @@ bgAudioBtn.addEventListener('click', () => {
   else startBgSilentAudio();
 });
 
-// Voice select already handled via dynamic list and change listener above.
-
 exportBtn.addEventListener('click', () => {
   saveStatsLocal();
   const days = getAllStoredDays();
@@ -912,5 +1141,3 @@ toleranceSlider.addEventListener('input', () => (toleranceVal.textContent = tole
 compressionToleranceSlider.addEventListener('input', () => (compressionToleranceVal.textContent = compressionToleranceSlider.value));
 sustainSlider.addEventListener('input', () => (sustainVal.textContent = `${sustainSlider.value}s`));
 breakSlider.addEventListener('input', () => (breakVal.textContent = `${breakSlider.value} min`));
-
-setInterval(refreshStatDisplay, 1000);
