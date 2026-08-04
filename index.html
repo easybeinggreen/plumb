@@ -98,13 +98,6 @@
   .gauge-wrap { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
   .gauge-caption { font-size: 12px; color: var(--ink-soft); text-align: center; margin-top: 4px; }
 
-  .stat-row {
-    display: flex; justify-content: space-between; padding: 7px 0;
-    border-bottom: 1px dashed var(--paper-line); font-size: 13px;
-  }
-  .stat-row:last-child { border-bottom: none; }
-  .stat-row .val { font-family: var(--mono); font-weight: 600; }
-
   .slider-row { margin-bottom: 12px; }
   .slider-row label { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
   .slider-row label .v { font-family: var(--mono); color: var(--ink); }
@@ -119,6 +112,38 @@
   .sync-note .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--paper-line); flex-shrink: 0; }
   .sync-note .dot.ok { background: var(--good); }
   .sync-note .dot.err { background: var(--danger); }
+
+  /* Report modal */
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center;
+    z-index: 1000;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh;
+    overflow-y: auto; padding: 24px; position: relative;
+  }
+  .modal-close {
+    position: absolute; top: 12px; right: 16px; background: none; border: none;
+    font-size: 24px; cursor: pointer; color: var(--ink-soft);
+  }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab {
+    padding: 8px 16px; border-radius: 6px; background: var(--paper);
+    border: 1px solid var(--paper-line); cursor: pointer; font-size: 13px;
+  }
+  .tab.active { background: var(--ink); color: #fff; }
+
+  .report-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 20px;
+  }
+  .report-summary .metric { background: var(--paper); border-radius: 8px; padding: 12px; text-align: center; }
+  .metric .value { font-size: 20px; font-weight: 700; color: var(--ink); }
+  .metric .label { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+
+  .chart-container { width: 100%; max-height: 350px; position: relative; }
 
   footer { padding: 0 24px 30px; font-size: 12px; color: var(--ink-soft); }
   footer a { color: var(--good); }
@@ -147,15 +172,11 @@
       <button id="stopBtn" class="secondary" disabled>Stop</button>
       <select id="cameraSelect"><option value="">Default camera</option></select>
       <button id="calibrateBtn" class="secondary" disabled>Calibrate good posture</button>
-      <select id="voiceSelect">
-        <option value="en_US-hfc_female-medium">Voice: US female</option>
-        <option value="en_US-hfc_male-medium">Voice: US male</option>
-        <option value="en_GB-alan-medium">Voice: British male</option>
-        <option value="en_US-lessac-medium">Voice: US narrator</option>
-      </select>
+      <select id="voiceSelect"></select>
       <button id="testVoiceBtn" class="secondary">Test voice</button>
       <button id="muteBtn" class="secondary">Mute voice: off</button>
       <button id="bgAudioBtn" class="secondary">Background nudges: off</button>
+      <button id="reportBtn" class="secondary">View report</button>
     </div>
     <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking configuration…</span></div>
   </div>
@@ -171,26 +192,13 @@
       </div>
     </div>
 
-    <!-- Posture map canvas -->
+    <!-- Posture map -->
     <div class="panel gauge-wrap">
       <canvas id="postureMap" width="200" height="200" style="border-radius:8px; border:1px solid var(--paper-line);"></canvas>
       <div class="gauge-caption" id="gaugeCaption">Posture map — left/right &amp; neck height</div>
     </div>
 
-    <div class="panel">
-      <div class="section-title">Today</div>
-      <div class="stat-row"><span>Session time</span><span class="val" id="statSession">0m</span></div>
-      <div class="stat-row"><span>Time slouching</span><span class="val" id="statSlouch">0m (0%)</span></div>
-      <div class="stat-row"><span>Posture nudges</span><span class="val" id="statPostureNudges">0</span></div>
-      <div class="stat-row"><span>Break nudges</span><span class="val" id="statBreakNudges">0</span></div>
-      <div class="stat-row"><span>Breaks taken</span><span class="val" id="statBreaksTaken">0</span></div>
-      <div class="stat-row"><span>Since last break</span><span class="val" id="statSinceBreak">--</span></div>
-      <div class="controls" style="margin-top:12px;">
-        <button id="exportBtn" class="secondary">Download local backup</button>
-      </div>
-    </div>
-
-    <!-- Alert feed panel -->
+    <!-- Alert feed -->
     <div class="panel">
       <div class="section-title">Alert feed</div>
       <div id="alertFeed" style="max-height:160px; overflow-y:auto; font-size:12px; color:var(--ink-soft); line-height:1.4;">
@@ -198,6 +206,7 @@
       </div>
     </div>
 
+    <!-- Sensitivity sliders -->
     <div class="panel">
       <div class="section-title">Sensitivity</div>
       <div class="slider-row">
@@ -220,10 +229,28 @@
   </div>
 </main>
 
+<!-- Report modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <button class="modal-close" id="modalClose">&times;</button>
+    <div class="tabs" id="modalTabs">
+      <button class="tab active" data-range="today">Today</button>
+      <button class="tab" data-range="week">This week</button>
+      <button class="tab" data-range="month">This month</button>
+    </div>
+    <div class="report-summary" id="reportSummary"></div>
+    <div class="chart-container">
+      <canvas id="slouchChart"></canvas>
+    </div>
+  </div>
+</div>
+
 <footer>
   Voice nudges use a local neural TTS model (Piper) that downloads once (~15-25MB) and then runs fully offline. Stats auto-sync to Supabase every ~10s while running — no manual export needed. See <code>README.md</code> for setup.
 </footer>
 
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
