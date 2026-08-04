@@ -203,6 +203,7 @@ async function syncToSupabase() {
 
 async function flushEvents() {
   if (!SYNC_CONFIGURED || eventBuffer.length === 0) return;
+  console.log('Flushing', eventBuffer.length, 'events'); 
   const toSend = [...eventBuffer];
   eventBuffer = [];
   try {
@@ -252,6 +253,7 @@ function addAlertToFeed(type, message) {
 // ---- Event logging ----
 function logSlouchEvent(type, startTime, endTime) {
   const duration = Math.round((endTime - startTime) / 1000);
+  console.log('logSlouchEvent called', type, duration); // <-- ADD THIS
   if (duration <= 0) return;
   eventBuffer.push({
     date: today(),
