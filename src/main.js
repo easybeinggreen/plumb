@@ -63,7 +63,7 @@ let lastFrameTime = performance.now();
 
 // Slouch / posture timers
 let slouchStartedAt = null;
-let slouchType = null;           // 'lateral_left', 'lateral_right', 'compression'
+let slouchType = null;
 let lastPostureNudgeAt = 0;
 
 // Break / presence logic
@@ -74,58 +74,53 @@ let breakStart = null;
 let breaksTaken = 0;
 let lastBreakNudgeAt = 0;
 
-// Event buffer (flushed to Supabase every 30 seconds)
+// Event buffer
 let eventBuffer = [];
 
 // Audio context and background silent loop
 let audioCtx = null;
 let silentAudioEl = null;
 
-let currentVoiceId = localStorage.getItem('plumb:voice') || voiceSelect.value;
-voiceSelect.value = currentVoiceId;
+// Voice selection: value can be a Piper voice ID or a SpeechSynthesis voice name
+let currentVoiceId = localStorage.getItem('plumb:voice') || '';
 let piperSession = null;
 let piperSessionVoice = null;
 
+// Piper WASM paths
 const PIPER_WASM_PATHS = {
   onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/',
   piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
+// Local date helper
 const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+
 const LOG_KEY = (d) => `plumb:${d}`;
 
 let stats = loadTodayStats();
 
-// ---- Multi-device merge: fetch today's remote stats on startup ----
+// ---- Multi-device merge ----
 async function mergeRemoteStats() {
   if (!SYNC_CONFIGURED) return;
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/posture_logs?date=eq.${stats.date}&select=*`,
-      {
-        headers: {
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`
-        }
-      }
+      { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } }
     );
     if (!res.ok) throw new Error('fetch failed');
     const rows = await res.json();
     if (rows.length > 0) {
       const remote = rows[0];
-      // Use the larger of local or remote totals (since local may have been running before sync)
       stats.sessionSeconds = Math.max(stats.sessionSeconds, remote.session_seconds || 0);
       stats.slouchSeconds = Math.max(stats.slouchSeconds, remote.slouch_seconds || 0);
       stats.postureNudges = Math.max(stats.postureNudges, remote.posture_nudges || 0);
       stats.breakNudges = Math.max(stats.breakNudges, remote.break_nudges || 0);
       stats.breaksTaken = Math.max(stats.breaksTaken, remote.breaks_taken || 0);
-      // Also update local in-memory break counter
       breaksTaken = stats.breaksTaken;
-      console.log('Merged remote stats:', stats);
     }
   } catch (err) {
     console.warn('Could not merge remote stats:', err);
@@ -141,14 +136,7 @@ function loadTodayStats() {
       return s;
     } catch (e) {}
   }
-  return {
-    date: today(),
-    sessionSeconds: 0,
-    slouchSeconds: 0,
-    postureNudges: 0,
-    breakNudges: 0,
-    breaksTaken: 0
-  };
+  return { date: today(), sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
 }
 
 function saveStatsLocal() {
@@ -191,17 +179,15 @@ async function syncToSupabase() {
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         Prefer: 'resolution=merge-duplicates,return=minimal'
       },
-      body: JSON.stringify([
-        {
-          date: stats.date,
-          session_seconds: Math.round(stats.sessionSeconds),
-          slouch_seconds: Math.round(stats.slouchSeconds),
-          posture_nudges: stats.postureNudges,
-          break_nudges: stats.breakNudges,
-          breaks_taken: stats.breaksTaken,
-          updated_at: new Date().toISOString()
-        }
-      ]),
+      body: JSON.stringify([{
+        date: stats.date,
+        session_seconds: Math.round(stats.sessionSeconds),
+        slouch_seconds: Math.round(stats.slouchSeconds),
+        posture_nudges: stats.postureNudges,
+        break_nudges: stats.breakNudges,
+        breaks_taken: stats.breaksTaken,
+        updated_at: new Date().toISOString()
+      }]),
       keepalive: true
     });
     if (!res.ok) {
@@ -233,7 +219,6 @@ async function flushEvents() {
     if (!res.ok) {
       const errText = await res.text();
       console.warn('Event upload failed:', res.status, errText);
-      // Put events back so we can retry later
       eventBuffer.push(...toSend);
     }
   } catch (err) {
@@ -248,7 +233,7 @@ function saveStats() {
   flushEvents();
 }
 
-// ---- Alert feed (on-screen log) ----
+// ---- Alert feed ----
 function addAlertToFeed(type, message) {
   const now = new Date();
   const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -259,25 +244,40 @@ function addAlertToFeed(type, message) {
     alertFeed.innerHTML = '';
   }
   alertFeed.insertBefore(item, alertFeed.firstChild);
-  // Keep only last 20 entries
   while (alertFeed.children.length > 20) {
     alertFeed.removeChild(alertFeed.lastChild);
   }
 }
 
+// ---- Event logging ----
+function logSlouchEvent(type, startTime, endTime) {
+  const duration = Math.round((endTime - startTime) / 1000);
+  if (duration <= 0) return;
+  eventBuffer.push({
+    date: today(),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type,
+    duration_seconds: duration
+  });
+}
+
+function logCalibrationEvent() {
+  eventBuffer.push({
+    date: today(),
+    start_time: new Date().toISOString(),
+    end_time: new Date().toISOString(),
+    type: 'calibration',
+    duration_seconds: 0
+  });
+}
+
 // ---- Audio unlock & keep-alive ----
 async function ensureAudioUnlocked() {
   if (!audioCtx) {
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    } catch (e) {
-      console.warn('Cannot create AudioContext', e);
-      return false;
-    }
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return false; }
   }
-  if (audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-  }
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
   return true;
 }
 
@@ -294,44 +294,104 @@ function startBgSilentAudio() {
 }
 
 function stopBgSilentAudio() {
-  if (silentAudioEl) {
-    silentAudioEl.pause();
-  }
+  if (silentAudioEl) silentAudioEl.pause();
   bgAudioEnabled = false;
   bgAudioBtn.textContent = 'Background nudges: off';
 }
 
-// ---- Voice ----
-async function ensurePiperVoice(voiceId) {
-  if (piperSession && piperSessionVoice === voiceId) return true;
-  try {
-    testVoiceBtn.textContent = 'Loading voice…';
-    try {
-      Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true });
-    } catch (e) {}
-    piperSession = await piperTTS.TtsSession.create({
-      voiceId,
-      wasmPaths: PIPER_WASM_PATHS,
-      progress: (p) => {
-        const pct = Math.round((p.loaded * 100) / p.total);
-        testVoiceBtn.textContent = `Downloading voice… ${pct}%`;
-      }
+// ---- Voice system (dynamic SpeechSynthesis + Piper fallback) ----
+function populateVoiceList() {
+  if (!window.speechSynthesis) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return;
+
+  // Save current selected value (if any)
+  const currentVal = voiceSelect.value;
+
+  // Clear and rebuild options
+  voiceSelect.innerHTML = '';
+
+  // Group: Browser voices (only good English ones)
+  const englishVoices = voices.filter(v => v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Microsoft') || v.name.includes('Samantha') || v.name.includes('Daniel')));
+  // If none found, include all English voices
+  const usedVoices = englishVoices.length > 0 ? englishVoices : voices.filter(v => v.lang.startsWith('en'));
+
+  if (usedVoices.length > 0) {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = 'Browser voices';
+    usedVoices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.name;
+      opt.textContent = v.name;
+      optgroup.appendChild(opt);
     });
-    await piperSession.waitReady;
-    piperSessionVoice = voiceId;
-    testVoiceBtn.textContent = 'Test voice';
-    return true;
-  } catch (err) {
-    console.warn('Piper unavailable, will fall back to browser voice:', err);
-    testVoiceBtn.textContent = 'Test voice';
-    return false;
+    voiceSelect.appendChild(optgroup);
+  }
+
+  // Group: Piper offline voices
+  const piperVoices = [
+    { id: 'en_US-hfc_female-medium', name: 'Piper: US female' },
+    { id: 'en_US-hfc_male-medium', name: 'Piper: US male' },
+    { id: 'en_GB-alan-medium', name: 'Piper: British male' },
+    { id: 'en_US-lessac-medium', name: 'Piper: US narrator' }
+  ];
+  const piperGroup = document.createElement('optgroup');
+  piperGroup.label = 'Offline (Piper)';
+  piperVoices.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    opt.textContent = v.name;
+    piperGroup.appendChild(opt);
+  });
+  voiceSelect.appendChild(piperGroup);
+
+  // Restore previous selection if it still exists
+  if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
+    voiceSelect.value = currentVal;
+  } else if (currentVoiceId) {
+    // fallback to stored preference
+    if ([...voiceSelect.options].some(o => o.value === currentVoiceId)) {
+      voiceSelect.value = currentVoiceId;
+    }
+  } else {
+    // Default: first available browser voice, else Piper US female
+    if (usedVoices.length > 0) voiceSelect.value = usedVoices[0].name;
+    else voiceSelect.value = 'en_US-hfc_female-medium';
   }
 }
+
+// Initialize voice list
+if (window.speechSynthesis) {
+  populateVoiceList();
+  window.speechSynthesis.onvoiceschanged = populateVoiceList;
+}
+
+voiceSelect.addEventListener('change', () => {
+  currentVoiceId = voiceSelect.value;
+  localStorage.setItem('plumb:voice', currentVoiceId);
+  testVoiceBtn.textContent = 'Test voice'; // reset
+});
 
 async function speak(text) {
   if (muted) return;
   const unlocked = await ensureAudioUnlocked();
   if (!unlocked) return;
+
+  // If selected voice is a SpeechSynthesis voice (not a Piper ID)
+  const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v => v.name === currentVoiceId);
+  if (isBrowserVoice) {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      const voices = window.speechSynthesis.getVoices();
+      const match = voices.find(v => v.name === currentVoiceId);
+      if (match) u.voice = match;
+      window.speechSynthesis.speak(u);
+      return;
+    }
+  }
+
+  // Otherwise use Piper
   try {
     const ok = await ensurePiperVoice(currentVoiceId);
     if (ok) {
@@ -346,16 +406,36 @@ async function speak(text) {
   } catch (err) {
     console.warn('Piper synthesis failed, falling back to browser TTS:', err);
   }
+
+  // Ultimate fallback to any browser TTS
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    const savedVoice = localStorage.getItem('plumb:speechVoice');
-    if (savedVoice) {
-      const voices = window.speechSynthesis.getVoices();
-      const match = voices.find(v => v.name === savedVoice);
-      if (match) u.voice = match;
-    }
     window.speechSynthesis.speak(u);
+  }
+}
+
+async function ensurePiperVoice(voiceId) {
+  if (piperSession && piperSessionVoice === voiceId) return true;
+  try {
+    testVoiceBtn.textContent = 'Loading voice…';
+    try { Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true }); } catch (e) {}
+    piperSession = await piperTTS.TtsSession.create({
+      voiceId,
+      wasmPaths: PIPER_WASM_PATHS,
+      progress: (p) => {
+        const pct = Math.round((p.loaded * 100) / p.total);
+        testVoiceBtn.textContent = `Downloading voice… ${pct}%`;
+      }
+    });
+    await piperSession.waitReady;
+    piperSessionVoice = voiceId;
+    testVoiceBtn.textContent = 'Test voice';
+    return true;
+  } catch (err) {
+    console.warn('Piper unavailable:', err);
+    testVoiceBtn.textContent = 'Test voice';
+    return false;
   }
 }
 
@@ -406,7 +486,7 @@ function neckCompressionRatio(earMid, shoulderMid, leftSh, rightSh) {
 
 function lateralDeviation(earMid, shMid, leftSh, rightSh) {
   const shoulderWidth = Math.hypot(leftSh.x - rightSh.x, leftSh.y - rightSh.y) || 0.0001;
-  return (earMid.x - shMid.x) / shoulderWidth; // negative = left
+  return (earMid.x - shMid.x) / shoulderWidth; // negative = right lean
 }
 
 // ---- Pose detection ----
@@ -449,10 +529,18 @@ async function startCamera() {
     running = true;
     stopBtn.disabled = false;
     calibrateBtn.disabled = false;
-    startBtn.textContent = 'Start camera';
-    lastFrameTime = performance.now();
 
-    // Merge remote stats before tracking begins
+    // Button states (fixed colours)
+    startBtn.textContent = 'Camera started';
+    startBtn.style.backgroundColor = '#2C6E8E';   // good
+    startBtn.style.borderColor = '#2C6E8E';
+    startBtn.disabled = true; // prevent double start
+
+    calibrateBtn.textContent = 'Calibrate posture';
+    calibrateBtn.style.backgroundColor = '#C0492F'; // danger
+    calibrateBtn.style.borderColor = '#C0492F';
+
+    lastFrameTime = performance.now();
     await mergeRemoteStats();
 
     presenceStart = null;
@@ -469,12 +557,22 @@ async function startCamera() {
     placeholder.textContent = `Couldn't access the camera: ${err.message}. Check browser permissions and that you're on HTTPS or localhost.`;
     startBtn.disabled = false;
     startBtn.textContent = 'Start camera';
+    startBtn.style.backgroundColor = '';
+    startBtn.style.borderColor = '';
   }
 }
 
 function stopCamera() {
   running = false;
   if (rafId) cancelAnimationFrame(rafId);
+
+  // Log any ongoing slouch before stopping
+  if (slouchStartedAt !== null) {
+    logSlouchEvent(slouchType, slouchStartedAt, Date.now());
+    slouchStartedAt = null;
+    slouchType = null;
+  }
+
   const stream = video.srcObject;
   if (stream) stream.getTracks().forEach((t) => t.stop());
   video.srcObject = null;
@@ -483,11 +581,21 @@ function stopCamera() {
     'Camera is off. Click "Start camera" to begin — this app only looks at angles between a few body points, it never records or sends the video anywhere.';
   stopBtn.disabled = true;
   calibrateBtn.disabled = true;
+
+  // Reset buttons
+  startBtn.disabled = false;
+  startBtn.textContent = 'Start camera';
+  startBtn.style.backgroundColor = '';
+  startBtn.style.borderColor = '';
+  calibrateBtn.textContent = 'Calibrate good posture';
+  calibrateBtn.style.backgroundColor = '';
+  calibrateBtn.style.borderColor = '';
+
   stopBgSilentAudio();
   saveStats();
 }
 
-// ---- Camera picker ----
+// ---- Camera picker (unchanged) ----
 async function populateCameraList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -574,13 +682,7 @@ function drawPostureMap(lateral, compression) {
   const clampedY = Math.max(8, Math.min(h-8, dotY));
 
   const distFromCenter = Math.hypot((clampedX - w/2)/scaleX, (clampedY - h/2)/scaleY);
-  if (distFromCenter > 0.5) {
-    pmCtx.fillStyle = '#C0492F';
-  } else if (distFromCenter > 0.25) {
-    pmCtx.fillStyle = '#C98A2C';
-  } else {
-    pmCtx.fillStyle = '#27AE60';
-  }
+  pmCtx.fillStyle = distFromCenter > 0.5 ? '#C0492F' : distFromCenter > 0.25 ? '#C98A2C' : '#27AE60';
   pmCtx.beginPath();
   pmCtx.arc(clampedX, clampedY, 7, 0, 2*Math.PI);
   pmCtx.fill();
@@ -594,32 +696,12 @@ function drawPostureMap(lateral, compression) {
   pmCtx.fillText('Slump', w/2, h-4);
 }
 
-// ---- Event logging (slouch start/end) ----
-function logSlouchEvent(type, startTime, endTime) {
-  const duration = Math.round((endTime - startTime) / 1000);
-  if (duration <= 0) return;
-  eventBuffer.push({
-    date: today(),
-    start_time: new Date(startTime).toISOString(),
-    end_time: new Date(endTime).toISOString(),
-    type,
-    duration_seconds: duration
-  });
-}
-
 // ---- Day change detection ----
 function maybeSwitchDay() {
   const current = today();
   if (stats.date !== current) {
     saveStats();
-    stats = {
-      date: current,
-      sessionSeconds: 0,
-      slouchSeconds: 0,
-      postureNudges: 0,
-      breakNudges: 0,
-      breaksTaken: 0
-    };
+    stats = { date: current, sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
     breaksTaken = 0;
     presenceStart = null;
     lastBreakEnd = Date.now();
@@ -655,17 +737,14 @@ function loop() {
 
     stats.sessionSeconds += elapsedSec;
 
-    // Break / presence tracking
+    // Break / presence
     const wasPresent = isPersonPresent;
     isPersonPresent = true;
-
     if (!wasPresent) {
       const nowTime = Date.now();
       if (breakStart) {
         const breakDuration = nowTime - breakStart;
-        if (breakDuration > 30000) {
-          breaksTaken++;
-        }
+        if (breakDuration > 30000) breaksTaken++;
         const mins = Math.round(breakDuration / 60000);
         const welcomeMsg = mins >= 5
           ? WELCOME_BACK_LONG[welcomeIdx % WELCOME_BACK_LONG.length]
@@ -679,13 +758,9 @@ function loop() {
       presenceStart = nowTime;
     }
 
-    const lateral = baselineLateral !== null
-      ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral
-      : 0;
+    const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
     const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
-    const compression = baselineNeckRatio !== null
-      ? baselineNeckRatio - neckRatio
-      : 0;
+    const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
 
     drawPostureMap(lateral, compression);
 
@@ -696,8 +771,8 @@ function loop() {
       const compressionTolerance = Number(compressionToleranceSlider.value);
       const sustainMs = Number(sustainSlider.value) * 1000;
 
-      const isLateralLeft = lateral < -lateralTolerance;
-      const isLateralRight = lateral > lateralTolerance;
+      const isLateralLeft = lateral > lateralTolerance;       // positive = left
+      const isLateralRight = lateral < -lateralTolerance;     // negative = right
       const isCompressed = compression > compressionTolerance;
 
       const isSlouching = isLateralLeft || isLateralRight || isCompressed;
@@ -711,7 +786,7 @@ function loop() {
         }
         const slouchedFor = Date.now() - slouchStartedAt;
         setStatus('alert', `Slouching — ${Math.round(slouchedFor / 1000)}s`);
-        if (slouchedFor > sustainMs && Date.now() - lastPostureNudgeAt > 30000) {
+        if (slouchedFor > sustainMs && Date.now() - lastPostureNudgeAt > 5000) {
           let phrase;
           if (currentType === 'compression') {
             phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length];
@@ -729,12 +804,11 @@ function loop() {
           lastPostureNudgeAt = Date.now();
         }
       } else {
-        // Slouch ended
         if (slouchStartedAt !== null) {
           logSlouchEvent(slouchType, slouchStartedAt, Date.now());
+          slouchStartedAt = null;
+          slouchType = null;
         }
-        slouchStartedAt = null;
-        slouchType = null;
         setStatus('good', 'Sitting well');
       }
 
@@ -753,9 +827,7 @@ function loop() {
       }
     }
   } else {
-    // No person detected
     if (isPersonPresent) {
-      // Person left – end any ongoing slouch event
       if (slouchStartedAt !== null) {
         logSlouchEvent(slouchType, slouchStartedAt, Date.now());
         slouchStartedAt = null;
@@ -771,7 +843,7 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- Calibration ----
+// ---- Calibration (with event logging) ----
 calibrateBtn.addEventListener('click', () => {
   const now = performance.now();
   const result = landmarker.detectForVideo(video, now);
@@ -783,18 +855,31 @@ calibrateBtn.addEventListener('click', () => {
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
     gaugeCaption.textContent = 'Posture calibrated. Sit like that.';
     speak("Calibrated. That's your good posture.");
+    addAlertToFeed('calibration', 'Posture calibrated');
+    logCalibrationEvent();
+
+    // Update button
+    calibrateBtn.textContent = 'Posture calibrated';
+    calibrateBtn.style.backgroundColor = '#2C6E8E'; // good
+    calibrateBtn.style.borderColor = '#2C6E8E';
   }
 });
 
 // ---- Event wiring ----
-// Day change check + save every 10s
 maybeSwitchDay();
 setInterval(() => {
   maybeSwitchDay();
   saveStats();
 }, 10000);
 
-window.addEventListener('beforeunload', saveStats);
+window.addEventListener('beforeunload', () => {
+  if (slouchStartedAt !== null) {
+    logSlouchEvent(slouchType, slouchStartedAt, Date.now());
+    slouchStartedAt = null;
+    slouchType = null;
+  }
+  saveStats();
+});
 
 startBtn.addEventListener('click', startCamera);
 stopBtn.addEventListener('click', stopCamera);
@@ -805,17 +890,11 @@ muteBtn.addEventListener('click', () => {
   muteBtn.textContent = `Mute voice: ${muted ? 'on' : 'off'}`;
 });
 bgAudioBtn.addEventListener('click', () => {
-  if (bgAudioEnabled) {
-    stopBgSilentAudio();
-  } else {
-    startBgSilentAudio();
-  }
+  if (bgAudioEnabled) stopBgSilentAudio();
+  else startBgSilentAudio();
 });
-voiceSelect.addEventListener('change', () => {
-  localStorage.setItem('plumb:voice', voiceSelect.value);
-  testVoiceBtn.textContent = 'Reloading for new voice…';
-  location.reload();
-});
+
+// Voice select already handled via dynamic list and change listener above.
 
 exportBtn.addEventListener('click', () => {
   saveStatsLocal();
