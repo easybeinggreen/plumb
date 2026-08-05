@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Plumb — posture & movement companion</title>
+<title>plumb — aligned for life</title>
 <style>
   :root {
     --paper: #F1F5F6;
@@ -35,17 +35,13 @@
     min-height: 100vh;
   }
 
-  header { padding: 12px 20px 6px; }
-  header .eyebrow {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--ink-soft);
-  }
-  header h1 { margin: 2px 0 2px; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
-  header p { margin: 0; color: var(--ink-soft); font-size: 12px; max-width: 60ch; }
+  header { padding: 12px 20px 6px; text-align: center; }
+  header .logo { font-family: var(--sans); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+  header .strap { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
 
   main {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+    grid-template-columns: 1fr 1fr;
     gap: 12px;
     padding: 10px 20px 20px;
   }
@@ -54,12 +50,13 @@
   .panel { background: var(--panel); border: 1px solid var(--paper-line); border-radius: var(--radius); padding: 12px; }
 
   .video-wrap {
-    position: relative; width: 100%; aspect-ratio: 16 / 10;
+    position: relative; width: 100%; aspect-ratio: 4 / 3;
     background: #12191c; border-radius: calc(var(--radius) - 2px); overflow: hidden;
   }
   #video, #overlay {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
     transform: scaleX(-1);
+    object-fit: cover;            /* fills container without black bars */
   }
   .video-placeholder {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -71,7 +68,7 @@
   }
   .privacy-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex-shrink: 0; }
 
-  .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
 
   button {
     font-family: var(--sans); font-size: 12px; font-weight: 600; padding: 7px 12px;
@@ -80,6 +77,11 @@
   button.secondary { background: transparent; color: var(--ink); border-color: var(--paper-line); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.secondary:hover:not(:disabled) { border-color: var(--ink); }
+
+  button.start-camera { background: #A5D6A7; color: var(--ink); border-color: #81C784; }   /* pale green */
+  button.stop-camera { background: #EF9A9A; color: var(--ink); border-color: #E57373; }    /* pale red */
+  button.break-due { background: #A5D6A7; color: var(--ink); border-color: #81C784; }      /* green = time for break */
+  button.break-active { background: #EF9A9A; color: var(--ink); border-color: #E57373; }   /* red = on break */
 
   select {
     font-family: var(--sans); font-size: 12px; padding: 6px 8px; border-radius: 6px;
@@ -111,7 +113,6 @@
   .slider-row { margin-bottom: 10px; }
   .slider-row label { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
   .slider-row label .v { font-family: var(--mono); color: var(--ink); }
-  .slider-row .help-icon { cursor: help; margin-left: 4px; font-size: 12px; }
   input[type="range"] { width: 100%; }
 
   .sync-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
@@ -154,16 +155,15 @@
 
   .chart-container { width: 100%; max-height: 300px; position: relative; }
 
-  footer { padding: 0 20px 20px; font-size: 11px; color: var(--ink-soft); }
+  footer { padding: 0 20px 20px; font-size: 11px; color: var(--ink-soft); text-align: center; }
   footer a { color: var(--good); }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="eyebrow">Plumb / posture &amp; movement companion</div>
-  <h1>Sit like the line is true.</h1>
-  <p>A protractor for your posture and a nudge to get up — everything runs in this browser tab. Nothing from your camera is ever uploaded anywhere.</p>
+  <div class="logo">plumb</div>
+  <div class="strap">aligned for life</div>
 </header>
 
 <main>
@@ -177,16 +177,15 @@
     <div class="privacy-note"><span class="dot"></span> Video stays on this device. Only small numbers ever get saved.</div>
 
     <div class="controls">
-      <button id="startBtn">Start camera</button>
-      <button id="stopBtn" class="secondary" disabled>Stop</button>
+      <button id="cameraToggleBtn" class="start-camera">Start camera</button>
       <select id="cameraSelect"><option value="">Default camera</option></select>
-      <button id="calibrateBtn" class="secondary" disabled>Calibrate posture</button>
-      <button id="breakToggleBtn" class="secondary" disabled title="Start/end a manual break">Take a break</button>
+      <button id="calibrateBtn" class="secondary" disabled>Recalibrate posture</button>
+      <button id="breakToggleBtn" class="secondary" disabled title="Take a break or end it">Take a break</button>
       <select id="voiceSelect"></select>
       <span id="voiceReady" class="voice-ready" title="Voice status"></span>
       <button id="testVoiceBtn" class="secondary">Test voice</button>
       <button id="muteBtn" class="secondary">Mute</button>
-      <button id="bgAudioBtn" class="secondary" title="Allow audio nudges when tab is hidden">Allow background audio</button>
+      <button id="bgAudioBtn" class="secondary" title="Allow audio nudges when tab is hidden">Background nudges</button>
       <button id="reportBtn" class="secondary">View report</button>
     </div>
     <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking…</span></div>
@@ -212,11 +211,11 @@
       <div class="section-title" id="settingsToggle">Settings <span class="arrow">▼</span></div>
       <div class="collapsible-content hidden" id="settingsContent">
         <div class="slider-row">
-          <label>Lateral tolerance <span class="v" id="toleranceVal">0.20</span><span class="help-icon" title="Shoulder-width ratio: how far your head can shift sideways">?</span></label>
+          <label>Side‑to‑side (shoulder‑width ratio) <span class="v" id="toleranceVal">0.20</span></label>
           <input type="range" id="toleranceSlider" min="0.05" max="0.50" value="0.20" step="0.01" />
         </div>
         <div class="slider-row">
-          <label>Compression tolerance <span class="v" id="compressionToleranceVal">0.10</span><span class="help-icon" title="Neck ratio: how much your neck can shorten">?</span></label>
+          <label>Slump (neck‑compression ratio) <span class="v" id="compressionToleranceVal">0.10</span></label>
           <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
         </div>
         <div class="slider-row">
@@ -255,7 +254,7 @@
 </div>
 
 <footer>
-  Voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. Stats auto-sync to Supabase every ~10s. See <code>README.md</code> for setup.
+  Voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. Stats auto‑sync to Supabase every ~10s. See <code>README.md</code> for setup.
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
