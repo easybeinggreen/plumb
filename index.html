@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Plumb — posture &amp; movement companion</title>
+<title>Plumb — posture & movement companion</title>
 <style>
   :root {
     --paper: #F1F5F6;
@@ -17,7 +17,7 @@
     --danger: #C0492F;
     --danger-bg: #FBE7E2;
     --panel: #FFFFFF;
-    --radius: 10px;
+    --radius: 8px;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
@@ -35,26 +35,26 @@
     min-height: 100vh;
   }
 
-  header { padding: 20px 24px 10px; }
+  header { padding: 12px 20px 6px; }
   header .eyebrow {
-    font-family: var(--mono); font-size: 12px; letter-spacing: 0.12em;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
     text-transform: uppercase; color: var(--ink-soft);
   }
-  header h1 { margin: 4px 0 4px; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
-  header p { margin: 0; color: var(--ink-soft); font-size: 14px; max-width: 60ch; }
+  header h1 { margin: 2px 0 2px; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--ink-soft); font-size: 12px; max-width: 60ch; }
 
   main {
     display: grid;
-    grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.9fr);
-    gap: 18px;
-    padding: 18px 24px 40px;
+    grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+    gap: 12px;
+    padding: 10px 20px 20px;
   }
   @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
 
-  .panel { background: var(--panel); border: 1px solid var(--paper-line); border-radius: var(--radius); padding: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--paper-line); border-radius: var(--radius); padding: 12px; }
 
   .video-wrap {
-    position: relative; width: 100%; aspect-ratio: 4 / 3;
+    position: relative; width: 100%; aspect-ratio: 16 / 10;
     background: #12191c; border-radius: calc(var(--radius) - 2px); overflow: hidden;
   }
   #video, #overlay {
@@ -63,55 +63,64 @@
   }
   .video-placeholder {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: #9FB0B5; font-size: 13px; text-align: center; padding: 24px;
+    color: #9FB0B5; font-size: 12px; text-align: center; padding: 16px;
   }
 
   .privacy-note {
-    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); margin-top: 10px;
+    display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-soft); margin-top: 8px;
   }
-  .privacy-note .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex-shrink: 0; }
+  .privacy-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex-shrink: 0; }
 
-  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
   button {
-    font-family: var(--sans); font-size: 13px; font-weight: 600; padding: 9px 14px;
-    border-radius: 7px; border: 1px solid var(--ink); background: var(--ink); color: #fff; cursor: pointer;
+    font-family: var(--sans); font-size: 12px; font-weight: 600; padding: 7px 12px;
+    border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: #fff; cursor: pointer;
   }
   button.secondary { background: transparent; color: var(--ink); border-color: var(--paper-line); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.secondary:hover:not(:disabled) { border-color: var(--ink); }
 
   select {
-    font-family: var(--sans); font-size: 13px; padding: 8px 10px; border-radius: 7px;
+    font-family: var(--sans); font-size: 12px; padding: 6px 8px; border-radius: 6px;
     border: 1px solid var(--paper-line); background: #fff; color: var(--ink);
   }
 
-  .side { display: flex; flex-direction: column; gap: 14px; }
+  .side { display: flex; flex-direction: column; gap: 10px; }
 
-  .status-card { display: flex; align-items: center; gap: 14px; padding: 14px; }
+  .status-card { display: flex; align-items: center; gap: 10px; padding: 10px; }
   .status-card.good { background: var(--good-bg); }
   .status-card.alert { background: var(--alert-bg); }
   .status-card.idle { background: #F3F1EC; }
-  .status-label { font-size: 13px; color: var(--ink-soft); margin-bottom: 2px; }
-  .status-value { font-size: 18px; font-weight: 700; }
+  .status-label { font-size: 11px; color: var(--ink-soft); margin-bottom: 2px; }
+  .status-value { font-size: 16px; font-weight: 700; }
 
-  .gauge-wrap { display: flex; flex-direction: column; align-items: center; padding-top: 4px; }
-  .gauge-caption { font-size: 12px; color: var(--ink-soft); text-align: center; margin-top: 4px; }
-
-  .slider-row { margin-bottom: 12px; }
-  .slider-row label { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
-  .slider-row label .v { font-family: var(--mono); color: var(--ink); }
-  input[type="range"] { width: 100%; }
+  .gauge-wrap { display: flex; flex-direction: column; align-items: center; padding: 6px 0 0; }
+  .gauge-caption { font-size: 11px; color: var(--ink-soft); text-align: center; margin-top: 4px; }
 
   .section-title {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--ink-soft); margin: 0 0 10px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-soft); margin: 0 0 8px;
+    cursor: pointer; user-select: none;
   }
+  .section-title .arrow { font-size: 10px; margin-left: 4px; }
 
-  .sync-note { font-size: 12px; color: var(--ink-soft); margin-top: 10px; display: flex; align-items: center; gap: 6px; }
-  .sync-note .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--paper-line); flex-shrink: 0; }
+  .collapsible-content { display: block; }
+  .collapsible-content.hidden { display: none; }
+
+  .slider-row { margin-bottom: 10px; }
+  .slider-row label { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
+  .slider-row label .v { font-family: var(--mono); color: var(--ink); }
+  .slider-row .help-icon { cursor: help; margin-left: 4px; font-size: 12px; }
+  input[type="range"] { width: 100%; }
+
+  .sync-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+  .sync-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--paper-line); flex-shrink: 0; }
   .sync-note .dot.ok { background: var(--good); }
   .sync-note .dot.err { background: var(--danger); }
+
+  .voice-ready { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 6px; background: #ccc; }
+  .voice-ready.ready { background: var(--good); }
 
   /* Report modal */
   .modal-overlay {
@@ -122,30 +131,30 @@
   .modal-overlay.open { display: flex; }
   .modal {
     background: #fff; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh;
-    overflow-y: auto; padding: 24px; position: relative;
+    overflow-y: auto; padding: 20px; position: relative;
   }
   .modal-close {
-    position: absolute; top: 12px; right: 16px; background: none; border: none;
-    font-size: 24px; cursor: pointer; color: var(--ink-soft);
+    position: absolute; top: 10px; right: 14px; background: none; border: none;
+    font-size: 22px; cursor: pointer; color: var(--ink-soft);
   }
-  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 14px; }
   .tab {
-    padding: 8px 16px; border-radius: 6px; background: var(--paper);
-    border: 1px solid var(--paper-line); cursor: pointer; font-size: 13px;
+    padding: 6px 14px; border-radius: 6px; background: var(--paper);
+    border: 1px solid var(--paper-line); cursor: pointer; font-size: 12px;
   }
   .tab.active { background: var(--ink); color: #fff; }
 
   .report-summary {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 12px; margin-bottom: 20px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px; margin-bottom: 16px;
   }
-  .report-summary .metric { background: var(--paper); border-radius: 8px; padding: 12px; text-align: center; }
-  .metric .value { font-size: 20px; font-weight: 700; color: var(--ink); }
-  .metric .label { font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .report-summary .metric { background: var(--paper); border-radius: 8px; padding: 10px; text-align: center; }
+  .metric .value { font-size: 18px; font-weight: 700; color: var(--ink); }
+  .metric .label { font-size: 10px; color: var(--ink-soft); margin-top: 2px; }
 
-  .chart-container { width: 100%; max-height: 350px; position: relative; }
+  .chart-container { width: 100%; max-height: 300px; position: relative; }
 
-  footer { padding: 0 24px 30px; font-size: 12px; color: var(--ink-soft); }
+  footer { padding: 0 20px 20px; font-size: 11px; color: var(--ink-soft); }
   footer a { color: var(--good); }
 </style>
 </head>
@@ -162,28 +171,30 @@
     <div class="video-wrap" id="videoWrap">
       <video id="video" playsinline autoplay muted></video>
       <canvas id="overlay"></canvas>
-      <div class="video-placeholder" id="placeholder">Camera is off. Click "Start camera" to begin — this app only looks at angles between a few body points, it never records or sends the video anywhere.</div>
+      <div class="video-placeholder" id="placeholder">Camera is off. Click "Start camera" to begin.</div>
     </div>
 
-    <div class="privacy-note"><span class="dot"></span> Video stays on this device. Only small numbers (angles, timestamps) ever get saved.</div>
+    <div class="privacy-note"><span class="dot"></span> Video stays on this device. Only small numbers ever get saved.</div>
 
     <div class="controls">
       <button id="startBtn">Start camera</button>
       <button id="stopBtn" class="secondary" disabled>Stop</button>
       <select id="cameraSelect"><option value="">Default camera</option></select>
-      <button id="calibrateBtn" class="secondary" disabled>Calibrate good posture</button>
+      <button id="calibrateBtn" class="secondary" disabled>Calibrate posture</button>
+      <button id="breakToggleBtn" class="secondary" disabled title="Start/end a manual break">Take a break</button>
       <select id="voiceSelect"></select>
+      <span id="voiceReady" class="voice-ready" title="Voice status"></span>
       <button id="testVoiceBtn" class="secondary">Test voice</button>
-      <button id="muteBtn" class="secondary">Mute voice: off</button>
-      <button id="bgAudioBtn" class="secondary">Background nudges: off</button>
+      <button id="muteBtn" class="secondary">Mute</button>
+      <button id="bgAudioBtn" class="secondary" title="Allow audio nudges when tab is hidden">Allow background audio</button>
       <button id="reportBtn" class="secondary">View report</button>
     </div>
-    <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking configuration…</span></div>
+    <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking…</span></div>
   </div>
 
   <div class="side">
     <div class="panel status-card idle" id="statusCard">
-      <svg width="34" height="34" viewBox="0 0 34 34" id="statusIcon">
+      <svg width="30" height="30" viewBox="0 0 34 34" id="statusIcon">
         <circle cx="17" cy="17" r="15" fill="none" stroke="currentColor" stroke-width="2.5"/>
       </svg>
       <div>
@@ -192,44 +203,42 @@
       </div>
     </div>
 
-    <!-- Posture map -->
     <div class="panel gauge-wrap">
-      <canvas id="postureMap" width="200" height="200" style="border-radius:8px; border:1px solid var(--paper-line);"></canvas>
+      <canvas id="postureMap" width="180" height="180" style="border-radius:6px; border:1px solid var(--paper-line);"></canvas>
       <div class="gauge-caption" id="gaugeCaption">Posture map — left/right &amp; neck height</div>
     </div>
 
-    <!-- Alert feed -->
     <div class="panel">
-      <div class="section-title">Alert feed</div>
-      <div id="alertFeed" style="max-height:160px; overflow-y:auto; font-size:12px; color:var(--ink-soft); line-height:1.4;">
-        <div style="color:var(--ink-soft);">No alerts yet</div>
+      <div class="section-title" id="settingsToggle">Settings <span class="arrow">▼</span></div>
+      <div class="collapsible-content hidden" id="settingsContent">
+        <div class="slider-row">
+          <label>Lateral tolerance <span class="v" id="toleranceVal">0.20</span><span class="help-icon" title="Shoulder-width ratio: how far your head can shift sideways">?</span></label>
+          <input type="range" id="toleranceSlider" min="0.05" max="0.50" value="0.20" step="0.01" />
+        </div>
+        <div class="slider-row">
+          <label>Compression tolerance <span class="v" id="compressionToleranceVal">0.10</span><span class="help-icon" title="Neck ratio: how much your neck can shorten">?</span></label>
+          <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
+        </div>
+        <div class="slider-row">
+          <label>Sustained before nudge <span class="v" id="sustainVal">8s</span></label>
+          <input type="range" id="sustainSlider" min="3" max="30" value="8" />
+        </div>
+        <div class="slider-row">
+          <label>Break reminder after <span class="v" id="breakVal">60 min</span></label>
+          <input type="range" id="breakSlider" min="15" max="180" value="60" />
+        </div>
       </div>
     </div>
 
-    <!-- Sensitivity sliders -->
     <div class="panel">
-      <div class="section-title">Sensitivity</div>
-      <div class="slider-row">
-        <label>Lateral tolerance <span class="v" id="toleranceVal">0.20</span></label>
-        <input type="range" id="toleranceSlider" min="0.05" max="0.50" value="0.20" step="0.01" />
-      </div>
-      <div class="slider-row">
-        <label>Compression tolerance <span class="v" id="compressionToleranceVal">0.10</span></label>
-        <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
-      </div>
-      <div class="slider-row">
-        <label>Sustained before nudge <span class="v" id="sustainVal">8s</span></label>
-        <input type="range" id="sustainSlider" min="3" max="30" value="8" />
-      </div>
-      <div class="slider-row">
-        <label>Break reminder after <span class="v" id="breakVal">60 min</span></label>
-        <input type="range" id="breakSlider" min="15" max="180" value="60" />
+      <div class="section-title">Alert feed</div>
+      <div id="alertFeed" style="max-height:120px; overflow-y:auto; font-size:11px; color:var(--ink-soft); line-height:1.3;">
+        <div style="color:var(--ink-soft);">No alerts yet</div>
       </div>
     </div>
   </div>
 </main>
 
-<!-- Report modal -->
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <button class="modal-close" id="modalClose">&times;</button>
@@ -246,10 +255,9 @@
 </div>
 
 <footer>
-  Voice nudges use a local neural TTS model (Piper) that downloads once (~15-25MB) and then runs fully offline. Stats auto-sync to Supabase every ~10s while running — no manual export needed. See <code>README.md</code> for setup.
+  Voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. Stats auto-sync to Supabase every ~10s. See <code>README.md</code> for setup.
 </footer>
 
-<!-- Chart.js CDN -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script type="module" src="./src/main.js"></script>
 </body>
