@@ -12,8 +12,7 @@ const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
 const placeholder = document.getElementById('placeholder');
 
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
+const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const breakToggleBtn = document.getElementById('breakToggleBtn');
@@ -66,30 +65,25 @@ let baselineLateral = null;
 let baselineNeckRatio = null;
 let lastFrameTime = performance.now();
 
-// Slouch / posture timers
 let slouchStartedAt = null;
 let slouchType = null;
 let lastPostureNudgeAt = 0;
 
-// Break / presence
 let presenceStart = null;
 let isPersonPresent = false;
 let lastBreakEnd = null;
 let breakStart = null;
 let breaksTaken = 0;
 let lastBreakNudgeAt = 0;
-let manualBreak = false;        // true when break was manually started
-let breakActive = false;        // true when currently on break (manual or automatic)
-const BREAK_MIN_SECONDS = 15;   // minimum absence to count as break
+let manualBreak = false;
+let breakActive = false;
+const BREAK_MIN_SECONDS = 15;
 
-// Event buffer
 let eventBuffer = [];
 
-// Audio
 let audioCtx = null;
 let silentAudioEl = null;
 
-// Voice
 let currentVoiceId = localStorage.getItem('plumb:voice') || '';
 let piperSession = null;
 let piperSessionVoice = null;
@@ -100,7 +94,6 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-// Local date helper
 const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -111,7 +104,7 @@ const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
 
 let stats = loadTodayStats();
 
-// ---- Multi-device merge ----
+// ---- Multi‑device merge ----
 async function mergeRemoteStats() {
   if (!SYNC_CONFIGURED) return;
   try {
@@ -155,7 +148,6 @@ function setSyncStatus(mode, text) {
   if (mode) syncDot.classList.add(mode);
   syncText.textContent = text;
 }
-
 if (!SYNC_CONFIGURED) setSyncStatus('', 'Cloud sync: not configured');
 else setSyncStatus('', 'Cloud sync: ready');
 
@@ -214,7 +206,6 @@ function logCalibrationEvent() {
   eventBuffer.push({ date: today(), start_time: new Date().toISOString(), end_time: new Date().toISOString(), type: 'calibration', duration_seconds: 0 });
 }
 
-// Retrospective break
 function logRetrospectiveBreak() {
   const lastEnd = localStorage.getItem(LAST_SESSION_END_KEY);
   if (!lastEnd) return;
@@ -231,10 +222,11 @@ function startBreak(manual = false) {
   breakActive = true;
   manualBreak = manual;
   breakStart = Date.now();
-  if (slouchStartedAt !== null) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchType = null; }
+  if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
   addAlertToFeed('break', manual ? 'Manual break started' : 'Break started (camera lost)');
   breakToggleBtn.textContent = 'End break';
-  breakToggleBtn.style.backgroundColor = '#C98A2C';
+  breakToggleBtn.classList.add('break-active');
+  breakToggleBtn.classList.remove('break-due');
 }
 function endBreak() {
   if (!breakActive || !breakStart) return;
@@ -243,13 +235,21 @@ function endBreak() {
   if (dur >= BREAK_MIN_SECONDS) {
     logBreakEvent(breakStart, end);
     breaksTaken++;
+    let msg = '';
+    if (dur >= 300) msg = 'Great long break — you’re refreshed.';
+    else if (dur >= 60) msg = 'Good break — that was a nice stretch.';
+    // under 60s no spoken welcome
+    if (msg) speak(msg);
+    const mins = Math.round(dur / 60);
+    addAlertToFeed('break', `Break ended (${mins > 0 ? mins + ' min' : Math.round(dur) + ' sec'})`);
+  } else {
+    addAlertToFeed('break', `Short absence ignored`);
   }
   breakActive = false;
   manualBreak = false;
   breakStart = null;
   breakToggleBtn.textContent = 'Take a break';
-  breakToggleBtn.style.backgroundColor = '';
-  addAlertToFeed('break', 'Break ended');
+  breakToggleBtn.classList.remove('break-active', 'break-due');
 }
 
 // ---- Audio helpers ----
@@ -266,14 +266,12 @@ function startBgSilentAudio() {
   }
   silentAudioEl.play().catch(() => { setTimeout(startBgSilentAudio, 5000); });
   bgAudioEnabled = true;
-  bgAudioBtn.textContent = 'Background audio: on';
+  bgAudioBtn.textContent = 'Background nudges: on';
 }
-function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudioEnabled = false; bgAudioBtn.textContent = 'Allow background audio'; }
+function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudioEnabled = false; bgAudioBtn.textContent = 'Background nudges'; }
 
 // ---- Voice ----
-function updateVoiceReady(ready) {
-  voiceReady.classList.toggle('ready', ready);
-}
+function updateVoiceReady(ready) { voiceReady.classList.toggle('ready', ready); }
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
@@ -321,9 +319,7 @@ const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — 
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust."];
 const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture."];
 const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it."];
-const WELCOME_BACK_SHORT = ["Welcome back — short break.", "Quick break, good to see you."];
-const WELCOME_BACK_LONG = ["Welcome back — nice long break.", "Great break — you're refreshed."];
-let leftIdx = 0, rightIdx = 0, slumpIdx = 0, breakIdx = 0, welcomeIdx = 0;
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, breakIdx = 0;
 
 // ---- Math ----
 function midpoint(a,b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2 }; }
@@ -347,7 +343,8 @@ async function initModel() {
 }
 
 async function startCamera() {
-  startBtn.disabled = true; startBtn.textContent = 'Loading…';
+  cameraToggleBtn.textContent = 'Loading…';
+  cameraToggleBtn.disabled = true;
   try {
     if (!landmarker) await initModel();
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width:640, height:480, ...(cameraSelect.value ? { deviceId:{exact:cameraSelect.value} }:{}) }, audio: false });
@@ -358,38 +355,51 @@ async function startCamera() {
     populateCameraList();
     placeholder.style.display = 'none';
     running = true;
-    stopBtn.disabled = false; calibrateBtn.disabled = false; breakToggleBtn.disabled = false;
-    startBtn.textContent = 'Camera started'; startBtn.style.backgroundColor = '#2C6E8E'; startBtn.style.borderColor = '#2C6E8E'; startBtn.disabled = true;
-    calibrateBtn.textContent = 'Calibrate posture'; calibrateBtn.style.backgroundColor = '#C0492F'; calibrateBtn.style.borderColor = '#C0492F';
-    breakToggleBtn.textContent = 'Take a break'; breakToggleBtn.style.backgroundColor = '';
+    cameraToggleBtn.textContent = 'Stop camera';
+    cameraToggleBtn.classList.remove('start-camera');
+    cameraToggleBtn.classList.add('stop-camera');
+    cameraToggleBtn.disabled = false;
+    calibrateBtn.disabled = false;
+    breakToggleBtn.disabled = false;
     lastFrameTime = performance.now();
     logRetrospectiveBreak();
     await mergeRemoteStats();
     presenceStart = null; lastBreakEnd = Date.now(); breakStart = null; isPersonPresent = false; breaksTaken = stats.breaksTaken; breakActive = false; manualBreak = false;
+    breakToggleBtn.textContent = 'Take a break';
+    breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId); await ensureAudioUnlocked();
     if (bgAudioEnabled) startBgSilentAudio();
     loop();
   } catch(err) {
     placeholder.textContent = `Camera error: ${err.message}`;
-    startBtn.disabled = false; startBtn.textContent = 'Start camera'; startBtn.style.backgroundColor = ''; startBtn.style.borderColor = '';
+    cameraToggleBtn.textContent = 'Start camera';
+    cameraToggleBtn.classList.add('start-camera');
+    cameraToggleBtn.classList.remove('stop-camera');
+    cameraToggleBtn.disabled = false;
   }
 }
 
 function stopCamera() {
   running = false; if (rafId) cancelAnimationFrame(rafId);
-  if (slouchStartedAt !== null) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchType = null; }
+  if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   if (video.srcObject) { video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject = null; }
   placeholder.style.display = 'flex'; placeholder.textContent = 'Camera off. Click Start camera.';
-  stopBtn.disabled = true; calibrateBtn.disabled = true; breakToggleBtn.disabled = true;
-  startBtn.disabled = false; startBtn.textContent = 'Start camera'; startBtn.style.backgroundColor = ''; startBtn.style.borderColor = '';
-  calibrateBtn.textContent = 'Calibrate good posture'; calibrateBtn.style.backgroundColor = ''; calibrateBtn.style.borderColor = '';
-  breakToggleBtn.textContent = 'Take a break'; breakToggleBtn.style.backgroundColor = '';
+  cameraToggleBtn.textContent = 'Start camera';
+  cameraToggleBtn.classList.add('start-camera');
+  cameraToggleBtn.classList.remove('stop-camera');
+  cameraToggleBtn.disabled = false;
+  calibrateBtn.disabled = true;
+  breakToggleBtn.disabled = true;
+  calibrateBtn.textContent = 'Recalibrate posture';
+  calibrateBtn.style.backgroundColor = ''; calibrateBtn.style.borderColor = '';
+  breakToggleBtn.textContent = 'Take a break';
+  breakToggleBtn.classList.remove('break-active', 'break-due');
   if (breakActive) endBreak();
   stopBgSilentAudio(); saveStats();
 }
 
-// ---- Camera picker (unchanged) ----
+// ---- Camera picker ----
 async function populateCameraList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -418,27 +428,33 @@ function setStatus(mode, text) { statusCard.classList.remove('good','alert','idl
 function drawPostureMap(lateral, compression) {
   const w = postureMap.width, h = postureMap.height;
   pmCtx.clearRect(0,0,w,h);
-  // Draw tolerance rings
-  const latTol = Number(toleranceSlider.value) * w * 0.9;   // scale to canvas
-  const compTol = Number(compressionToleranceSlider.value) * h * 0.9;
+
+  // tolerance rings
+  const latTol = Number(toleranceSlider.value);
+  const compTol = Number(compressionToleranceSlider.value);
+  const ringW = latTol * w * 1.5;   // scale to canvas
+  const ringH = compTol * h * 1.5;
   pmCtx.strokeStyle = '#ccc'; pmCtx.lineWidth = 1;
   pmCtx.setLineDash([4,4]);
-  pmCtx.beginPath(); pmCtx.ellipse(w/2, h/2, latTol, compTol, 0, 0, 2*Math.PI); pmCtx.stroke();
+  pmCtx.beginPath(); pmCtx.ellipse(w/2, h/2, ringW, ringH, 0, 0, 2*Math.PI); pmCtx.stroke();
   pmCtx.setLineDash([]);
-  // Crosshair
+
+  // crosshair
   pmCtx.strokeStyle = '#ddd'; pmCtx.beginPath(); pmCtx.moveTo(w/2,0); pmCtx.lineTo(w/2,h); pmCtx.moveTo(0,h/2); pmCtx.lineTo(w,h/2); pmCtx.stroke();
-  // Dot
+
+  // axis labels with numbers
+  pmCtx.fillStyle = '#888'; pmCtx.font = '9px sans-serif'; pmCtx.textAlign = 'center';
+  pmCtx.fillText('-0.2', 10, h/2+3); pmCtx.fillText('0', w/2, h/2+3); pmCtx.fillText('+0.2', w-10, h/2+3);
+  pmCtx.textAlign = 'left'; pmCtx.fillText('0', w/2+4, h-6); pmCtx.fillText('0.1', w/2+4, h/2); pmCtx.fillText('0.2', w/2+4, 14);
+
+  // dot
   const scaleX = w*0.45, scaleY = h*0.45;
   const dotX = w/2 - lateral * scaleX*2;
   const dotY = h/2 + compression * scaleY*5;
   const cx = Math.max(6, Math.min(w-6, dotX)), cy = Math.max(6, Math.min(h-6, dotY));
-  const outLat = Math.abs(lateral) > latTol/(scaleX*2), outComp = compression > compTol/(scaleY*5);
+  const outLat = Math.abs(lateral) > latTol, outComp = compression > compTol;
   const color = (outLat && outComp) ? '#C0492F' : (outLat || outComp) ? '#C98A2C' : '#27AE60';
   pmCtx.fillStyle = color; pmCtx.beginPath(); pmCtx.arc(cx, cy, 6, 0, 2*Math.PI); pmCtx.fill();
-  // Axis labels
-  pmCtx.fillStyle = '#888'; pmCtx.font = '9px sans-serif'; pmCtx.textAlign = 'center';
-  pmCtx.fillText('L', 10, h/2+3); pmCtx.fillText('R', w-10, h/2+3);
-  pmCtx.fillText('Tall', w/2, 10); pmCtx.fillText('Slump', w/2, h-4);
 }
 
 function maybeSwitchDay() {
@@ -470,29 +486,31 @@ function loop() {
 
     const earMid = midpoint(leftEar,rightEar), shMid = midpoint(leftSh,rightSh);
 
-    // Presence update
     if (!isPersonPresent) {
-      // person just appeared
-      if (breakActive) {
-        // if automatic break (camera lost) and person returned, end break
-        if (!manualBreak && breakStart) {
-          const gap = (Date.now() - breakStart)/1000;
-          if (gap >= BREAK_MIN_SECONDS) {
-            logBreakEvent(breakStart, Date.now());
-            breaksTaken++;
-            const mins = Math.round(gap/60);
-            const msg = mins >=5 ? WELCOME_BACK_LONG[welcomeIdx%WELCOME_BACK_LONG.length] : WELCOME_BACK_SHORT[welcomeIdx%WELCOME_BACK_SHORT.length];
-            speak(msg); addAlertToFeed('break', `Break ended (${mins}m)`); welcomeIdx++;
-          }
+      if (breakActive && !manualBreak && breakStart) {
+        const gap = (Date.now() - breakStart)/1000;
+        if (gap >= BREAK_MIN_SECONDS) {
+          endBreak();
         }
-        endBreak();
       }
       isPersonPresent = true;
       presenceStart = Date.now();
       lastBreakEnd = Date.now();
+      // reset break start timer for auto-break
+      breakStart = null;
     }
 
-    // if currently on manual break, skip slouch tracking
+    // update break button colour if break reminder time reached
+    const breakIntervalMin = Number(breakSlider.value);
+    const continuousMin = presenceStart ? (Date.now() - presenceStart) / 60000 : 0;
+    if (!breakActive && continuousMin >= breakIntervalMin) {
+      breakToggleBtn.classList.add('break-due');
+      breakToggleBtn.textContent = 'Time for a break';
+    } else if (!breakActive) {
+      breakToggleBtn.classList.remove('break-due');
+      breakToggleBtn.textContent = 'Take a break';
+    }
+
     if (breakActive) {
       setStatus('idle', 'On break');
       rafId = requestAnimationFrame(loop);
@@ -528,27 +546,21 @@ function loop() {
           speak(phrase); addAlertToFeed(currentType, phrase); stats.postureNudges++; lastPostureNudgeAt = Date.now();
         }
       } else {
-        if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchType = null; }
+        if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
         setStatus('good', 'Sitting well');
       }
 
-      if (presenceStart && !breakActive) {
-        const cont = (Date.now() - presenceStart)/60000;
-        if (cont >= Number(breakSlider.value) && Date.now() - lastBreakNudgeAt > 60000) {
-          const p = BREAK_PROMPT_PHRASES[breakIdx% BREAK_PROMPT_PHRASES.length]; breakIdx++;
-          speak(p); addAlertToFeed('break_prompt', p); stats.breakNudges++; lastBreakNudgeAt = Date.now();
-        }
+      if (presenceStart && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
+        const p = BREAK_PROMPT_PHRASES[breakIdx% BREAK_PROMPT_PHRASES.length]; breakIdx++;
+        speak(p); addAlertToFeed('break_prompt', p); stats.breakNudges++; lastBreakNudgeAt = Date.now();
       }
     }
   } else {
-    // No person detected
     if (isPersonPresent && !breakActive) {
-      // person just left
       if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
       breakStart = Date.now();
       isPersonPresent = false;
       setStatus('idle', 'No person detected');
-      // auto break will start after BREAK_MIN_SECONDS of continuous absence
     }
     if (!isPersonPresent && breakStart && !breakActive) {
       const absence = (Date.now() - breakStart)/1000;
@@ -561,7 +573,7 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- Calibration ----
+// ---- Calibration (always possible) ----
 calibrateBtn.addEventListener('click', () => {
   const result = landmarker.detectForVideo(video, performance.now());
   if (result.landmarks && result.landmarks.length>0) {
@@ -572,7 +584,9 @@ calibrateBtn.addEventListener('click', () => {
     gaugeCaption.textContent = 'Posture calibrated.';
     speak("Calibrated. That's your good posture.");
     addAlertToFeed('calibration', 'Posture calibrated'); logCalibrationEvent();
-    calibrateBtn.textContent = 'Posture calibrated'; calibrateBtn.style.backgroundColor='#2C6E8E'; calibrateBtn.style.borderColor='#2C6E8E';
+    calibrateBtn.textContent = 'Recalibrate posture';
+    calibrateBtn.style.backgroundColor = '#2C6E8E'; calibrateBtn.style.borderColor = '#2C6E8E';
+    calibrateBtn.style.color = '#fff';
   }
 });
 
@@ -586,7 +600,16 @@ breakToggleBtn.addEventListener('click', () => {
   }
 });
 
-// ---- Report modal ----
+// ---- Camera toggle button ----
+cameraToggleBtn.addEventListener('click', () => {
+  if (running) {
+    stopCamera();
+  } else {
+    startCamera();
+  }
+});
+
+// ---- Report modal (unchanged) ----
 async function fetchEventsForRange(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
@@ -618,7 +641,6 @@ async function showReport(range) {
   const events = await fetchEventsForRange(start, end);
   const logs = await fetchDailyLogs(start, end);
 
-  // pre-populate all dates in range
   const dateMap = {};
   const d = new Date(start+'T00:00:00');
   while (d.toISOString().slice(0,10) <= end) {
@@ -645,14 +667,11 @@ async function showReport(range) {
   const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump/60));
   const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump)/60)));
 
-  // summary
-  let totalBreak = 0, totalSession = 0, totalSlouch = 0, totalBreaks = 0;
-  Object.values(dateMap).forEach(day => {
-    totalBreak += day.break; totalSession += day.sessionSeconds; totalSlouch += day.left+day.right+day.slump; totalBreaks += day.breaks;
-  });
+  let totalBreak=0, totalSession=0, totalSlouch=0, totalBreaks=0;
+  Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump; totalBreaks+=day.breaks; });
   const overall = totalBreak + totalSession;
-  const slouchPct = overall ? Math.round(totalSlouch / overall * 100) : 0;
-  const avgBreak = totalBreaks ? Math.round(totalBreak / totalBreaks / 60) : 0;
+  const slouchPct = overall ? Math.round(totalSlouch/overall*100) : 0;
+  const avgBreak = totalBreaks ? Math.round(totalBreak/totalBreaks/60) : 0;
   reportSummary.innerHTML = `
     <div class="metric"><div class="value">${Math.round(overall/60)}m</div><div class="label">Monitored</div></div>
     <div class="metric"><div class="value">${slouchPct}%</div><div class="label">Slouch</div></div>
@@ -681,11 +700,7 @@ async function showReport(range) {
   });
 }
 
-reportBtn.addEventListener('click', () => {
-  modalOverlay.classList.add('open');
-  const activeTab = document.querySelector('.tab.active');
-  showReport(activeTab ? activeTab.dataset.range : 'today');
-});
+reportBtn.addEventListener('click', () => { modalOverlay.classList.add('open'); const active = document.querySelector('.tab.active'); showReport(active ? active.dataset.range : 'today'); });
 modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
 modalTabs.addEventListener('click', e => {
   if (e.target.classList.contains('tab')) {
@@ -703,8 +718,7 @@ window.addEventListener('beforeunload', () => {
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   saveStats();
 });
-startBtn.addEventListener('click', startCamera);
-stopBtn.addEventListener('click', stopCamera);
+
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
 muteBtn.addEventListener('click', () => { muted = !muted; muteBtn.textContent = muted ? 'Unmute' : 'Mute'; });
 bgAudioBtn.addEventListener('click', () => { if(bgAudioEnabled) stopBgSilentAudio(); else startBgSilentAudio(); });
