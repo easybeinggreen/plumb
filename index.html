@@ -4,258 +4,324 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>plumb — aligned for life</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root {
-    --paper: #F1F5F6;
-    --paper-line: #C9D3D6;
-    --ink: #1F2A2E;
-    --ink-soft: #57676C;
-    --good: #2C6E8E;
-    --good-bg: #E4EEF1;
-    --alert: #C98A2C;
-    --alert-bg: #FBEEDC;
-    --danger: #C0492F;
-    --danger-bg: #FBE7E2;
-    --panel: #FFFFFF;
-    --radius: 8px;
+    --ink: #0A2626;
+    --ink-soft: #4B615E;
+    --ink-faint: rgba(10,38,38,0.09);
+    --ink-faint-2: rgba(10,38,38,0.15);
+    --accent: #2E7D6B;
+    --paper: #E9E6E0;
+    --panel: #F5F2EC;
+    --terracotta: #C1622E;
+    --terracotta-dark: #8A4420;
+    --terracotta-mild-bg: #F0DAC7;
+    --terracotta-mild-bg-2: #E4C1A0;
+    --terracotta-pale: #FBEFE6;
+    --chart-neutral: #C9C2B3;
+    --shadow-1: 0 1px 2px rgba(10,38,38,0.06), 0 3px 10px rgba(10,38,38,0.05);
+    --shadow-2: 0 6px 20px rgba(10,38,38,0.14), 0 2px 6px rgba(10,38,38,0.08);
+    --radius: 14px;
+    --radius-sm: 9px;
+    --sans: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
-
   * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--sans); color: var(--ink); background: var(--paper); min-height: 100vh; font-size: 15px; }
+  .page { max-width: 1160px; margin: 0 auto; padding: 0 22px 40px; }
 
-  body {
-    margin: 0;
-    font-family: var(--sans);
-    color: var(--ink);
-    background:
-      linear-gradient(var(--paper-line) 1px, transparent 1px) 0 0 / 100% 28px,
-      linear-gradient(90deg, var(--paper-line) 1px, transparent 1px) 0 0 / 28px 100%,
-      var(--paper);
-    min-height: 100vh;
+  header { display: flex; align-items: flex-end; justify-content: space-between; padding: 26px 0 18px; gap: 16px; flex-wrap: wrap; }
+  .brand { display: flex; flex-direction: column; gap: 2px; }
+  .wordmark-slot svg { height: 30px; width: auto; display: block; }
+  .strap { font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+  .btn-nav {
+    font-family: var(--sans); font-size: 13px; font-weight: 700; color: var(--ink); background: transparent;
+    border: none; padding: 8px 4px; cursor: pointer; display: flex; align-items: center; gap: 6px; border-bottom: 2px solid transparent;
   }
+  .btn-nav:hover { border-bottom-color: var(--ink-faint-2); }
 
-  header { padding: 12px 20px 6px; text-align: center; }
-  header .logo { font-family: var(--sans); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
-  header .strap { font-size: 14px; color: var(--ink-soft); margin-top: 2px; }
+  main { display: grid; grid-template-columns: 1.35fr 1fr; gap: 16px; }
+  @media (max-width: 880px) { main { grid-template-columns: 1fr; } }
 
-  main {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    padding: 10px 20px 20px;
-  }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-1); }
 
-  .panel { background: var(--panel); border: 1px solid var(--paper-line); border-radius: var(--radius); padding: 12px; }
+  .video-wrap { position: relative; width: 100%; aspect-ratio: 4/3; background: #12191c; border-radius: var(--radius-sm); overflow: hidden; }
+  #video, #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover; }
+  .video-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #9FB0B5; font-size: 13px; text-align: center; padding: 16px; line-height: 1.5; }
 
-  .video-wrap {
-    position: relative; width: 100%; aspect-ratio: 4 / 3;
-    background: #12191c; border-radius: calc(var(--radius) - 2px); overflow: hidden;
-  }
-  #video, #overlay {
-    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    transform: scaleX(-1);
-    object-fit: cover;            /* fills container without black bars */
-  }
-  .video-placeholder {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: #9FB0B5; font-size: 12px; text-align: center; padding: 16px;
-  }
+  .privacy-note { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft); margin-top: 10px; }
+  .privacy-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 
-  .privacy-note {
-    display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-soft); margin-top: 8px;
-  }
-  .privacy-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--good); flex-shrink: 0; }
+  .control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .control-row .spacer { flex: 1; min-width: 6px; }
+  button { font-family: var(--sans); cursor: pointer; }
 
-  .controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+  .btn { font-size: 13px; font-weight: 700; padding: 9px 16px; border-radius: 999px; border: 1.5px solid var(--ink); background: transparent; color: var(--ink); transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease; }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.38; cursor: not-allowed; }
+  #cameraToggleBtn { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+  #cameraToggleBtn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+  #cameraToggleBtn.stop-camera { background: transparent; color: var(--ink); }
 
-  button {
-    font-family: var(--sans); font-size: 12px; font-weight: 600; padding: 7px 12px;
-    border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: #fff; cursor: pointer;
-  }
-  button.secondary { background: transparent; color: var(--ink); border-color: var(--paper-line); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.secondary:hover:not(:disabled) { border-color: var(--ink); }
+  #breakToggleBtn { border-color: var(--ink-faint-2); position: relative; font-size: 13px; font-weight: 700; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
+  #breakToggleBtn:hover:not(:disabled) { border-color: var(--ink); }
+  #breakToggleBtn.break-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #breakToggleBtn.break-due::after { content: ""; position: absolute; top: -3px; right: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--terracotta); border: 2px solid var(--panel); }
 
-  button.start-camera { background: #A5D6A7; color: var(--ink); border-color: #81C784; }   /* pale green */
-  button.stop-camera { background: #EF9A9A; color: var(--ink); border-color: #E57373; }    /* pale red */
-  button.break-due { background: #A5D6A7; color: var(--ink); border-color: #81C784; }      /* green = time for break */
-  button.break-active { background: #EF9A9A; color: var(--ink); border-color: #E57373; }   /* red = on break */
+  .btn-compact { font-size: 12.5px; font-weight: 700; padding: 7px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink); white-space: nowrap; }
+  .btn-compact:hover:not(:disabled) { border-color: var(--ink); }
+  .btn-compact:disabled { opacity: 0.4; }
+  .btn-compact.is-confirmed { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-  select {
-    font-family: var(--sans); font-size: 12px; padding: 6px 8px; border-radius: 6px;
-    border: 1px solid var(--paper-line); background: #fff; color: var(--ink);
-  }
+  .icon-btn { width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--ink-faint-2); background: transparent; display: flex; align-items: center; justify-content: center; color: var(--ink); flex-shrink: 0; }
+  .icon-btn:hover { border-color: var(--ink); }
+  .icon-btn.is-open { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+  .icon-btn svg { width: 17px; height: 17px; }
 
-  .side { display: flex; flex-direction: column; gap: 10px; }
+  .switch-group { display: flex; align-items: center; gap: 14px; margin-left: 4px; }
+  .switch-item { display: flex; align-items: center; gap: 7px; }
+  .switch-item .switch-caption { font-size: 12px; color: var(--ink-soft); font-weight: 700; white-space: nowrap; }
+  .switch { width: 34px; height: 20px; border-radius: 999px; border: none; background: var(--ink-faint-2); position: relative; flex-shrink: 0; padding: 0; font-size: 0; color: transparent; overflow: hidden; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(10,38,38,0.3); transition: transform .18s ease; }
+  .switch.is-on { background: var(--accent); }
+  .switch.is-on::after { transform: translateX(14px); background: #fff; }
 
-  .status-card { display: flex; align-items: center; gap: 10px; padding: 10px; }
-  .status-card.good { background: var(--good-bg); }
-  .status-card.alert { background: var(--alert-bg); }
-  .status-card.idle { background: #F3F1EC; }
-  .status-label { font-size: 11px; color: var(--ink-soft); margin-bottom: 2px; }
-  .status-value { font-size: 16px; font-weight: 700; }
+  .popover-anchor { position: relative; }
+  .popover { position: absolute; top: calc(100% + 10px); right: 0; width: 290px; z-index: 40; background: var(--panel); border-radius: var(--radius-sm); box-shadow: var(--shadow-2); padding: 14px; display: none; }
+  .popover.is-open { display: block; }
+  .popover-section + .popover-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
+  .popover-label { font-size: 11px; font-weight: 800; color: var(--ink-soft); margin-bottom: 7px; }
+  .popover-row { display: flex; gap: 7px; align-items: center; }
+  select { font-family: var(--sans); font-size: 13px; padding: 7px 9px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: #fff; color: var(--ink); flex: 1; min-width: 0; }
+  .voice-ready { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-faint-2); flex-shrink: 0; }
+  .voice-ready.ready { background: var(--accent); }
 
-  .gauge-wrap { display: flex; flex-direction: column; align-items: center; padding: 6px 0 0; }
-  .gauge-caption { font-size: 11px; color: var(--ink-soft); text-align: center; margin-top: 4px; }
+  .sync-note { font-size: 12px; color: var(--ink-soft); margin-top: 12px; display: flex; align-items: center; gap: 7px; }
+  .sync-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint-2); flex-shrink: 0; }
+  .sync-note .dot.ok { background: var(--accent); }
+  .sync-note .dot.err { background: var(--terracotta); }
 
-  .section-title {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--ink-soft); margin: 0 0 8px;
-    cursor: pointer; user-select: none;
-  }
-  .section-title .arrow { font-size: 10px; margin-left: 4px; }
+  .side { display: flex; flex-direction: column; gap: 14px; }
 
+  .posture-card { display: flex; align-items: center; gap: 18px; padding: 20px 18px; }
+  .glyph-wrap { flex-shrink: 0; width: 76px; height: 96px; }
+  .glyph-wrap svg { width: 100%; height: 100%; }
+  .pg-guide { stroke: var(--ink); stroke-opacity: 0.13; stroke-width: 1.5; stroke-dasharray: 2 4; }
+  .pg-anchor { fill: var(--ink); fill-opacity: 0.35; }
+  #pgLineGroup { transform-origin: 50px 10px; transform: rotate(var(--rot, 0deg)) scaleY(var(--sy, 1)); transition: transform .6s cubic-bezier(.34,1.2,.4,1); }
+  .pg-line { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; transition: stroke .3s ease, stroke-width .3s ease; }
+  .pg-bob { fill: var(--ink); transition: fill .3s ease; }
+  .posture-card.state-mild .pg-line { stroke: var(--terracotta-dark); }
+  .posture-card.state-mild .pg-bob { fill: var(--terracotta-dark); }
+  .posture-card.state-sustained .pg-line { stroke: var(--terracotta); stroke-width: 4; }
+  .posture-card.state-sustained .pg-bob { fill: var(--terracotta); }
+  .posture-card.state-idle .pg-line { stroke: var(--ink); stroke-opacity: 0.28; }
+  .posture-card.state-idle .pg-bob { fill: var(--ink); fill-opacity: 0.28; }
+
+  .status-value { font-size: 21px; font-weight: 800; line-height: 1.15; }
+  .posture-card.state-mild .status-value { color: var(--terracotta-dark); }
+  .posture-card.state-sustained .status-value { color: var(--terracotta); }
+  .posture-card.state-idle .status-value { color: var(--ink-soft); }
+  .status-caption { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
+  .live-metrics { display: flex; gap: 14px; margin-top: 9px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); }
+  .live-metrics b { color: var(--ink); font-weight: 700; }
+  .live-metrics b.over { color: var(--terracotta-dark); }
+  .live-metrics i { font-style: normal; opacity: 0.6; }
+
+  .section-title { font-size: 12px; font-weight: 800; color: var(--ink); margin: 0 0 12px; cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; }
+  .section-title .arrow { font-size: 10px; color: var(--ink-soft); }
   .collapsible-content { display: block; }
   .collapsible-content.hidden { display: none; }
 
-  .slider-row { margin-bottom: 10px; }
-  .slider-row label { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-soft); margin-bottom: 3px; }
-  .slider-row label .v { font-family: var(--mono); color: var(--ink); }
-  input[type="range"] { width: 100%; }
+  .slider-row { margin-bottom: 16px; }
+  .slider-row:last-child { margin-bottom: 0; }
+  .slider-row label { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--ink); font-weight: 700; margin-bottom: 6px; }
+  .slider-row label .v { font-family: var(--mono); font-weight: 600; color: var(--ink-soft); font-size: 12px; }
+  input[type="range"] { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 999px; background: var(--ink-faint-2); outline: none; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); border: 2.5px solid var(--accent); cursor: pointer; margin-top: -5px; box-shadow: 0 1px 3px rgba(10,38,38,0.25); }
+  input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--panel); border: 2.5px solid var(--accent); cursor: pointer; }
+  input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: transparent; }
 
-  .sync-note { font-size: 11px; color: var(--ink-soft); margin-top: 8px; display: flex; align-items: center; gap: 6px; }
-  .sync-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--paper-line); flex-shrink: 0; }
-  .sync-note .dot.ok { background: var(--good); }
-  .sync-note .dot.err { background: var(--danger); }
+  .alert-feed { max-height: 130px; overflow-y: auto; font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 
-  .voice-ready { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 6px; background: #ccc; }
-  .voice-ready.ready { background: var(--good); }
-
-  /* Report modal */
-  .modal-overlay {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center;
-    z-index: 1000;
-  }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(10,38,38,0.42); display: none; justify-content: center; align-items: center; z-index: 1000; padding: 20px; }
   .modal-overlay.open { display: flex; }
-  .modal {
-    background: #fff; border-radius: 12px; max-width: 900px; width: 95%; max-height: 90vh;
-    overflow-y: auto; padding: 20px; position: relative;
-  }
-  .modal-close {
-    position: absolute; top: 10px; right: 14px; background: none; border: none;
-    font-size: 22px; cursor: pointer; color: var(--ink-soft);
-  }
-  .tabs { display: flex; gap: 4px; margin-bottom: 14px; }
-  .tab {
-    padding: 6px 14px; border-radius: 6px; background: var(--paper);
-    border: 1px solid var(--paper-line); cursor: pointer; font-size: 12px;
-  }
-  .tab.active { background: var(--ink); color: #fff; }
+  .modal { background: var(--panel); border-radius: 18px; max-width: 880px; width: 100%; max-height: 88vh; overflow-y: auto; padding: 24px; position: relative; box-shadow: var(--shadow-2); }
+  .modal-close { position: absolute; top: 14px; right: 16px; background: none; border: none; font-size: 22px; cursor: pointer; color: var(--ink-soft); line-height: 1; }
+  h2.modal-title { margin: 0 0 16px; font-size: 19px; font-weight: 800; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--ink-faint); }
+  .tab { padding: 8px 4px; margin-right: 18px; background: transparent; border: none; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink-soft); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+  .report-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .report-summary .metric { background: var(--paper); border-radius: 10px; padding: 12px; text-align: center; }
+  .metric .value { font-size: 19px; font-weight: 800; color: var(--ink); }
+  .metric .label { font-size: 11px; color: var(--ink-soft); margin-top: 3px; font-weight: 600; }
+  .chart-container { width: 100%; max-height: 280px; position: relative; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .ai-summary-text { font-size: 15px; line-height: 1.65; margin: 0 0 16px; }
+  .ai-meta { font-size: 12px; color: var(--ink-soft); margin: -8px 0 18px; }
 
-  .report-summary {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px; margin-bottom: 16px;
-  }
-  .report-summary .metric { background: var(--paper); border-radius: 8px; padding: 10px; text-align: center; }
-  .metric .value { font-size: 18px; font-weight: 700; color: var(--ink); }
-  .metric .label { font-size: 10px; color: var(--ink-soft); margin-top: 2px; }
-
-  .chart-container { width: 100%; max-height: 300px; position: relative; }
-
-  footer { padding: 0 20px 20px; font-size: 11px; color: var(--ink-soft); text-align: center; }
-  footer a { color: var(--good); }
+  footer { padding: 24px 0 8px; font-size: 12px; color: var(--ink-soft); text-align: center; line-height: 1.6; }
+  footer a { color: var(--accent); font-weight: 700; text-decoration: none; }
 </style>
 </head>
 <body>
 
-<header>
-  <div class="logo">plumb</div>
-  <div class="strap">aligned for life</div>
-</header>
-
-<main>
-  <div class="panel">
-    <div class="video-wrap" id="videoWrap">
-      <video id="video" playsinline autoplay muted></video>
-      <canvas id="overlay"></canvas>
-      <div class="video-placeholder" id="placeholder">Camera is off. Click "Start camera" to begin.</div>
-    </div>
-
-    <div class="privacy-note"><span class="dot"></span> Video stays on this device. Only small numbers ever get saved.</div>
-
-    <div class="controls">
-      <button id="cameraToggleBtn" class="start-camera">Start camera</button>
-      <select id="cameraSelect"><option value="">Default camera</option></select>
-      <button id="calibrateBtn" class="secondary" disabled>Recalibrate posture</button>
-      <button id="breakToggleBtn" class="secondary" disabled title="Take a break or end it">Take a break</button>
-      <select id="voiceSelect"></select>
-      <span id="voiceReady" class="voice-ready" title="Voice status"></span>
-      <button id="testVoiceBtn" class="secondary">Test voice</button>
-      <button id="muteBtn" class="secondary">Mute</button>
-      <button id="bgAudioBtn" class="secondary" title="Allow audio nudges when tab is hidden">Background nudges</button>
-      <button id="reportBtn" class="secondary">View report</button>
-    </div>
-    <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">Cloud sync: checking…</span></div>
-  </div>
-
-  <div class="side">
-    <div class="panel status-card idle" id="statusCard">
-      <svg width="30" height="30" viewBox="0 0 34 34" id="statusIcon">
-        <circle cx="17" cy="17" r="15" fill="none" stroke="currentColor" stroke-width="2.5"/>
-      </svg>
-      <div>
-        <div class="status-label">Posture status</div>
-        <div class="status-value" id="statusValue">Not started</div>
+<div class="page">
+  <header>
+    <div class="brand">
+      <div class="wordmark-slot" title="placeholder — swap in the real logotype SVG">
+        <svg viewBox="0 0 108 32" xmlns="http://www.w3.org/2000/svg">
+          <text x="0" y="24" font-family="Nunito" font-weight="900" font-size="28" fill="#0A2626" letter-spacing="-0.5">plumb</text>
+        </svg>
       </div>
+      <div class="strap">aligned for life</div>
     </div>
+    <button class="btn-nav" id="reportBtn">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+      view report
+    </button>
+  </header>
 
-    <div class="panel gauge-wrap">
-      <canvas id="postureMap" width="180" height="180" style="border-radius:6px; border:1px solid var(--paper-line);"></canvas>
-      <div class="gauge-caption" id="gaugeCaption">Posture map — left/right &amp; neck height</div>
-    </div>
-
+  <main>
     <div class="panel">
-      <div class="section-title" id="settingsToggle">Settings <span class="arrow">▼</span></div>
-      <div class="collapsible-content hidden" id="settingsContent">
-        <div class="slider-row">
-          <label>Side‑to‑side (shoulder‑width ratio) <span class="v" id="toleranceVal">0.20</span></label>
-          <input type="range" id="toleranceSlider" min="0.05" max="0.50" value="0.20" step="0.01" />
+      <div class="video-wrap" id="videoWrap">
+        <video id="video" playsinline autoplay muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="video-placeholder" id="placeholder">camera is off — press start camera to begin</div>
+      </div>
+
+      <div class="privacy-note"><span class="dot"></span> video stays on this device — only small numbers ever get saved</div>
+
+      <div class="control-row">
+        <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
+        <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
+
+        <div class="switch-group">
+          <div class="switch-item">
+            <button id="muteBtn" class="switch" aria-pressed="false" title="mute voice nudges"></button>
+            <span class="switch-caption">voice nudges</span>
+          </div>
+          <div class="switch-item">
+            <button id="bgAudioBtn" class="switch" aria-pressed="false" title="keep nudges running when this tab is hidden"></button>
+            <span class="switch-caption">background nudges</span>
+          </div>
         </div>
-        <div class="slider-row">
-          <label>Slump (neck‑compression ratio) <span class="v" id="compressionToleranceVal">0.10</span></label>
-          <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
-        </div>
-        <div class="slider-row">
-          <label>Sustained before nudge <span class="v" id="sustainVal">8s</span></label>
-          <input type="range" id="sustainSlider" min="3" max="30" value="8" />
-        </div>
-        <div class="slider-row">
-          <label>Break reminder after <span class="v" id="breakVal">60 min</span></label>
-          <input type="range" id="breakSlider" min="15" max="180" value="60" />
+
+        <div class="spacer"></div>
+
+        <div class="popover-anchor">
+          <button id="gearBtn" class="icon-btn" title="camera, voice &amp; calibration" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>
+          </button>
+
+          <div class="popover" id="devicePopover">
+            <div class="popover-section">
+              <div class="popover-label">camera</div>
+              <div class="popover-row"><select id="cameraSelect"><option value="">default camera</option></select></div>
+              <div class="popover-row" style="margin-top:7px;">
+                <button id="calibrateBtn" class="btn-compact" style="width:100%;" disabled>recalibrate posture</button>
+              </div>
+            </div>
+            <div class="popover-section">
+              <div class="popover-label">voice</div>
+              <div class="popover-row">
+                <select id="voiceSelect"></select>
+                <span id="voiceReady" class="voice-ready" title="voice status"></span>
+              </div>
+              <div class="popover-row" style="margin-top:7px;">
+                <button id="testVoiceBtn" class="btn-compact" style="width:100%;">test voice</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+
+      <div class="sync-note"><span class="dot" id="syncDot"></span><span id="syncText">cloud sync: checking…</span></div>
     </div>
 
-    <div class="panel">
-      <div class="section-title">Alert feed</div>
-      <div id="alertFeed" style="max-height:120px; overflow-y:auto; font-size:11px; color:var(--ink-soft); line-height:1.3;">
-        <div style="color:var(--ink-soft);">No alerts yet</div>
+    <div class="side">
+      <div class="panel posture-card state-idle" id="statusCard">
+        <div class="glyph-wrap">
+          <svg viewBox="0 0 100 130">
+            <line class="pg-guide" x1="50" y1="10" x2="50" y2="122"/>
+            <circle class="pg-anchor" cx="50" cy="10" r="3.5"/>
+            <g id="pgLineGroup">
+              <line id="pgLine" class="pg-line" x1="50" y1="10" x2="50" y2="112"/>
+              <circle id="pgBob" class="pg-bob" cx="50" cy="112" r="7"/>
+            </g>
+          </svg>
+        </div>
+        <div class="posture-text">
+          <div class="status-value" id="statusValue">not started</div>
+          <div class="status-caption" id="statusCaption">press start camera to begin</div>
+          <div class="live-metrics" id="liveMetrics">
+            <span>lateral <b id="lmLateral">—</b> <i>/ <span id="lmLateralTol">0.20</span></i></span>
+            <span>slump <b id="lmSlump">—</b> <i>/ <span id="lmSlumpTol">0.10</span></i></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title" id="settingsToggle">tolerances <span class="arrow">▼</span></div>
+        <div class="collapsible-content hidden" id="settingsContent">
+          <div class="slider-row">
+            <label>side-to-side tolerance <span class="v" id="toleranceVal">0.20</span></label>
+            <input type="range" id="toleranceSlider" min="0.05" max="0.50" value="0.20" step="0.01" />
+          </div>
+          <div class="slider-row">
+            <label>slump tolerance <span class="v" id="compressionToleranceVal">0.10</span></label>
+            <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
+          </div>
+          <div class="slider-row">
+            <label>sustained before nudge <span class="v" id="sustainVal">8s</span></label>
+            <input type="range" id="sustainSlider" min="3" max="30" value="8" />
+          </div>
+          <div class="slider-row">
+            <label>break reminder after <span class="v" id="breakVal">60 min</span></label>
+            <input type="range" id="breakSlider" min="15" max="180" value="60" />
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title" style="cursor:default;">alert feed</div>
+        <div id="alertFeed" class="alert-feed"><div style="color:var(--ink-soft);">no alerts yet</div></div>
       </div>
     </div>
-  </div>
-</main>
+  </main>
+
+  <footer>
+    voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. stats auto-sync to Supabase every ~10s. see <code>README.md</code> for setup.
+  </footer>
+</div>
 
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <button class="modal-close" id="modalClose">&times;</button>
+    <h2 class="modal-title">how it's going</h2>
     <div class="tabs" id="modalTabs">
-      <button class="tab active" data-range="today">Today</button>
-      <button class="tab" data-range="week">This week</button>
-      <button class="tab" data-range="month">This month</button>
+      <button class="tab active" data-range="today">today</button>
+      <button class="tab" data-range="week">this week</button>
+      <button class="tab" data-range="month">this month</button>
+      <button class="tab" data-range="ai">ai summary</button>
     </div>
-    <div class="report-summary" id="reportSummary"></div>
-    <div class="chart-container">
-      <canvas id="slouchChart"></canvas>
+    <div class="tab-panel active" id="panelNumeric">
+      <div class="report-summary" id="reportSummary"></div>
+      <div class="chart-container"><canvas id="slouchChart"></canvas></div>
+    </div>
+    <div class="tab-panel" id="panelAi">
+      <p class="ai-summary-text" id="aiSummaryText">loading…</p>
+      <div class="ai-meta" id="aiMeta"></div>
+      <div class="report-summary" id="aiStatGrid"></div>
+      <div class="chart-container"><canvas id="aiDailyChart"></canvas></div>
     </div>
   </div>
 </div>
-
-<footer>
-  Voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. Stats auto‑sync to Supabase every ~10s. See <code>README.md</code> for setup.
-</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script type="module" src="./src/main.js"></script>
