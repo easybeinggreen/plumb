@@ -25,10 +25,16 @@ const voiceReady = document.getElementById('voiceReady');
 
 const statusCard = document.getElementById('statusCard');
 const statusValue = document.getElementById('statusValue');
+const statusCaption = document.getElementById('statusCaption');
 
-const postureMap = document.getElementById('postureMap');
-const pmCtx = postureMap.getContext('2d');
-const gaugeCaption = document.getElementById('gaugeCaption');
+const pgLineGroup = document.getElementById('pgLineGroup');
+const lmLateral = document.getElementById('lmLateral');
+const lmSlump = document.getElementById('lmSlump');
+const lmLateralTol = document.getElementById('lmLateralTol');
+const lmSlumpTol = document.getElementById('lmSlumpTol');
+
+const gearBtn = document.getElementById('gearBtn');
+const devicePopover = document.getElementById('devicePopover');
 
 const settingsToggle = document.getElementById('settingsToggle');
 const settingsContent = document.getElementById('settingsContent');
@@ -52,7 +58,13 @@ const modalClose = document.getElementById('modalClose');
 const modalTabs = document.getElementById('modalTabs');
 const reportSummary = document.getElementById('reportSummary');
 const slouchChartCtx = document.getElementById('slouchChart').getContext('2d');
+const panelNumeric = document.getElementById('panelNumeric');
+const panelAi = document.getElementById('panelAi');
+const aiSummaryText = document.getElementById('aiSummaryText');
+const aiMeta = document.getElementById('aiMeta');
+const aiStatGrid = document.getElementById('aiStatGrid');
 let currentChart = null;
+let aiChart = null;
 
 // ---- State ----
 let landmarker = null;
@@ -78,6 +90,7 @@ let lastBreakNudgeAt = 0;
 let manualBreak = false;
 let breakActive = false;
 const BREAK_MIN_SECONDS = 15;
+const BREAK_MAX_SECONDS = 2 * 60 * 60; // 2 hours — beyond this it's logged as "away", not a break
 
 let eventBuffer = [];
 
@@ -94,9 +107,19 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-const today = () => {
-  const d = new Date();
+// A day is always this device's local calendar day. Timestamps stay UTC
+// (correct for exact instants); only date *labels* need to stay local,
+// computed straight from date parts rather than round-tripped through
+// toISOString() (which silently shifts the date for any non-UTC+0 offset).
+const dateForTimestamp = (ms) => {
+  const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const today = () => dateForTimestamp(Date.now());
+const addDaysToDateStr = (ds, n) => {
+  const d = new Date(ds + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return dateForTimestamp(d.getTime());
 };
 
 const LOG_KEY = (d) => `plumb:${d}`;
@@ -186,7 +209,7 @@ function addAlertToFeed(type, message) {
   const item = document.createElement('div');
   item.style.marginBottom = '3px';
   item.innerHTML = `<span style="font-family:var(--mono);">${time}</span> <span style="color:var(--ink);">${message}</span>`;
-  if (alertFeed.children.length === 1 && alertFeed.children[0].innerText === 'No alerts yet') alertFeed.innerHTML = '';
+  if (alertFeed.children.length === 1 && alertFeed.children[0].innerText === 'no alerts yet') alertFeed.innerHTML = '';
   alertFeed.insertBefore(item, alertFeed.firstChild);
   while (alertFeed.children.length > 15) alertFeed.removeChild(alertFeed.lastChild);
 }
@@ -195,12 +218,17 @@ function addAlertToFeed(type, message) {
 function logSlouchEvent(type, startTime, endTime) {
   const dur = Math.round((endTime - startTime)/1000);
   if (dur <= 0) return;
-  eventBuffer.push({ date: today(), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type, duration_seconds: dur });
+  eventBuffer.push({ date: dateForTimestamp(startTime), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type, duration_seconds: dur });
 }
 function logBreakEvent(startTime, endTime) {
   const dur = Math.round((endTime - startTime)/1000);
   if (dur <= 0) return;
-  eventBuffer.push({ date: today(), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type: 'break', duration_seconds: dur });
+  eventBuffer.push({ date: dateForTimestamp(startTime), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type: 'break', duration_seconds: dur });
+}
+function logAwayEvent(startTime, endTime) {
+  const dur = Math.round((endTime - startTime)/1000);
+  if (dur <= 0) return;
+  eventBuffer.push({ date: dateForTimestamp(startTime), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type: 'away', duration_seconds: dur });
 }
 function logCalibrationEvent() {
   eventBuffer.push({ date: today(), start_time: new Date().toISOString(), end_time: new Date().toISOString(), type: 'calibration', duration_seconds: 0 });
@@ -209,10 +237,18 @@ function logCalibrationEvent() {
 function logRetrospectiveBreak() {
   const lastEnd = localStorage.getItem(LAST_SESSION_END_KEY);
   if (!lastEnd) return;
-  const gap = (Date.now() - new Date(lastEnd).getTime()) / 1000;
-  if (gap >= BREAK_MIN_SECONDS) {
-    logBreakEvent(new Date(lastEnd).getTime(), Date.now());
+  const gapStart = new Date(lastEnd).getTime();
+  const gapEnd = Date.now();
+  const gap = (gapEnd - gapStart) / 1000;
+  if (gap < BREAK_MIN_SECONDS) return;
+  if (gap > BREAK_MAX_SECONDS) {
+    // camera was off for longer than a real break — log it as time away
+    // instead of inflating "avg break" with one giant outlier
+    logAwayEvent(gapStart, gapEnd);
+  } else {
+    logBreakEvent(gapStart, gapEnd);
     breaksTaken++;
+    stats.breaksTaken = breaksTaken;
   }
 }
 
@@ -224,7 +260,7 @@ function startBreak(manual = false) {
   breakStart = Date.now();
   if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
   addAlertToFeed('break', manual ? 'Manual break started' : 'Break started (camera lost)');
-  breakToggleBtn.textContent = 'End break';
+  breakToggleBtn.textContent = 'end break';
   breakToggleBtn.classList.add('break-active');
   breakToggleBtn.classList.remove('break-due');
 }
@@ -248,7 +284,7 @@ function endBreak() {
   breakActive = false;
   manualBreak = false;
   breakStart = null;
-  breakToggleBtn.textContent = 'Take a break';
+  breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
 
@@ -266,16 +302,17 @@ function startBgSilentAudio() {
   }
   silentAudioEl.play().catch(() => { setTimeout(startBgSilentAudio, 5000); });
   bgAudioEnabled = true;
-  bgAudioBtn.textContent = 'Background nudges: on';
+  bgAudioBtn.textContent = 'background nudges: on';
+  bgAudioBtn.classList.add('is-on');
 }
-function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudioEnabled = false; bgAudioBtn.textContent = 'Background nudges'; }
+function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudioEnabled = false; bgAudioBtn.textContent = 'background nudges'; bgAudioBtn.classList.remove('is-on'); }
 
 // ---- Voice ----
 function updateVoiceReady(ready) { voiceReady.classList.toggle('ready', ready); }
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
-    testVoiceBtn.textContent = 'Loading voice…';
+    testVoiceBtn.textContent = 'loading voice…';
     try { Object.defineProperty(navigator, 'hardwareConcurrency', { value:1, configurable:true }); } catch(e){}
     piperSession = await piperTTS.TtsSession.create({
       voiceId, wasmPaths: PIPER_WASM_PATHS,
@@ -283,10 +320,10 @@ async function ensurePiperVoice(voiceId) {
     });
     await piperSession.waitReady;
     piperSessionVoice = voiceId;
-    testVoiceBtn.textContent = 'Test voice';
+    testVoiceBtn.textContent = 'test voice';
     updateVoiceReady(true);
     return true;
-  } catch(err) { console.warn('Piper:', err); testVoiceBtn.textContent = 'Test voice'; updateVoiceReady(false); return false; }
+  } catch(err) { console.warn('Piper:', err); testVoiceBtn.textContent = 'test voice'; updateVoiceReady(false); return false; }
 }
 async function speak(text) {
   if (muted) return;
@@ -343,7 +380,7 @@ async function initModel() {
 }
 
 async function startCamera() {
-  cameraToggleBtn.textContent = 'Loading…';
+  cameraToggleBtn.textContent = 'loading…';
   cameraToggleBtn.disabled = true;
   try {
     if (!landmarker) await initModel();
@@ -355,24 +392,24 @@ async function startCamera() {
     populateCameraList();
     placeholder.style.display = 'none';
     running = true;
-    cameraToggleBtn.textContent = 'Stop camera';
+    cameraToggleBtn.textContent = 'stop camera';
     cameraToggleBtn.classList.remove('start-camera');
     cameraToggleBtn.classList.add('stop-camera');
     cameraToggleBtn.disabled = false;
     calibrateBtn.disabled = false;
     breakToggleBtn.disabled = false;
     lastFrameTime = performance.now();
-    logRetrospectiveBreak();
     await mergeRemoteStats();
-    presenceStart = null; lastBreakEnd = Date.now(); breakStart = null; isPersonPresent = false; breaksTaken = stats.breaksTaken; breakActive = false; manualBreak = false;
-    breakToggleBtn.textContent = 'Take a break';
+    logRetrospectiveBreak();
+    presenceStart = null; lastBreakEnd = Date.now(); breakStart = null; isPersonPresent = false; breakActive = false; manualBreak = false;
+    breakToggleBtn.textContent = 'take a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId); await ensureAudioUnlocked();
     if (bgAudioEnabled) startBgSilentAudio();
     loop();
   } catch(err) {
-    placeholder.textContent = `Camera error: ${err.message}`;
-    cameraToggleBtn.textContent = 'Start camera';
+    placeholder.textContent = `camera error: ${err.message}`;
+    cameraToggleBtn.textContent = 'start camera';
     cameraToggleBtn.classList.add('start-camera');
     cameraToggleBtn.classList.remove('stop-camera');
     cameraToggleBtn.disabled = false;
@@ -384,16 +421,16 @@ function stopCamera() {
   if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   if (video.srcObject) { video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject = null; }
-  placeholder.style.display = 'flex'; placeholder.textContent = 'Camera off. Click Start camera.';
-  cameraToggleBtn.textContent = 'Start camera';
+  placeholder.style.display = 'flex'; placeholder.textContent = 'camera is off — press start camera to begin';
+  cameraToggleBtn.textContent = 'start camera';
   cameraToggleBtn.classList.add('start-camera');
   cameraToggleBtn.classList.remove('stop-camera');
   cameraToggleBtn.disabled = false;
   calibrateBtn.disabled = true;
   breakToggleBtn.disabled = true;
-  calibrateBtn.textContent = 'Recalibrate posture';
-  calibrateBtn.style.backgroundColor = ''; calibrateBtn.style.borderColor = '';
-  breakToggleBtn.textContent = 'Take a break';
+  calibrateBtn.textContent = 'recalibrate posture';
+  calibrateBtn.classList.remove('is-confirmed');
+  breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
   if (breakActive) endBreak();
   stopBgSilentAudio(); saveStats();
@@ -423,38 +460,33 @@ settingsToggle.addEventListener('click', () => {
 });
 
 // ---- UI helpers ----
-function setStatus(mode, text) { statusCard.classList.remove('good','alert','idle'); statusCard.classList.add(mode); statusValue.textContent = text; }
+// mode: 'good' | 'mild' | 'sustained' | 'idle'
+function setStatus(mode, text, caption) {
+  statusCard.classList.remove('state-good','state-mild','state-sustained','state-idle');
+  statusCard.classList.add(`state-${mode === 'good' ? 'good' : mode === 'idle' ? 'idle' : mode}`);
+  statusValue.textContent = text;
+  if (caption !== undefined) statusCaption.textContent = caption;
+}
 
-function drawPostureMap(lateral, compression) {
-  const w = postureMap.width, h = postureMap.height;
-  pmCtx.clearRect(0,0,w,h);
+// type: 'lateral_left' | 'lateral_right' | 'compression' | null
+function updatePostureGlyph(type) {
+  const rot = type === 'lateral_left' ? 11 : type === 'lateral_right' ? -11 : 0;
+  const sy = type === 'compression' ? 0.74 : 1;
+  pgLineGroup.style.setProperty('--rot', rot + 'deg');
+  pgLineGroup.style.setProperty('--sy', sy);
+}
 
-  // tolerance rings
-  const latTol = Number(toleranceSlider.value);
-  const compTol = Number(compressionToleranceSlider.value);
-  const ringW = latTol * w * 1.5;   // scale to canvas
-  const ringH = compTol * h * 1.5;
-  pmCtx.strokeStyle = '#ccc'; pmCtx.lineWidth = 1;
-  pmCtx.setLineDash([4,4]);
-  pmCtx.beginPath(); pmCtx.ellipse(w/2, h/2, ringW, ringH, 0, 0, 2*Math.PI); pmCtx.stroke();
-  pmCtx.setLineDash([]);
-
-  // crosshair
-  pmCtx.strokeStyle = '#ddd'; pmCtx.beginPath(); pmCtx.moveTo(w/2,0); pmCtx.lineTo(w/2,h); pmCtx.moveTo(0,h/2); pmCtx.lineTo(w,h/2); pmCtx.stroke();
-
-  // axis labels with numbers
-  pmCtx.fillStyle = '#888'; pmCtx.font = '9px sans-serif'; pmCtx.textAlign = 'center';
-  pmCtx.fillText('-0.2', 10, h/2+3); pmCtx.fillText('0', w/2, h/2+3); pmCtx.fillText('+0.2', w-10, h/2+3);
-  pmCtx.textAlign = 'left'; pmCtx.fillText('0', w/2+4, h-6); pmCtx.fillText('0.1', w/2+4, h/2); pmCtx.fillText('0.2', w/2+4, 14);
-
-  // dot
-  const scaleX = w*0.45, scaleY = h*0.45;
-  const dotX = w/2 - lateral * scaleX*2;
-  const dotY = h/2 + compression * scaleY*5;
-  const cx = Math.max(6, Math.min(w-6, dotX)), cy = Math.max(6, Math.min(h-6, dotY));
-  const outLat = Math.abs(lateral) > latTol, outComp = compression > compTol;
-  const color = (outLat && outComp) ? '#C0492F' : (outLat || outComp) ? '#C98A2C' : '#27AE60';
-  pmCtx.fillStyle = color; pmCtx.beginPath(); pmCtx.arc(cx, cy, 6, 0, 2*Math.PI); pmCtx.fill();
+function updateLiveMetrics(lateral, compression, calibrated) {
+  if (!calibrated) {
+    lmLateral.textContent = '—'; lmSlump.textContent = '—';
+    lmLateral.classList.remove('over'); lmSlump.classList.remove('over');
+    return;
+  }
+  const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value);
+  lmLateral.textContent = lateral.toFixed(2);
+  lmSlump.textContent = compression.toFixed(2);
+  lmLateral.classList.toggle('over', Math.abs(lateral) > latTol);
+  lmSlump.classList.toggle('over', compression > compTol);
 }
 
 function maybeSwitchDay() {
@@ -505,14 +537,16 @@ function loop() {
     const continuousMin = presenceStart ? (Date.now() - presenceStart) / 60000 : 0;
     if (!breakActive && continuousMin >= breakIntervalMin) {
       breakToggleBtn.classList.add('break-due');
-      breakToggleBtn.textContent = 'Time for a break';
+      breakToggleBtn.textContent = 'time for a break';
     } else if (!breakActive) {
       breakToggleBtn.classList.remove('break-due');
-      breakToggleBtn.textContent = 'Take a break';
+      breakToggleBtn.textContent = 'take a break';
     }
 
     if (breakActive) {
-      setStatus('idle', 'On break');
+      setStatus('idle', 'on a break', 'back in a few');
+      updatePostureGlyph(null);
+      updateLiveMetrics(0, 0, false);
       rafId = requestAnimationFrame(loop);
       return;
     }
@@ -522,11 +556,12 @@ function loop() {
     const lateral = baselineLateral!==null ? lateralDeviation(earMid,shMid,leftSh,rightSh) - baselineLateral : 0;
     const neckRatio = neckCompressionRatio(earMid,shMid,leftSh,rightSh);
     const compression = baselineNeckRatio!==null ? baselineNeckRatio - neckRatio : 0;
+    const calibrated = baselineLateral!==null && baselineNeckRatio!==null;
+    updateLiveMetrics(lateral, compression, calibrated);
 
-    drawPostureMap(lateral, compression);
-
-    if (baselineLateral===null || baselineNeckRatio===null) {
-      setStatus('idle', 'Calibrate to begin');
+    if (!calibrated) {
+      setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
+      updatePostureGlyph(null);
     } else {
       const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), sus = Number(sustainSlider.value)*1000;
       const leftLean = lateral > latTol, rightLean = lateral < -latTol, comp = compression > compTol;
@@ -537,7 +572,9 @@ function loop() {
         stats.slouchSeconds += dt;
         if (!slouchStartedAt) { slouchStartedAt = Date.now(); slouchType = currentType; }
         const dur = Date.now() - slouchStartedAt;
-        setStatus('alert', `Slouching — ${Math.round(dur/1000)}s`);
+        const label = currentType === 'compression' ? 'slumping' : currentType === 'lateral_left' ? 'leaning left' : 'leaning right';
+        setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur/1000)}s and counting`);
+        updatePostureGlyph(currentType);
         if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
           let phrase;
           if (currentType==='compression') { phrase = SLUMP_PHRASES[slumpIdx%SLUMP_PHRASES.length]; slumpIdx++; }
@@ -547,7 +584,8 @@ function loop() {
         }
       } else {
         if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
-        setStatus('good', 'Sitting well');
+        setStatus('good', 'sitting tall', 'calibrated to your desk');
+        updatePostureGlyph(null);
       }
 
       if (presenceStart && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
@@ -560,7 +598,9 @@ function loop() {
       if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
       breakStart = Date.now();
       isPersonPresent = false;
-      setStatus('idle', 'No person detected');
+      setStatus('idle', 'no one detected', 'step into frame to resume');
+      updatePostureGlyph(null);
+      updateLiveMetrics(0, 0, false);
     }
     if (!isPersonPresent && breakStart && !breakActive) {
       const absence = (Date.now() - breakStart)/1000;
@@ -581,12 +621,11 @@ calibrateBtn.addEventListener('click', () => {
     const earMid = midpoint(lm[7],lm[8]), shMid = midpoint(lm[11],lm[12]);
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
-    gaugeCaption.textContent = 'Posture calibrated.';
+    statusCaption.textContent = 'calibrated to your desk';
     speak("Calibrated. That's your good posture.");
     addAlertToFeed('calibration', 'Posture calibrated'); logCalibrationEvent();
-    calibrateBtn.textContent = 'Recalibrate posture';
-    calibrateBtn.style.backgroundColor = '#2C6E8E'; calibrateBtn.style.borderColor = '#2C6E8E';
-    calibrateBtn.style.color = '#fff';
+    calibrateBtn.textContent = 'recalibrate posture';
+    calibrateBtn.classList.add('is-confirmed');
   }
 });
 
@@ -635,24 +674,27 @@ async function showReport(range) {
   let start, end;
   const curDate = today();
   if (range==='today') { start=curDate; end=curDate; }
-  else if (range==='week') { const d=new Date(curDate+'T00:00:00'); d.setDate(d.getDate()-6); start=d.toISOString().slice(0,10); end=curDate; }
-  else if (range==='month') { const d=new Date(curDate+'T00:00:00'); d.setDate(d.getDate()-29); start=d.toISOString().slice(0,10); end=curDate; }
+  else if (range==='week') { start = addDaysToDateStr(curDate, -6); end=curDate; }
+  else if (range==='month') { start = addDaysToDateStr(curDate, -29); end=curDate; }
+  else if (range==='ai') { renderAiSummary(); return; }
+
+  panelNumeric.classList.add('active'); panelAi.classList.remove('active');
 
   const events = await fetchEventsForRange(start, end);
   const logs = await fetchDailyLogs(start, end);
 
   const dateMap = {};
-  const d = new Date(start+'T00:00:00');
-  while (d.toISOString().slice(0,10) <= end) {
-    const ds = d.toISOString().slice(0,10);
-    dateMap[ds] = { break:0, left:0, right:0, slump:0, breaks:0, sessionSeconds:0 };
-    d.setDate(d.getDate()+1);
+  let ds0 = start;
+  while (ds0 <= end) {
+    dateMap[ds0] = { break:0, left:0, right:0, slump:0, away:0, breaks:0, sessionSeconds:0 };
+    ds0 = addDaysToDateStr(ds0, 1);
   }
   events.forEach(e => {
     const ds = e.date;
-    if (!dateMap[ds]) dateMap[ds] = { break:0, left:0, right:0, slump:0, breaks:0, sessionSeconds:0 };
+    if (!dateMap[ds]) dateMap[ds] = { break:0, left:0, right:0, slump:0, away:0, breaks:0, sessionSeconds:0 };
     const dur = e.duration_seconds||0;
     if (e.type==='break') { dateMap[ds].break += dur; dateMap[ds].breaks++; }
+    else if (e.type==='away') dateMap[ds].away += dur;
     else if (e.type==='lateral_left') dateMap[ds].left += dur;
     else if (e.type==='lateral_right') dateMap[ds].right += dur;
     else if (e.type==='compression') dateMap[ds].slump += dur;
@@ -667,16 +709,17 @@ async function showReport(range) {
   const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump/60));
   const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump)/60)));
 
-  let totalBreak=0, totalSession=0, totalSlouch=0, totalBreaks=0;
-  Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump; totalBreaks+=day.breaks; });
+  let totalBreak=0, totalSession=0, totalSlouch=0, totalBreaks=0, totalAway=0;
+  Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump; totalBreaks+=day.breaks; totalAway+=day.away; });
   const overall = totalBreak + totalSession;
   const slouchPct = overall ? Math.round(totalSlouch/overall*100) : 0;
   const avgBreak = totalBreaks ? Math.round(totalBreak/totalBreaks/60) : 0;
   reportSummary.innerHTML = `
-    <div class="metric"><div class="value">${Math.round(overall/60)}m</div><div class="label">Monitored</div></div>
-    <div class="metric"><div class="value">${slouchPct}%</div><div class="label">Slouch</div></div>
-    <div class="metric"><div class="value">${totalBreaks}</div><div class="label">Breaks</div></div>
-    <div class="metric"><div class="value">${avgBreak}m</div><div class="label">Avg break</div></div>
+    <div class="metric"><div class="value">${Math.round(overall/60)}m</div><div class="label">monitored</div></div>
+    <div class="metric"><div class="value">${slouchPct}%</div><div class="label">time slouching</div></div>
+    <div class="metric"><div class="value">${totalBreaks}</div><div class="label">breaks</div></div>
+    <div class="metric"><div class="value">${avgBreak}m</div><div class="label">avg break</div></div>
+    ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway/3600)}h</div><div class="label">time away</div></div>` : ''}
   `;
 
   if (currentChart) currentChart.destroy();
@@ -685,19 +728,55 @@ async function showReport(range) {
     data: {
       labels,
       datasets: [
-        { label:'Break', data:breakMin, backgroundColor:'#B0BEC5' },
-        { label:'Good posture', data:goodMin, backgroundColor:'#27AE60' },
-        { label:'Slouch left', data:leftMin, backgroundColor:'#E74C3C' },
-        { label:'Slouch right', data:rightMin, backgroundColor:'#F39C12' },
-        { label:'Slump', data:slumpMin, backgroundColor:'#8E44AD' }
+        { label:'good posture', data:goodMin, backgroundColor:'#0A2626', stack:'s' },
+        { label:'leaning left', data:leftMin, backgroundColor:'#F0DAC7', stack:'s' },
+        { label:'leaning right', data:rightMin, backgroundColor:'#E4C1A0', stack:'s' },
+        { label:'slumping', data:slumpMin, backgroundColor:'#C1622E', stack:'s' },
+        { label:'break', data:breakMin, backgroundColor:'#C9C2B3', stack:'s' }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: true,
-      scales: { x:{ stacked:true }, y:{ stacked:true, title:{ display:true, text:'Minutes' } } },
-      plugins: { tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } } }
+      scales: { x:{ stacked:true, grid:{ display:false } }, y:{ stacked:true, title:{ display:true, text:'minutes' }, grid:{ color:'rgba(10,38,38,0.06)' } } },
+      plugins: {
+        legend: { labels: { font: { family: 'Nunito', weight: '700', size: 11 }, boxWidth: 12, padding: 12 } },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
+      }
     }
   });
+}
+
+async function renderAiSummary() {
+  panelNumeric.classList.remove('active'); panelAi.classList.add('active');
+  try {
+    const res = await fetch('./data/summary.json', { cache: 'no-store' });
+    const data = await res.json();
+    if (!data.summary) {
+      aiSummaryText.textContent = "no summary yet — this fills in after the weekly GitHub Action runs.";
+      aiMeta.textContent = ''; aiStatGrid.innerHTML = '';
+      if (aiChart) { aiChart.destroy(); aiChart = null; }
+      return;
+    }
+    aiSummaryText.textContent = data.summary;
+    aiMeta.textContent = data.generatedAt ? `generated ${new Date(data.generatedAt).toLocaleString()} · based on ${data.stats.daysLogged} logged days` : '';
+    const s = data.stats;
+    aiStatGrid.innerHTML = `
+      <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes||0)/60)}h</div><div class="label">tracked time</div></div>
+      <div class="metric"><div class="value">${s.slouchRatePct||0}%</div><div class="label">time slouching</div></div>
+      <div class="metric"><div class="value">${s.totalMoveNudges||0}</div><div class="label">move nudges</div></div>
+    `;
+    const days = s.days || [];
+    if (aiChart) aiChart.destroy();
+    aiChart = new Chart(document.getElementById('aiDailyChart').getContext('2d'), {
+      type: 'bar',
+      data: { labels: days.map(d => d.date), datasets: [{ label: 'slouch minutes', data: days.map(d => d.slouchMinutes||0), backgroundColor: '#C1622E', borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display:false } },
+        scales: { y: { title: { display:true, text:'minutes' }, grid:{ color:'rgba(10,38,38,0.06)' } }, x: { grid:{ display:false } } } }
+    });
+  } catch (err) {
+    aiSummaryText.textContent = "couldn't load this week's summary.";
+    aiMeta.textContent = ''; aiStatGrid.innerHTML = '';
+  }
 }
 
 reportBtn.addEventListener('click', () => { modalOverlay.classList.add('open'); const active = document.querySelector('.tab.active'); showReport(active ? active.dataset.range : 'today'); });
@@ -720,10 +799,29 @@ window.addEventListener('beforeunload', () => {
 });
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
-muteBtn.addEventListener('click', () => { muted = !muted; muteBtn.textContent = muted ? 'Unmute' : 'Mute'; });
+muteBtn.addEventListener('click', () => { muted = !muted; muteBtn.textContent = muted ? 'unmute' : 'mute'; muteBtn.classList.toggle('is-on', !muted); });
 bgAudioBtn.addEventListener('click', () => { if(bgAudioEnabled) stopBgSilentAudio(); else startBgSilentAudio(); });
 
-toleranceSlider.addEventListener('input', () => toleranceVal.textContent = toleranceSlider.value);
-compressionToleranceSlider.addEventListener('input', () => compressionToleranceVal.textContent = compressionToleranceSlider.value);
-sustainSlider.addEventListener('input', () => sustainVal.textContent = `${sustainSlider.value}s`);
-breakSlider.addEventListener('input', () => breakVal.textContent = `${breakSlider.value} min`);
+function paintSliderTrack(slider) {
+  const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+  slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
+}
+[toleranceSlider, compressionToleranceSlider, sustainSlider, breakSlider].forEach(paintSliderTrack);
+
+toleranceSlider.addEventListener('input', () => { toleranceVal.textContent = toleranceSlider.value; paintSliderTrack(toleranceSlider); lmLateralTol.textContent = Number(toleranceSlider.value).toFixed(2); });
+compressionToleranceSlider.addEventListener('input', () => { compressionToleranceVal.textContent = compressionToleranceSlider.value; paintSliderTrack(compressionToleranceSlider); lmSlumpTol.textContent = Number(compressionToleranceSlider.value).toFixed(2); });
+sustainSlider.addEventListener('input', () => { sustainVal.textContent = `${sustainSlider.value}s`; paintSliderTrack(sustainSlider); });
+breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); });
+
+// ---- Device/voice popover ----
+gearBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  devicePopover.classList.toggle('is-open');
+  gearBtn.classList.toggle('is-open');
+});
+document.addEventListener('click', (e) => {
+  if (!devicePopover.contains(e.target) && e.target !== gearBtn) {
+    devicePopover.classList.remove('is-open');
+    gearBtn.classList.remove('is-open');
+  }
+});
