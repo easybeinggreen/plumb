@@ -27,7 +27,7 @@ const statusCard = document.getElementById('statusCard');
 const statusValue = document.getElementById('statusValue');
 const statusCaption = document.getElementById('statusCaption');
 
-const pgLineGroup = document.getElementById('pgLineGroup');
+const dzDot = document.getElementById('dzDot');
 const lmLateral = document.getElementById('lmLateral');
 const lmSlump = document.getElementById('lmSlump');
 const lmLateralTol = document.getElementById('lmLateralTol');
@@ -79,6 +79,9 @@ let lastFrameTime = performance.now();
 
 let slouchStartedAt = null;
 let slouchType = null;
+let slouchAccumulatedMs = 0; // capped, frame-based — kept in sync with stats.slouchSeconds so
+                              // event durations can never exceed the session time they came from
+let displayLateral = 0, displayCompression = 0; // smoothed, for the glyph only — raw values still drive tolerance/nudge logic
 let lastPostureNudgeAt = 0;
 
 let presenceStart = null;
@@ -468,12 +471,18 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// type: 'lateral_left' | 'lateral_right' | 'compression' | null
-function updatePostureGlyph(type) {
-  const rot = type === 'lateral_left' ? 11 : type === 'lateral_right' ? -11 : 0;
-  const sy = type === 'compression' ? 0.74 : 1;
-  pgLineGroup.style.setProperty('--rot', rot + 'deg');
-  pgLineGroup.style.setProperty('--sy', sy);
+// Positions the dot at (lateral/latTol, compression/compTol) in normalized
+// units, so the dashed ring (drawn at a fixed radius) always represents
+// "at tolerance" regardless of the two sliders having different scales.
+// Leaning left (positive lateral) moves the dot left; slumping moves it down.
+const DOT_RING_PX = 46, DOT_CENTER = 85, DOT_MAX_PX = 62;
+function updatePostureGlyph(lateral, compression, latTol, compTol) {
+  const nx = latTol ? lateral / latTol : 0;
+  const ny = compTol ? compression / compTol : 0;
+  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -nx * DOT_RING_PX));
+  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, ny * DOT_RING_PX));
+  dzDot.style.cx = (DOT_CENTER + px) + 'px';
+  dzDot.style.cy = (DOT_CENTER + py) + 'px';
 }
 
 function updateLiveMetrics(lateral, compression, calibrated) {
@@ -545,7 +554,7 @@ function loop() {
 
     if (breakActive) {
       setStatus('idle', 'on a break', 'back in a few');
-      updatePostureGlyph(null);
+      updatePostureGlyph(0, 0, 0.2, 0.1);
       updateLiveMetrics(0, 0, false);
       rafId = requestAnimationFrame(loop);
       return;
@@ -559,22 +568,30 @@ function loop() {
     const calibrated = baselineLateral!==null && baselineNeckRatio!==null;
     updateLiveMetrics(lateral, compression, calibrated);
 
+    // Smooth the glyph's displayed position only — the raw lateral/compression
+    // above still drive tolerance checks and nudges, so alerts stay responsive
+    // even though the dot itself doesn't jitter frame to frame.
+    displayLateral += (lateral - displayLateral) * 0.2;
+    displayCompression += (compression - displayCompression) * 0.2;
+
     if (!calibrated) {
       setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
-      updatePostureGlyph(null);
+      updatePostureGlyph(0, 0, 0.2, 0.1);
     } else {
       const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), sus = Number(sustainSlider.value)*1000;
       const leftLean = lateral > latTol, rightLean = lateral < -latTol, comp = compression > compTol;
       const isSlouching = leftLean || rightLean || comp;
       const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : null;
 
+      updatePostureGlyph(displayLateral, displayCompression, latTol, compTol);
+
       if (isSlouching) {
         stats.slouchSeconds += dt;
-        if (!slouchStartedAt) { slouchStartedAt = Date.now(); slouchType = currentType; }
+        if (!slouchStartedAt) { slouchStartedAt = Date.now(); slouchType = currentType; slouchAccumulatedMs = 0; }
+        slouchAccumulatedMs += dt * 1000;
         const dur = Date.now() - slouchStartedAt;
         const label = currentType === 'compression' ? 'slumping' : currentType === 'lateral_left' ? 'leaning left' : 'leaning right';
         setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur/1000)}s and counting`);
-        updatePostureGlyph(currentType);
         if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
           let phrase;
           if (currentType==='compression') { phrase = SLUMP_PHRASES[slumpIdx%SLUMP_PHRASES.length]; slumpIdx++; }
@@ -583,9 +600,15 @@ function loop() {
           speak(phrase); addAlertToFeed(currentType, phrase); stats.postureNudges++; lastPostureNudgeAt = Date.now();
         }
       } else {
-        if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+        if (slouchStartedAt) {
+          // Use the accumulated, dt-capped duration rather than a raw
+          // Date.now() diff — if the tab was throttled/backgrounded mid-slouch,
+          // this stays consistent with stats.slouchSeconds instead of logging
+          // the full uncapped wall-clock gap (which is what caused >100% totals).
+          logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
+          slouchStartedAt = null; slouchAccumulatedMs = 0;
+        }
         setStatus('good', 'sitting tall', 'calibrated to your desk');
-        updatePostureGlyph(null);
       }
 
       if (presenceStart && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
@@ -595,11 +618,11 @@ function loop() {
     }
   } else {
     if (isPersonPresent && !breakActive) {
-      if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+      if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs); slouchStartedAt = null; slouchAccumulatedMs = 0; }
       breakStart = Date.now();
       isPersonPresent = false;
       setStatus('idle', 'no one detected', 'step into frame to resume');
-      updatePostureGlyph(null);
+      updatePostureGlyph(0, 0, 0.2, 0.1);
       updateLiveMetrics(0, 0, false);
     }
     if (!isPersonPresent && breakStart && !breakActive) {
@@ -712,7 +735,7 @@ async function showReport(range) {
   let totalBreak=0, totalSession=0, totalSlouch=0, totalBreaks=0, totalAway=0;
   Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump; totalBreaks+=day.breaks; totalAway+=day.away; });
   const overall = totalBreak + totalSession;
-  const slouchPct = overall ? Math.round(totalSlouch/overall*100) : 0;
+  const slouchPct = overall ? Math.min(100, Math.round(totalSlouch/overall*100)) : 0;
   const avgBreak = totalBreaks ? Math.round(totalBreak/totalBreaks/60) : 0;
   reportSummary.innerHTML = `
     <div class="metric"><div class="value">${Math.round(overall/60)}m</div><div class="label">monitored</div></div>
