@@ -28,6 +28,7 @@ const statusValue = document.getElementById('statusValue');
 const statusCaption = document.getElementById('statusCaption');
 
 const dzDot = document.getElementById('dzDot');
+const dzTolerance = document.getElementById('dzTolerance');
 const lmLateral = document.getElementById('lmLateral');
 const lmSlump = document.getElementById('lmSlump');
 const lmLateralTol = document.getElementById('lmLateralTol');
@@ -471,18 +472,19 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// Positions the dot at (lateral/latTol, compression/compTol) in normalized
-// units, so the dashed ring (drawn at a fixed radius) always represents
-// "at tolerance" regardless of the two sliders having different scales.
+// The dot's position uses the RAW value * a fixed pixel scale (not
+// normalized by tolerance) — so the tolerance ellipse below can actually
+// resize as you drag the tolerance sliders, and the dot's motion always
+// reads on the same scale rather than jumping when tolerance changes.
 // Leaning left (positive lateral) moves the dot left; slumping moves it down.
-const DOT_RING_PX = 46, DOT_CENTER = 85, DOT_MAX_PX = 62;
+const DOT_SCALE = 230, DOT_CENTER = 85, DOT_MAX_PX = 64, ELLIPSE_MAX_PX = 66;
 function updatePostureGlyph(lateral, compression, latTol, compTol) {
-  const nx = latTol ? lateral / latTol : 0;
-  const ny = compTol ? compression / compTol : 0;
-  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -nx * DOT_RING_PX));
-  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, ny * DOT_RING_PX));
+  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -lateral * DOT_SCALE));
+  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, compression * DOT_SCALE));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
+  dzTolerance.style.rx = Math.min(ELLIPSE_MAX_PX, latTol * DOT_SCALE) + 'px';
+  dzTolerance.style.ry = Math.min(ELLIPSE_MAX_PX, compTol * DOT_SCALE) + 'px';
 }
 
 function updateLiveMetrics(lateral, compression, calibrated) {
@@ -554,7 +556,7 @@ function loop() {
 
     if (breakActive) {
       setStatus('idle', 'on a break', 'back in a few');
-      updatePostureGlyph(0, 0, 0.2, 0.1);
+      updatePostureGlyph(0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, false);
       rafId = requestAnimationFrame(loop);
       return;
@@ -570,13 +572,15 @@ function loop() {
 
     // Smooth the glyph's displayed position only — the raw lateral/compression
     // above still drive tolerance checks and nudges, so alerts stay responsive
-    // even though the dot itself doesn't jitter frame to frame.
-    displayLateral += (lateral - displayLateral) * 0.2;
-    displayCompression += (compression - displayCompression) * 0.2;
+    // even though the dot itself doesn't jitter frame to frame. 0.08 favors a
+    // steady, confident-looking dot over a twitchy-but-instant one — raise it
+    // if it ever starts feeling laggy.
+    displayLateral += (lateral - displayLateral) * 0.08;
+    displayCompression += (compression - displayCompression) * 0.08;
 
     if (!calibrated) {
       setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
-      updatePostureGlyph(0, 0, 0.2, 0.1);
+      updatePostureGlyph(0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
     } else {
       const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), sus = Number(sustainSlider.value)*1000;
       const leftLean = lateral > latTol, rightLean = lateral < -latTol, comp = compression > compTol;
@@ -622,7 +626,7 @@ function loop() {
       breakStart = Date.now();
       isPersonPresent = false;
       setStatus('idle', 'no one detected', 'step into frame to resume');
-      updatePostureGlyph(0, 0, 0.2, 0.1);
+      updatePostureGlyph(0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, false);
     }
     if (!isPersonPresent && breakStart && !breakActive) {
