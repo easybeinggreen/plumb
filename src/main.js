@@ -478,7 +478,7 @@ function setStatus(mode, text, caption) {
 // resize as you drag the tolerance sliders, and the dot's motion always
 // reads on the same scale rather than jumping when tolerance changes.
 // Leaning left (positive lateral) moves the dot left; slumping moves it down.
-const DOT_SCALE = 230, DOT_CENTER = 85, DOT_MAX_PX = 64, ELLIPSE_MAX_PX = 66;
+const DOT_SCALE = 340, DOT_CENTER = 85, DOT_MAX_PX = 64, ELLIPSE_MAX_PX = 66;
 function updatePostureGlyph(lateral, compression, latTol, compTol) {
   const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -lateral * DOT_SCALE));
   const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, compression * DOT_SCALE));
@@ -868,7 +868,7 @@ if ('documentPictureInPicture' in window) {
   pipBtn.addEventListener('click', async () => {
     if (pipWindow) { pipWindow.close(); return; }
 
-    pipWindow = await documentPictureInPicture.requestWindow({ width: 220, height: 260 });
+    pipWindow = await documentPictureInPicture.requestWindow({ width: 190, height: 210 });
     pipWindow.document.title = 'plumb';
     pipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
     const fontLink = document.createElement('link');
@@ -876,6 +876,7 @@ if ('documentPictureInPicture' in window) {
     fontLink.href = 'https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap';
     pipWindow.document.head.appendChild(fontLink);
 
+    statusCard.classList.add('pip-mode');
     pipWindow.document.body.appendChild(statusCard);
     pipWindow.document.body.style.padding = '8px';
     pipWindow.document.body.style.boxSizing = 'border-box';
@@ -883,6 +884,7 @@ if ('documentPictureInPicture' in window) {
     pipBtn.classList.add('is-open');
 
     pipWindow.addEventListener('pagehide', () => {
+      statusCard.classList.remove('pip-mode');
       statusCardHome.insertBefore(statusCard, statusCardNextSibling);
       pipWindow = null;
       pipBtn.classList.remove('is-open');
