@@ -56,7 +56,7 @@
   .privacy-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 
   .control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
-  .control-row .spacer { flex: 1; min-width: 6px; }
+  .icon-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   button { font-family: var(--sans); cursor: pointer; }
 
   .btn { font-size: 13px; font-weight: 700; padding: 9px 16px; border-radius: 999px; border: 1.5px solid var(--ink); background: transparent; color: var(--ink); transition: background .15s ease, color .15s ease, border-color .15s ease, transform .05s ease; }
@@ -217,31 +217,30 @@
           </div>
         </div>
 
-        <div class="spacer"></div>
-
-        <button id="pipBtn" class="icon-btn" title="pop out a small always-on-top status window" type="button" hidden>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
-        </button>
-
-        <div class="popover-anchor">
-          <button id="gearBtn" class="icon-btn" title="camera, voice &amp; background nudges" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>
+        <div class="icon-group">
+          <button id="pipBtn" class="icon-btn" title="pop out a small always-on-top status window" type="button" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
           </button>
 
-          <div class="popover" id="devicePopover">
-            <div class="popover-section">
-              <div class="popover-label">camera</div>
-              <div class="popover-row"><select id="cameraSelect"><option value="">default camera</option></select></div>
-            </div>
-            <div class="popover-section">
-              <div class="popover-label">voice</div>
-              <div class="popover-row">
-                <select id="voiceSelect"></select>
-                <span id="voiceReady" class="voice-ready" title="voice status"></span>
+          <div class="popover-anchor">
+            <button id="gearBtn" class="icon-btn" title="camera, voice &amp; background nudges" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>
+            </button>
+
+            <div class="popover" id="devicePopover">
+              <div class="popover-section">
+                <div class="popover-label">camera</div>
+                <div class="popover-row"><select id="cameraSelect"><option value="">default camera</option></select></div>
               </div>
-              <div class="popover-row" style="margin-top:7px;">
-                <button id="testVoiceBtn" class="btn-compact" style="width:100%;">test voice</button>
-              </div>
+              <div class="popover-section">
+                <div class="popover-label">voice</div>
+                <div class="popover-row">
+                  <select id="voiceSelect"></select>
+                  <span id="voiceReady" class="voice-ready" title="voice status"></span>
+                </div>
+                <div class="popover-row" style="margin-top:7px;">
+                  <button id="testVoiceBtn" class="btn-compact" style="width:100%;">test voice</button>
+                </div>
             </div>
             <div class="popover-section">
               <div class="popover-label">background</div>
@@ -251,6 +250,7 @@
               </div>
             </div>
           </div>
+        </div>
         </div>
       </div>
 
