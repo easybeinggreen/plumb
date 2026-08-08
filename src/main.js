@@ -473,19 +473,34 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// The dot's position uses the RAW value * a fixed pixel scale (not
-// normalized by tolerance) — so the tolerance ellipse below can actually
-// resize as you drag the tolerance sliders, and the dot's motion always
-// reads on the same scale rather than jumping when tolerance changes.
-// Leaning left (positive lateral) moves the dot left; slumping moves it down.
-const DOT_SCALE = 340, DOT_CENTER = 85, DOT_MAX_PX = 64, ELLIPSE_MAX_PX = 66;
+// The tolerance ellipse still sizes linearly off the sliders (so "twice the
+// tolerance" really does look twice as big — that direct correspondence is
+// what makes dragging the slider feel connected to the visual).
+//
+// The dot, though, no longer moves linearly. A straight multiplier meant
+// small everyday movements (a fraction of your tolerance) barely showed —
+// narrowing tolerance didn't fix that, since tightening the target zone
+// doesn't make a small real movement travel any further. Instead the dot's
+// offset is tanh() of the *normalized* deviation (value / tolerance) — steep
+// near center so small movement is clearly visible, flattening out past the
+// tolerance boundary so a big lean doesn't need proportional extra headroom.
+// It's scaled by the ellipse's own current radius, so at exactly nx=1 (right
+// at tolerance) the dot sits just outside the ring regardless of how big or
+// small that ring currently is.
+const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
+const CURVE_STEEPNESS = 1.8, CURVE_REACH = 1.25;
 function updatePostureGlyph(lateral, compression, latTol, compTol) {
-  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -lateral * DOT_SCALE));
-  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, compression * DOT_SCALE));
+  const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
+  const ellipseRy = Math.min(ELLIPSE_MAX_PX, compTol * TOLERANCE_SCALE);
+  dzTolerance.style.rx = ellipseRx + 'px';
+  dzTolerance.style.ry = ellipseRy + 'px';
+
+  const nx = latTol ? lateral / latTol : 0;
+  const ny = compTol ? compression / compTol : 0;
+  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -Math.tanh(nx * CURVE_STEEPNESS) * CURVE_REACH * ellipseRx));
+  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, Math.tanh(ny * CURVE_STEEPNESS) * CURVE_REACH * ellipseRy));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
-  dzTolerance.style.rx = Math.min(ELLIPSE_MAX_PX, latTol * DOT_SCALE) + 'px';
-  dzTolerance.style.ry = Math.min(ELLIPSE_MAX_PX, compTol * DOT_SCALE) + 'px';
 }
 
 function updateLiveMetrics(lateral, compression, calibrated) {
