@@ -131,6 +131,14 @@
   .live-metrics b.over { color: var(--terracotta-dark); }
   .live-metrics i { font-style: normal; opacity: 0.6; }
 
+  /* compact layout used only when the card is popped into the PiP window —
+     the full-size version has too much dead space around the dot at that scale */
+  #statusCard.pip-mode { padding: 12px 10px 10px; gap: 5px; }
+  #statusCard.pip-mode .glyph-wrap { width: min(96px, 42vw); height: min(96px, 42vh); }
+  #statusCard.pip-mode .status-value { font-size: 16px; }
+  #statusCard.pip-mode .status-caption { font-size: 11px; margin-top: 2px; }
+  #statusCard.pip-mode .live-metrics { font-size: 10px; gap: 10px; margin-top: 5px; }
+
   .section-title { font-size: 12px; font-weight: 800; color: var(--ink); margin: 0 0 12px; cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; }
   .section-title .arrow { font-size: 10px; color: var(--ink-soft); }
   .collapsible-content { display: block; }
