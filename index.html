@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root {
-    --ink: #0A2626;
+    --ink: #14403B;
     --ink-soft: #4B615E;
     --ink-faint: rgba(10,38,38,0.09);
     --ink-faint-2: rgba(10,38,38,0.15);
@@ -35,7 +35,7 @@
 
   header { display: flex; align-items: flex-end; justify-content: space-between; padding: 26px 0 18px; gap: 16px; flex-wrap: wrap; }
   .brand { display: flex; flex-direction: column; gap: 2px; }
-  .wordmark-slot svg { height: 30px; width: auto; display: block; }
+  .wordmark-slot svg { height: 44px; width: auto; display: block; }
   .strap { font-size: 13px; color: var(--ink-soft); font-weight: 600; }
   .btn-nav {
     font-family: var(--sans); font-size: 13px; font-weight: 700; color: var(--ink); background: transparent;
@@ -71,10 +71,14 @@
   #breakToggleBtn.break-active { background: var(--accent); border-color: var(--accent); color: #fff; }
   #breakToggleBtn.break-due::after { content: ""; position: absolute; top: -3px; right: -3px; width: 9px; height: 9px; border-radius: 50%; background: var(--terracotta); border: 2px solid var(--panel); }
 
+  #calibrateBtn { border-color: var(--ink-faint-2); font-size: 13px; font-weight: 700; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
+  #calibrateBtn:hover:not(:disabled) { border-color: var(--ink); }
+  #calibrateBtn:disabled { opacity: 0.4; }
+  #calibrateBtn.is-confirmed { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   .btn-compact { font-size: 12.5px; font-weight: 700; padding: 7px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink); white-space: nowrap; }
   .btn-compact:hover:not(:disabled) { border-color: var(--ink); }
   .btn-compact:disabled { opacity: 0.4; }
-  .btn-compact.is-confirmed { background: var(--accent); border-color: var(--accent); color: #fff; }
 
   .icon-btn { width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--ink-faint-2); background: transparent; display: flex; align-items: center; justify-content: center; color: var(--ink); flex-shrink: 0; }
   .icon-btn:hover { border-color: var(--ink); }
@@ -106,27 +110,23 @@
 
   .side { display: flex; flex-direction: column; gap: 14px; }
 
-  .posture-card { display: flex; align-items: center; gap: 18px; padding: 20px 18px; }
-  .glyph-wrap { flex-shrink: 0; width: 76px; height: 96px; }
+  .posture-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 24px 18px 22px; }
+  .glyph-wrap { flex-shrink: 0; width: 168px; height: 168px; }
   .glyph-wrap svg { width: 100%; height: 100%; }
-  .pg-guide { stroke: var(--ink); stroke-opacity: 0.13; stroke-width: 1.5; stroke-dasharray: 2 4; }
-  .pg-anchor { fill: var(--ink); fill-opacity: 0.35; }
-  #pgLineGroup { transform-origin: 50px 10px; transform: rotate(var(--rot, 0deg)) scaleY(var(--sy, 1)); transition: transform .6s cubic-bezier(.34,1.2,.4,1); }
-  .pg-line { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; transition: stroke .3s ease, stroke-width .3s ease; }
-  .pg-bob { fill: var(--ink); transition: fill .3s ease; }
-  .posture-card.state-mild .pg-line { stroke: var(--terracotta-dark); }
-  .posture-card.state-mild .pg-bob { fill: var(--terracotta-dark); }
-  .posture-card.state-sustained .pg-line { stroke: var(--terracotta); stroke-width: 4; }
-  .posture-card.state-sustained .pg-bob { fill: var(--terracotta); }
-  .posture-card.state-idle .pg-line { stroke: var(--ink); stroke-opacity: 0.28; }
-  .posture-card.state-idle .pg-bob { fill: var(--ink); fill-opacity: 0.28; }
+  .dz-tolerance { fill: none; stroke: var(--ink); stroke-opacity: 0.28; stroke-width: 1.5; stroke-dasharray: 3 5; }
+  .dz-crosshair { stroke: var(--ink); stroke-opacity: 0.10; stroke-width: 1; stroke-dasharray: 2 4; }
+  #dzDot { fill: var(--ink); transition: cx .45s cubic-bezier(.22,.61,.36,1), cy .45s cubic-bezier(.22,.61,.36,1), fill .3s ease, r .3s ease; }
+  .posture-card.state-mild #dzDot { fill: var(--terracotta-dark); }
+  .posture-card.state-sustained #dzDot { fill: var(--terracotta); }
+  .posture-card.state-idle #dzDot { fill: var(--ink); fill-opacity: 0.25; }
+  .posture-card.state-idle .dz-tolerance { stroke-opacity: 0.14; }
 
   .status-value { font-size: 21px; font-weight: 800; line-height: 1.15; }
   .posture-card.state-mild .status-value { color: var(--terracotta-dark); }
   .posture-card.state-sustained .status-value { color: var(--terracotta); }
   .posture-card.state-idle .status-value { color: var(--ink-soft); }
   .status-caption { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
-  .live-metrics { display: flex; gap: 14px; margin-top: 9px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); }
+  .live-metrics { display: flex; gap: 14px; margin-top: 9px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); justify-content: center; }
   .live-metrics b { color: var(--ink); font-weight: 700; }
   .live-metrics b.over { color: var(--terracotta-dark); }
   .live-metrics i { font-style: normal; opacity: 0.6; }
@@ -175,8 +175,8 @@
   <header>
     <div class="brand">
       <div class="wordmark-slot" title="placeholder — swap in the real logotype SVG">
-        <svg viewBox="0 0 108 32" xmlns="http://www.w3.org/2000/svg">
-          <text x="0" y="24" font-family="Nunito" font-weight="900" font-size="28" fill="#0A2626" letter-spacing="-0.5">plumb</text>
+        <svg viewBox="0 0 132 40" xmlns="http://www.w3.org/2000/svg">
+          <text x="0" y="31" font-family="Nunito" font-weight="900" font-size="34" fill="#14403B" letter-spacing="-0.5">plumb</text>
         </svg>
       </div>
       <div class="strap">aligned for life</div>
@@ -200,22 +200,19 @@
       <div class="control-row">
         <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
+        <button id="calibrateBtn" disabled title="reset your good-posture baseline — do this each time you change desks or seats">recalibrate</button>
 
         <div class="switch-group">
           <div class="switch-item">
             <button id="muteBtn" class="switch" aria-pressed="false" title="mute voice nudges"></button>
             <span class="switch-caption">voice nudges</span>
           </div>
-          <div class="switch-item">
-            <button id="bgAudioBtn" class="switch" aria-pressed="false" title="keep nudges running when this tab is hidden"></button>
-            <span class="switch-caption">background nudges</span>
-          </div>
         </div>
 
         <div class="spacer"></div>
 
         <div class="popover-anchor">
-          <button id="gearBtn" class="icon-btn" title="camera, voice &amp; calibration" type="button">
+          <button id="gearBtn" class="icon-btn" title="camera, voice &amp; background nudges" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>
           </button>
 
@@ -223,9 +220,6 @@
             <div class="popover-section">
               <div class="popover-label">camera</div>
               <div class="popover-row"><select id="cameraSelect"><option value="">default camera</option></select></div>
-              <div class="popover-row" style="margin-top:7px;">
-                <button id="calibrateBtn" class="btn-compact" style="width:100%;" disabled>recalibrate posture</button>
-              </div>
             </div>
             <div class="popover-section">
               <div class="popover-label">voice</div>
@@ -235,6 +229,13 @@
               </div>
               <div class="popover-row" style="margin-top:7px;">
                 <button id="testVoiceBtn" class="btn-compact" style="width:100%;">test voice</button>
+              </div>
+            </div>
+            <div class="popover-section">
+              <div class="popover-label">background</div>
+              <div class="popover-row" style="justify-content:space-between;">
+                <span class="switch-caption">background nudges</span>
+                <button id="bgAudioBtn" class="switch" aria-pressed="false" title="keep nudges running when this tab is hidden"></button>
               </div>
             </div>
           </div>
@@ -247,13 +248,11 @@
     <div class="side">
       <div class="panel posture-card state-idle" id="statusCard">
         <div class="glyph-wrap">
-          <svg viewBox="0 0 100 130">
-            <line class="pg-guide" x1="50" y1="10" x2="50" y2="122"/>
-            <circle class="pg-anchor" cx="50" cy="10" r="3.5"/>
-            <g id="pgLineGroup">
-              <line id="pgLine" class="pg-line" x1="50" y1="10" x2="50" y2="112"/>
-              <circle id="pgBob" class="pg-bob" cx="50" cy="112" r="7"/>
-            </g>
+          <svg viewBox="0 0 170 170">
+            <line class="dz-crosshair" x1="85" y1="20" x2="85" y2="150"/>
+            <line class="dz-crosshair" x1="20" y1="85" x2="150" y2="85"/>
+            <circle class="dz-tolerance" cx="85" cy="85" r="46"/>
+            <circle id="dzDot" cx="85" cy="85" r="20"/>
           </svg>
         </div>
         <div class="posture-text">
