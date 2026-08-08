@@ -113,7 +113,7 @@
   .posture-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 24px 18px 22px; }
   .glyph-wrap { flex-shrink: 0; width: 168px; height: 168px; }
   .glyph-wrap svg { width: 100%; height: 100%; }
-  .dz-tolerance { fill: none; stroke: var(--ink); stroke-opacity: 0.28; stroke-width: 1.5; stroke-dasharray: 3 5; }
+  .dz-tolerance { fill: none; stroke: var(--ink); stroke-opacity: 0.28; stroke-width: 1.5; stroke-dasharray: 3 5; transition: rx .3s ease, ry .3s ease; }
   .dz-crosshair { stroke: var(--ink); stroke-opacity: 0.10; stroke-width: 1; stroke-dasharray: 2 4; }
   #dzDot { fill: var(--ink); transition: cx .45s cubic-bezier(.22,.61,.36,1), cy .45s cubic-bezier(.22,.61,.36,1), fill .3s ease, r .3s ease; }
   .posture-card.state-mild #dzDot { fill: var(--terracotta-dark); }
@@ -251,8 +251,8 @@
           <svg viewBox="0 0 170 170">
             <line class="dz-crosshair" x1="85" y1="20" x2="85" y2="150"/>
             <line class="dz-crosshair" x1="20" y1="85" x2="150" y2="85"/>
-            <circle class="dz-tolerance" cx="85" cy="85" r="46"/>
-            <circle id="dzDot" cx="85" cy="85" r="20"/>
+            <ellipse class="dz-tolerance" id="dzTolerance" cx="85" cy="85" rx="46" ry="23"/>
+            <circle id="dzDot" cx="85" cy="85" r="11"/>
           </svg>
         </div>
         <div class="posture-text">
