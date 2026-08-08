@@ -24,6 +24,7 @@ const voiceSelect = document.getElementById('voiceSelect');
 const voiceReady = document.getElementById('voiceReady');
 
 const statusCard = document.getElementById('statusCard');
+const pipBtn = document.getElementById('pipBtn');
 const statusValue = document.getElementById('statusValue');
 const statusCaption = document.getElementById('statusCaption');
 
@@ -852,3 +853,39 @@ document.addEventListener('click', (e) => {
     gearBtn.classList.remove('is-open');
   }
 });
+
+// ---- Picture-in-Picture status window ----
+// Independent of mute — popping this out doesn't change voice nudges either way.
+// Moves the actual statusCard node into the PiP window rather than building a
+// second copy, so updatePostureGlyph()/setStatus() keep working unchanged
+// regardless of which window the card currently lives in.
+if ('documentPictureInPicture' in window) {
+  const statusCardHome = statusCard.parentElement;
+  const statusCardNextSibling = statusCard.nextSibling;
+  let pipWindow = null;
+  pipBtn.hidden = false;
+
+  pipBtn.addEventListener('click', async () => {
+    if (pipWindow) { pipWindow.close(); return; }
+
+    pipWindow = await documentPictureInPicture.requestWindow({ width: 220, height: 260 });
+    pipWindow.document.title = 'plumb';
+    pipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
+    const fontLink = document.createElement('link');
+    fontLink.rel = 'stylesheet';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap';
+    pipWindow.document.head.appendChild(fontLink);
+
+    pipWindow.document.body.appendChild(statusCard);
+    pipWindow.document.body.style.padding = '8px';
+    pipWindow.document.body.style.boxSizing = 'border-box';
+    pipWindow.document.body.style.overflow = 'hidden';
+    pipBtn.classList.add('is-open');
+
+    pipWindow.addEventListener('pagehide', () => {
+      statusCardHome.insertBefore(statusCard, statusCardNextSibling);
+      pipWindow = null;
+      pipBtn.classList.remove('is-open');
+    }, { once: true });
+  });
+}
