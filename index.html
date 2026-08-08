@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
-<style>
+<style id="appStyles">
   :root {
     --ink: #14403B;
     --ink-soft: #4B615E;
@@ -210,6 +210,10 @@
         </div>
 
         <div class="spacer"></div>
+
+        <button id="pipBtn" class="icon-btn" title="pop out a small always-on-top status window" type="button" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+        </button>
 
         <div class="popover-anchor">
           <button id="gearBtn" class="icon-btn" title="camera, voice &amp; background nudges" type="button">
