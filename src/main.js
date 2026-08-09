@@ -315,6 +315,75 @@ function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudio
 
 // ---- Voice ----
 function updateVoiceReady(ready) { voiceReady.classList.toggle('ready', ready); }
+
+// Piper's en_GB catalog — 2 confirmed male, 6 female. No en_AU voices exist in Piper at all.
+// This is a placeholder set: swap/extend once we've picked the final 8 (see notes).
+const PIPER_VOICES = [
+  { id: 'en_GB-alan-medium',                  name: 'Alan — UK male, steady' },
+  { id: 'en_GB-northern_english_male-medium', name: 'Nathan — UK male, northern' },
+  { id: 'en_GB-alba-medium',                  name: 'Alba — UK female, warm' },
+  { id: 'en_GB-southern_english_female-low',  name: 'Southern — UK female, light' },
+  { id: 'en_GB-cori-medium',                  name: 'Cori — UK female, crisp' },
+  { id: 'en_GB-jenny_dioco-medium',           name: 'Jenny — UK female, bright' },
+  { id: 'en_GB-aru-medium',                   name: 'Aru — UK, low & brisk' },
+  { id: 'en_GB-semaine-medium',               name: 'Semaine — UK, measured' },
+];
+
+function populateVoiceList() {
+  const currentVal = voiceSelect.value;
+  voiceSelect.innerHTML = '';
+
+  const piperGroup = document.createElement('optgroup');
+  piperGroup.label = 'offline (piper)';
+  PIPER_VOICES.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v.id;
+    opt.textContent = v.name;
+    piperGroup.appendChild(opt);
+  });
+  voiceSelect.appendChild(piperGroup);
+
+  if (window.speechSynthesis) {
+    const voices = window.speechSynthesis.getVoices();
+    const englishVoices = voices.filter(v => v.lang.startsWith('en') &&
+      (v.name.includes('Google') || v.name.includes('Microsoft') || v.name.includes('Samantha') || v.name.includes('Daniel')));
+    const usedVoices = englishVoices.length > 0 ? englishVoices : voices.filter(v => v.lang.startsWith('en'));
+    if (usedVoices.length > 0) {
+      const browserGroup = document.createElement('optgroup');
+      browserGroup.label = 'browser voices';
+      usedVoices.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = v.name;
+        browserGroup.appendChild(opt);
+      });
+      voiceSelect.appendChild(browserGroup);
+    }
+  }
+
+  if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
+    voiceSelect.value = currentVal;
+  } else if (currentVoiceId && [...voiceSelect.options].some(o => o.value === currentVoiceId)) {
+    voiceSelect.value = currentVoiceId;
+  } else {
+    currentVoiceId = PIPER_VOICES[0].id;
+    voiceSelect.value = currentVoiceId;
+    localStorage.setItem('plumb:voice', currentVoiceId);
+  }
+}
+
+if (window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = populateVoiceList;
+}
+populateVoiceList();
+
+voiceSelect.addEventListener('change', () => {
+  currentVoiceId = voiceSelect.value;
+  localStorage.setItem('plumb:voice', currentVoiceId);
+  testVoiceBtn.textContent = 'test voice';
+  updateVoiceReady(false);
+});
+
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
