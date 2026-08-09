@@ -473,32 +473,27 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// The tolerance ellipse still sizes linearly off the sliders (so "twice the
+// The tolerance ellipse sizes linearly off the sliders (so "twice the
 // tolerance" really does look twice as big — that direct correspondence is
 // what makes dragging the slider feel connected to the visual).
 //
-// The dot, though, no longer moves linearly. A straight multiplier meant
-// small everyday movements (a fraction of your tolerance) barely showed —
-// narrowing tolerance didn't fix that, since tightening the target zone
-// doesn't make a small real movement travel any further. Instead the dot's
-// offset is tanh() of the *normalized* deviation (value / tolerance) — steep
-// near center so small movement is clearly visible, flattening out past the
-// tolerance boundary so a big lean doesn't need proportional extra headroom.
-// It's scaled by the ellipse's own current radius, so at exactly nx=1 (right
-// at tolerance) the dot sits just outside the ring regardless of how big or
-// small that ring currently is.
+// The dot's position is driven ENTIRELY by the raw measured value on a fixed
+// scale — tolerance never enters this calculation at all. It used to be tied
+// to the ellipse's own (tolerance-driven) radius, which meant the tolerance
+// slider itself controlled how far the dot could move: a high tolerance
+// barely moved the dot even while leaning, a low one made tiny jitter look
+// dramatic. A curve (tanh) on the raw value still gives small real
+// movements a big visibility boost, just without pulling tolerance into it.
 const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
-const CURVE_STEEPNESS = 1.8, CURVE_REACH = 1.25;
+const RAW_CURVE_K = 12;
 function updatePostureGlyph(lateral, compression, latTol, compTol) {
   const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
   const ellipseRy = Math.min(ELLIPSE_MAX_PX, compTol * TOLERANCE_SCALE);
   dzTolerance.style.rx = ellipseRx + 'px';
   dzTolerance.style.ry = ellipseRy + 'px';
 
-  const nx = latTol ? lateral / latTol : 0;
-  const ny = compTol ? compression / compTol : 0;
-  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -Math.tanh(nx * CURVE_STEEPNESS) * CURVE_REACH * ellipseRx));
-  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, Math.tanh(ny * CURVE_STEEPNESS) * CURVE_REACH * ellipseRy));
+  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -Math.tanh(lateral * RAW_CURVE_K) * DOT_MAX_PX));
+  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, Math.tanh(compression * RAW_CURVE_K) * DOT_MAX_PX));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
 }
