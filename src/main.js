@@ -289,6 +289,7 @@ function endBreak() {
   breakActive = false;
   manualBreak = false;
   breakStart = null;
+  presenceStart = Date.now(); // otherwise the continuous-sitting clock kept running through the break itself
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
