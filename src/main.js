@@ -34,6 +34,8 @@ const lmLateral = document.getElementById('lmLateral');
 const lmSlump = document.getElementById('lmSlump');
 const lmLateralTol = document.getElementById('lmLateralTol');
 const lmSlumpTol = document.getElementById('lmSlumpTol');
+const lmLean = document.getElementById('lmLean');
+const lmLeanTol = document.getElementById('lmLeanTol');
 
 const gearBtn = document.getElementById('gearBtn');
 const devicePopover = document.getElementById('devicePopover');
@@ -43,12 +45,16 @@ const settingsContent = document.getElementById('settingsContent');
 
 const toleranceSlider = document.getElementById('toleranceSlider');
 const compressionToleranceSlider = document.getElementById('compressionToleranceSlider');
+const leanToleranceSlider = document.getElementById('leanToleranceSlider');
 const sustainSlider = document.getElementById('sustainSlider');
 const breakSlider = document.getElementById('breakSlider');
+const stillnessSlider = document.getElementById('stillnessSlider');
 const toleranceVal = document.getElementById('toleranceVal');
 const compressionToleranceVal = document.getElementById('compressionToleranceVal');
+const leanToleranceVal = document.getElementById('leanToleranceVal');
 const sustainVal = document.getElementById('sustainVal');
 const breakVal = document.getElementById('breakVal');
+const stillnessVal = document.getElementById('stillnessVal');
 
 const syncDot = document.getElementById('syncDot');
 const syncText = document.getElementById('syncText');
@@ -77,14 +83,26 @@ let bgAudioEnabled = false;
 
 let baselineLateral = null;
 let baselineNeckRatio = null;
+let baselineShoulderWidth = null; // for lean-in: shoulder width grows in-frame as you move toward the camera
 let lastFrameTime = performance.now();
 
 let slouchStartedAt = null;
 let slouchType = null;
 let slouchAccumulatedMs = 0; // capped, frame-based — kept in sync with stats.slouchSeconds so
                               // event durations can never exceed the session time they came from
-let displayLateral = 0, displayCompression = 0; // smoothed, for the glyph only — raw values still drive tolerance/nudge logic
+let displayLateral = 0, displayCompression = 0, displayLean = 0; // smoothed, for the glyph only — raw values still drive tolerance/nudge logic
 let lastPostureNudgeAt = 0;
+
+// Stillness tracking — independent of whether current posture is "good" or "bad".
+// stillnessRef is the last position we counted as a real change; if nothing moves
+// more than STILLNESS_MOVE_THRESHOLD away from it for stillnessSlider minutes, we
+// nudge regardless of posture score. This is a first-guess threshold, not a
+// research-derived one — the duration (stillnessSlider) is the evidence-backed part,
+// the "did you actually move" sensitivity is a rough heuristic to tune by feel.
+let stillnessRef = null;
+let lastMovementAt = null;
+let lastStillnessNudgeAt = 0;
+const STILLNESS_MOVE_THRESHOLD = 0.03;
 
 let presenceStart = null;
 let isPersonPresent = false;
@@ -264,6 +282,7 @@ function startBreak(manual = false) {
   manualBreak = manual;
   breakStart = Date.now();
   if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+  stillnessRef = null; lastMovementAt = null;
   addAlertToFeed('break', manual ? 'Manual break started' : 'Break started (camera lost)');
   breakToggleBtn.textContent = 'end break';
   breakToggleBtn.classList.add('break-active');
@@ -430,19 +449,31 @@ async function speak(text) {
 const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it."];
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust."];
 const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture."];
+const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen."];
 const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it."];
-let leftIdx = 0, rightIdx = 0, slumpIdx = 0, breakIdx = 0;
+const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment."];
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
 // ---- Math ----
 function midpoint(a,b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2 }; }
+function shoulderWidthOf(lSh, rSh) { return Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001; }
 function neckCompressionRatio(earMid, shMid, lSh, rSh) {
   const gap = Math.max(shMid.y - earMid.y, 0.0001);
-  const sw = Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001;
+  const sw = shoulderWidthOf(lSh, rSh);
   return gap / sw;
 }
 function lateralDeviation(earMid, shMid, lSh, rSh) {
-  const sw = Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001;
+  const sw = shoulderWidthOf(lSh, rSh);
   return (earMid.x - shMid.x) / sw;  // negative = right
+}
+// Positive = shoulders have grown wider in-frame since calibration, i.e. you've
+// moved closer to the camera. This is the "leaning toward the screen" signal
+// neckCompressionRatio structurally can't see, because that ratio is deliberately
+// normalized to cancel out exactly this kind of distance change.
+function leanInRatio(lSh, rSh, baselineSw) {
+  if (!baselineSw) return 0;
+  const sw = shoulderWidthOf(lSh, rSh);
+  return (sw - baselineSw) / baselineSw;
 }
 
 // ---- Pose detection ----
@@ -494,6 +525,7 @@ async function startCamera() {
 function stopCamera() {
   running = false; if (rafId) cancelAnimationFrame(rafId);
   if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+  stillnessRef = null; lastMovementAt = null;
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   if (video.srcObject) { video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject = null; }
   placeholder.style.display = 'flex'; placeholder.textContent = 'camera is off — press start camera to begin';
@@ -556,7 +588,13 @@ function setStatus(mode, text, caption) {
 // movements a big visibility boost, just without pulling tolerance into it.
 const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
 const RAW_CURVE_K = 12;
-function updatePostureGlyph(lateral, compression, latTol, compTol) {
+// Lean-in doesn't get its own axis on the 2D dial (there isn't a third position
+// to put it in) — instead it grows the dot itself, since "closer to camera" reads
+// naturally as "bigger." Only grows on leaning IN (positive lean); leaning back
+// away from baseline just holds at the base radius rather than shrinking, since
+// that direction isn't what we're trying to flag.
+const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 7;
+function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
   const ellipseRy = Math.min(ELLIPSE_MAX_PX, compTol * TOLERANCE_SCALE);
   dzTolerance.style.rx = ellipseRx + 'px';
@@ -566,19 +604,24 @@ function updatePostureGlyph(lateral, compression, latTol, compTol) {
   const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, Math.tanh(compression * RAW_CURVE_K) * DOT_MAX_PX));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
+
+  const leanNorm = Math.tanh(Math.max(lean, 0) * RAW_CURVE_K); // 0..1
+  dzDot.style.r = (DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA) + 'px';
 }
 
-function updateLiveMetrics(lateral, compression, calibrated) {
+function updateLiveMetrics(lateral, compression, lean, calibrated) {
   if (!calibrated) {
-    lmLateral.textContent = '—'; lmSlump.textContent = '—';
-    lmLateral.classList.remove('over'); lmSlump.classList.remove('over');
+    lmLateral.textContent = '—'; lmSlump.textContent = '—'; lmLean.textContent = '—';
+    lmLateral.classList.remove('over'); lmSlump.classList.remove('over'); lmLean.classList.remove('over');
     return;
   }
-  const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value);
+  const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), leanTol = Number(leanToleranceSlider.value);
   lmLateral.textContent = lateral.toFixed(2);
   lmSlump.textContent = compression.toFixed(2);
+  lmLean.textContent = lean.toFixed(2);
   lmLateral.classList.toggle('over', Math.abs(lateral) > latTol);
   lmSlump.classList.toggle('over', compression > compTol);
+  lmLean.classList.toggle('over', lean > leanTol);
 }
 
 function maybeSwitchDay() {
@@ -637,8 +680,9 @@ function loop() {
 
     if (breakActive) {
       setStatus('idle', 'on a break', 'back in a few');
-      updatePostureGlyph(0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
-      updateLiveMetrics(0, 0, false);
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updateLiveMetrics(0, 0, 0, false);
+      stillnessRef = null; lastMovementAt = null; // a break is itself a posture change — don't fire a stillness nudge right after
       rafId = requestAnimationFrame(loop);
       return;
     }
@@ -648,40 +692,62 @@ function loop() {
     const lateral = baselineLateral!==null ? lateralDeviation(earMid,shMid,leftSh,rightSh) - baselineLateral : 0;
     const neckRatio = neckCompressionRatio(earMid,shMid,leftSh,rightSh);
     const compression = baselineNeckRatio!==null ? baselineNeckRatio - neckRatio : 0;
-    const calibrated = baselineLateral!==null && baselineNeckRatio!==null;
-    updateLiveMetrics(lateral, compression, calibrated);
+    const lean = leanInRatio(leftSh, rightSh, baselineShoulderWidth);
+    const calibrated = baselineLateral!==null && baselineNeckRatio!==null && baselineShoulderWidth!==null;
+    updateLiveMetrics(lateral, compression, lean, calibrated);
 
-    // Smooth the glyph's displayed position only — the raw lateral/compression
+    // Smooth the glyph's displayed position only — the raw lateral/compression/lean
     // above still drive tolerance checks and nudges, so alerts stay responsive
     // even though the dot itself doesn't jitter frame to frame. 0.08 favors a
     // steady, confident-looking dot over a twitchy-but-instant one — raise it
     // if it ever starts feeling laggy.
     displayLateral += (lateral - displayLateral) * 0.08;
     displayCompression += (compression - displayCompression) * 0.08;
+    displayLean += (lean - displayLean) * 0.08;
 
     if (!calibrated) {
       setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
-      updatePostureGlyph(0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
     } else {
-      const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), sus = Number(sustainSlider.value)*1000;
-      const leftLean = lateral > latTol, rightLean = lateral < -latTol, comp = compression > compTol;
-      const isSlouching = leftLean || rightLean || comp;
-      const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : null;
+      const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), leanTol = Number(leanToleranceSlider.value), sus = Number(sustainSlider.value)*1000;
+      const leftLean = lateral > latTol, rightLean = lateral < -latTol, comp = compression > compTol, leaningIn = lean > leanTol;
+      const isSlouching = leftLean || rightLean || comp || leaningIn;
+      const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : leaningIn ? 'lean_in' : null;
 
-      updatePostureGlyph(displayLateral, displayCompression, latTol, compTol);
+      updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
+
+      // Stillness — tracked independently of tolerance/slouch state. Held rigidly
+      // "good" for a long stretch is its own problem (see the creep research), so
+      // this runs regardless of isSlouching.
+      if (!stillnessRef) {
+        stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now();
+      } else {
+        const moved = Math.abs(lateral - stillnessRef.lateral) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(compression - stillnessRef.compression) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(lean - stillnessRef.lean) > STILLNESS_MOVE_THRESHOLD;
+        if (moved) { stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now(); }
+      }
+      const stillMin = Number(stillnessSlider.value);
+      const stillMs = Date.now() - (lastMovementAt || Date.now());
+      if (stillMs / 60000 >= stillMin && Date.now() - lastStillnessNudgeAt > 60000) {
+        const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length]; stillIdx++;
+        speak(p); addAlertToFeed('stillness_prompt', p); lastStillnessNudgeAt = Date.now();
+        stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now(); // don't re-fire every frame after
+      }
 
       if (isSlouching) {
         stats.slouchSeconds += dt;
         if (!slouchStartedAt) { slouchStartedAt = Date.now(); slouchType = currentType; slouchAccumulatedMs = 0; }
         slouchAccumulatedMs += dt * 1000;
         const dur = Date.now() - slouchStartedAt;
-        const label = currentType === 'compression' ? 'slumping' : currentType === 'lateral_left' ? 'leaning left' : 'leaning right';
+        const label = currentType === 'compression' ? 'slumping' : currentType === 'lateral_left' ? 'leaning left' : currentType === 'lateral_right' ? 'leaning right' : 'leaning in';
         setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur/1000)}s and counting`);
         if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
           let phrase;
           if (currentType==='compression') { phrase = SLUMP_PHRASES[slumpIdx%SLUMP_PHRASES.length]; slumpIdx++; }
           else if (currentType==='lateral_left') { phrase = LEFT_PHRASES[leftIdx%LEFT_PHRASES.length]; leftIdx++; }
-          else { phrase = RIGHT_PHRASES[rightIdx%RIGHT_PHRASES.length]; rightIdx++; }
+          else if (currentType==='lateral_right') { phrase = RIGHT_PHRASES[rightIdx%RIGHT_PHRASES.length]; rightIdx++; }
+          else { phrase = LEAN_PHRASES[leanIdx%LEAN_PHRASES.length]; leanIdx++; }
           speak(phrase); addAlertToFeed(currentType, phrase); stats.postureNudges++; lastPostureNudgeAt = Date.now();
         }
       } else {
@@ -707,8 +773,9 @@ function loop() {
       breakStart = Date.now();
       isPersonPresent = false;
       setStatus('idle', 'no one detected', 'step into frame to resume');
-      updatePostureGlyph(0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
-      updateLiveMetrics(0, 0, false);
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updateLiveMetrics(0, 0, 0, false);
+      stillnessRef = null; lastMovementAt = null;
     }
     if (!isPersonPresent && breakStart && !breakActive) {
       const absence = (Date.now() - breakStart)/1000;
@@ -729,6 +796,8 @@ calibrateBtn.addEventListener('click', () => {
     const earMid = midpoint(lm[7],lm[8]), shMid = midpoint(lm[11],lm[12]);
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
+    baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
+    stillnessRef = null; lastMovementAt = null; // recalibration resets what "unchanged" means
     statusCaption.textContent = 'calibrated to your desk';
     speak("Calibrated. That's your good posture.");
     addAlertToFeed('calibration', 'Posture calibrated'); logCalibrationEvent();
@@ -794,18 +863,19 @@ async function showReport(range) {
   const dateMap = {};
   let ds0 = start;
   while (ds0 <= end) {
-    dateMap[ds0] = { break:0, left:0, right:0, slump:0, away:0, breaks:0, sessionSeconds:0 };
+    dateMap[ds0] = { break:0, left:0, right:0, slump:0, lean:0, away:0, breaks:0, sessionSeconds:0 };
     ds0 = addDaysToDateStr(ds0, 1);
   }
   events.forEach(e => {
     const ds = e.date;
-    if (!dateMap[ds]) dateMap[ds] = { break:0, left:0, right:0, slump:0, away:0, breaks:0, sessionSeconds:0 };
+    if (!dateMap[ds]) dateMap[ds] = { break:0, left:0, right:0, slump:0, lean:0, away:0, breaks:0, sessionSeconds:0 };
     const dur = e.duration_seconds||0;
     if (e.type==='break') { dateMap[ds].break += dur; dateMap[ds].breaks++; }
     else if (e.type==='away') dateMap[ds].away += dur;
     else if (e.type==='lateral_left') dateMap[ds].left += dur;
     else if (e.type==='lateral_right') dateMap[ds].right += dur;
     else if (e.type==='compression') dateMap[ds].slump += dur;
+    else if (e.type==='lean_in') dateMap[ds].lean += dur;
   });
   logs.forEach(log => { if (dateMap[log.date]) dateMap[log.date].sessionSeconds = log.session_seconds||0; });
 
@@ -815,10 +885,11 @@ async function showReport(range) {
   const leftMin = dates.map(ds => Math.round(dateMap[ds].left/60));
   const rightMin = dates.map(ds => Math.round(dateMap[ds].right/60));
   const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump/60));
-  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump)/60)));
+  const leanMin = dates.map(ds => Math.round(dateMap[ds].lean/60));
+  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean)/60)));
 
   let totalBreak=0, totalSession=0, totalSlouch=0, totalBreaks=0, totalAway=0;
-  Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump; totalBreaks+=day.breaks; totalAway+=day.away; });
+  Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump+day.lean; totalBreaks+=day.breaks; totalAway+=day.away; });
   const overall = totalBreak + totalSession;
   const slouchPct = overall ? Math.min(100, Math.round(totalSlouch/overall*100)) : 0;
   const avgBreak = totalBreaks ? Math.round(totalBreak/totalBreaks/60) : 0;
@@ -840,6 +911,7 @@ async function showReport(range) {
         { label:'leaning left', data:leftMin, backgroundColor:'#F0DAC7', stack:'s' },
         { label:'leaning right', data:rightMin, backgroundColor:'#E4C1A0', stack:'s' },
         { label:'slumping', data:slumpMin, backgroundColor:'#C1622E', stack:'s' },
+        { label:'leaning in', data:leanMin, backgroundColor:'#2E7D6B', stack:'s' },
         { label:'break', data:breakMin, backgroundColor:'#C9C2B3', stack:'s' }
       ]
     },
@@ -914,12 +986,14 @@ function paintSliderTrack(slider) {
   const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
   slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
 }
-[toleranceSlider, compressionToleranceSlider, sustainSlider, breakSlider].forEach(paintSliderTrack);
+[toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
 toleranceSlider.addEventListener('input', () => { toleranceVal.textContent = toleranceSlider.value; paintSliderTrack(toleranceSlider); lmLateralTol.textContent = Number(toleranceSlider.value).toFixed(2); });
 compressionToleranceSlider.addEventListener('input', () => { compressionToleranceVal.textContent = compressionToleranceSlider.value; paintSliderTrack(compressionToleranceSlider); lmSlumpTol.textContent = Number(compressionToleranceSlider.value).toFixed(2); });
+leanToleranceSlider.addEventListener('input', () => { leanToleranceVal.textContent = leanToleranceSlider.value; paintSliderTrack(leanToleranceSlider); lmLeanTol.textContent = Number(leanToleranceSlider.value).toFixed(2); });
 sustainSlider.addEventListener('input', () => { sustainVal.textContent = `${sustainSlider.value}s`; paintSliderTrack(sustainSlider); });
 breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); });
+stillnessSlider.addEventListener('input', () => { stillnessVal.textContent = `${stillnessSlider.value} min`; paintSliderTrack(stillnessSlider); });
 
 // ---- Device/voice popover ----
 gearBtn.addEventListener('click', (e) => {
