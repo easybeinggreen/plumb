@@ -273,6 +273,7 @@
           <div class="live-metrics" id="liveMetrics">
             <span>lateral <b id="lmLateral">—</b> <i>/ <span id="lmLateralTol">0.20</span></i></span>
             <span>slump <b id="lmSlump">—</b> <i>/ <span id="lmSlumpTol">0.10</span></i></span>
+            <span>lean-in <b id="lmLean">—</b> <i>/ <span id="lmLeanTol">0.12</span></i></span>
           </div>
         </div>
       </div>
@@ -289,12 +290,20 @@
             <input type="range" id="compressionToleranceSlider" min="0.02" max="0.30" value="0.10" step="0.01" />
           </div>
           <div class="slider-row">
-            <label>sustained before nudge <span class="v" id="sustainVal">8s</span></label>
-            <input type="range" id="sustainSlider" min="3" max="30" value="8" />
+            <label>lean-in tolerance <span class="v" id="leanToleranceVal">0.12</span></label>
+            <input type="range" id="leanToleranceSlider" min="0.05" max="0.30" value="0.12" step="0.01" />
           </div>
           <div class="slider-row">
-            <label>break reminder after <span class="v" id="breakVal">60 min</span></label>
-            <input type="range" id="breakSlider" min="15" max="180" value="60" />
+            <label>sustained before nudge <span class="v" id="sustainVal">45s</span></label>
+            <input type="range" id="sustainSlider" min="3" max="120" value="45" />
+          </div>
+          <div class="slider-row">
+            <label>break reminder after <span class="v" id="breakVal">25 min</span></label>
+            <input type="range" id="breakSlider" min="15" max="180" value="25" />
+          </div>
+          <div class="slider-row">
+            <label>still-in-one-shape reminder after <span class="v" id="stillnessVal">15 min</span></label>
+            <input type="range" id="stillnessSlider" min="5" max="30" value="15" />
           </div>
         </div>
       </div>
