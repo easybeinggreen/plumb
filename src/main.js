@@ -148,6 +148,18 @@ const addDaysToDateStr = (ds, n) => {
 const LOG_KEY = (d) => `plumb:${d}`;
 const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
 
+// ---- Hydration ----
+// Local-only for now (localStorage, day-scoped via the same today() used
+// everywhere else) — not synced to Supabase yet, deliberately, to avoid
+// touching schema/RLS while those are already a known sore spot.
+const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
+const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
+const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
+let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 2000;
+let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass:300, mug:250, can:355, bottle:500 };
+let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
+let hydrationLastClickMl = 0; // amount of the most recent log, for undo — 0 means nothing to undo
+
 let stats = loadTodayStats();
 
 // ---- Multi‑device merge ----
@@ -313,6 +325,45 @@ function endBreak() {
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
 
+// requestAnimationFrame is paused (or heavily throttled) while the tab is
+// backgrounded — laptop lid closed, screen locked, tab minimized. Nothing in
+// loop() runs during that time, so any Date.now()-based "how long has this
+// been continuous" clock (presenceStart, slouchStartedAt, lastMovementAt) is
+// left pointing at a stale timestamp. If the camera sees you again the
+// instant the screen reopens, loop() skips straight past the normal
+// "you just returned" reset — so the whole hidden duration silently counts
+// as continuous sitting and can trigger an immediate break-due nudge right
+// when you've just come back. This listener is what actually catches the
+// gap; camera-loss detection alone doesn't, because the loop never gets a
+// chance to run while hidden.
+let hiddenAt = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (!hiddenAt || !running) { hiddenAt = null; return; }
+  const hiddenMs = Date.now() - hiddenAt;
+  hiddenAt = null;
+  if (hiddenMs < 2000) return; // trivial tab-switch, not a real gap
+
+  if (slouchStartedAt) {
+    logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
+    slouchStartedAt = null; slouchAccumulatedMs = 0;
+  }
+  const hiddenSec = hiddenMs / 1000;
+  if (hiddenSec >= BREAK_MIN_SECONDS) {
+    if (hiddenSec > BREAK_MAX_SECONDS) logAwayEvent(Date.now() - hiddenMs, Date.now());
+    else { logBreakEvent(Date.now() - hiddenMs, Date.now()); breaksTaken++; stats.breaksTaken = breaksTaken; }
+  }
+  if (!manualBreak) {
+    breakActive = false; breakStart = null;
+    breakToggleBtn.classList.remove('break-due', 'break-active');
+    breakToggleBtn.textContent = 'take a break';
+  }
+  presenceStart = Date.now();
+  isPersonPresent = false; // lets loop() run its normal "you just returned" logic on the next detected frame
+  stillnessRef = null; lastMovementAt = null;
+  lastBreakNudgeAt = Date.now(); // don't let a stale nudge fire the instant you're back
+});
+
 // ---- Audio helpers ----
 async function ensureAudioUnlocked() {
   if (!audioCtx) { try { audioCtx = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){ return false; } }
@@ -347,6 +398,11 @@ const PIPER_VOICES = [
   { id: 'en_GB-aru-medium',                   name: 'Aru — UK, low & brisk' },
   { id: 'en_GB-semaine-medium',               name: 'Semaine — UK, measured' },
 ];
+// Preferred default when the person hasn't chosen a voice yet. This is a
+// Chrome/Chromium browser voice (speechSynthesis), not a Piper one — if it's
+// not available (Safari, Firefox, or Chrome without Google voices installed),
+// the selection logic below falls back to the bundled Piper voice safely.
+const DEFAULT_VOICE_ID = 'Google UK English Female';
 
 function populateVoiceList() {
   const currentVal = voiceSelect.value;
@@ -380,15 +436,29 @@ function populateVoiceList() {
     }
   }
 
+  // Selection priority: (1) whatever's already showing in the dropdown, (2) a
+  // previously saved choice, (3) our preferred default IF the person has never
+  // chosen anything AND that voice is actually available, (4) if browser voices
+  // haven't finished loading yet, wait rather than lock in a fallback early —
+  // onvoiceschanged will re-run this once they're ready — otherwise (5) the
+  // bundled Piper voice.
+  const hasStoredChoice = !!localStorage.getItem('plumb:voice');
+  const voicesStillLoading = window.speechSynthesis && window.speechSynthesis.getVoices().length === 0;
   if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
     voiceSelect.value = currentVal;
-  } else if (currentVoiceId && [...voiceSelect.options].some(o => o.value === currentVoiceId)) {
+  } else if (hasStoredChoice && currentVoiceId && [...voiceSelect.options].some(o => o.value === currentVoiceId)) {
     voiceSelect.value = currentVoiceId;
-  } else {
+  } else if (!hasStoredChoice && [...voiceSelect.options].some(o => o.value === DEFAULT_VOICE_ID)) {
+    currentVoiceId = DEFAULT_VOICE_ID;
+    voiceSelect.value = currentVoiceId;
+    localStorage.setItem('plumb:voice', currentVoiceId);
+  } else if (hasStoredChoice || !voicesStillLoading) {
     currentVoiceId = PIPER_VOICES[0].id;
     voiceSelect.value = currentVoiceId;
     localStorage.setItem('plumb:voice', currentVoiceId);
   }
+  // else: no stored choice, preferred default not found yet, browser voices
+  // still loading — leave it, onvoiceschanged will re-run this shortly
 }
 
 if (window.speechSynthesis) {
@@ -402,6 +472,60 @@ voiceSelect.addEventListener('change', () => {
   testVoiceBtn.textContent = 'test voice';
   updateVoiceReady(false);
 });
+
+// ---- Hydration wiring ----
+const hydrationFill = document.getElementById('hydrationFill');
+const hydrationConsumedEl = document.getElementById('hydrationConsumed');
+const hydrationTargetEl = document.getElementById('hydrationTarget');
+const hydrationUndoBtn = document.getElementById('hydrationUndoBtn');
+const hydrationSettingsToggle = document.getElementById('hydrationSettingsToggle');
+const hydrationSettingsContent = document.getElementById('hydrationSettingsContent');
+const hydrationTargetInput = document.getElementById('hydrationTargetInput');
+const hydrationSizeInputs = { glass: document.getElementById('hydrationGlassInput'), mug: document.getElementById('hydrationMugInput'), can: document.getElementById('hydrationCanInput'), bottle: document.getElementById('hydrationBottleInput') };
+const hydrationButtons = { glass: document.getElementById('hydrationGlassBtn'), mug: document.getElementById('hydrationMugBtn'), can: document.getElementById('hydrationCanBtn'), bottle: document.getElementById('hydrationBottleBtn') };
+
+function renderHydration() {
+  const pct = hydrationTargetMl > 0 ? Math.max(0, Math.min(100, (hydrationConsumedMl / hydrationTargetMl) * 100)) : 0;
+  hydrationFill.style.height = pct + '%';
+  hydrationConsumedEl.textContent = hydrationConsumedMl;
+  hydrationTargetEl.textContent = hydrationTargetMl;
+  hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
+}
+function logHydration(ml) {
+  hydrationConsumedMl += ml;
+  hydrationLastClickMl = ml;
+  localStorage.setItem(HYDRATION_LOG_PREFIX + today(), String(hydrationConsumedMl));
+  renderHydration();
+}
+function undoHydration() {
+  if (!hydrationLastClickMl) return;
+  hydrationConsumedMl = Math.max(0, hydrationConsumedMl - hydrationLastClickMl);
+  hydrationLastClickMl = 0;
+  localStorage.setItem(HYDRATION_LOG_PREFIX + today(), String(hydrationConsumedMl));
+  renderHydration();
+}
+Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key])));
+hydrationUndoBtn.addEventListener('click', undoHydration);
+
+hydrationTargetInput.value = hydrationTargetMl;
+hydrationTargetInput.addEventListener('change', () => {
+  hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 2000);
+  localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl));
+  renderHydration();
+});
+Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
+  input.value = hydrationSizes[key];
+  input.addEventListener('change', () => {
+    hydrationSizes[key] = Math.max(10, Number(input.value) || hydrationSizes[key]);
+    localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
+    hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`;
+  });
+});
+hydrationSettingsToggle.addEventListener('click', () => {
+  hydrationSettingsContent.classList.toggle('hidden');
+  hydrationSettingsToggle.querySelector('.arrow').textContent = hydrationSettingsContent.classList.contains('hidden') ? '▼' : '▲';
+});
+renderHydration();
 
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
@@ -592,8 +716,10 @@ const RAW_CURVE_K = 12;
 // to put it in) — instead it grows the dot itself, since "closer to camera" reads
 // naturally as "bigger." Only grows on leaning IN (positive lean); leaning back
 // away from baseline just holds at the base radius rather than shrinking, since
-// that direction isn't what we're trying to flag.
-const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 7;
+// that direction isn't what we're trying to flag. Delta and curve are separate
+// from the lateral/compression tanh so the size change reads as a gradual,
+// noticeable ramp rather than snapping to max the moment you cross tolerance.
+const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 18, LEAN_CURVE_K = 8;
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
   const ellipseRy = Math.min(ELLIPSE_MAX_PX, compTol * TOLERANCE_SCALE);
@@ -605,7 +731,7 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
 
-  const leanNorm = Math.tanh(Math.max(lean, 0) * RAW_CURVE_K); // 0..1
+  const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K); // 0..1
   dzDot.style.r = (DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA) + 'px';
 }
 
@@ -630,6 +756,9 @@ function maybeSwitchDay() {
     saveStats();
     stats = { date:cur, sessionSeconds:0, slouchSeconds:0, postureNudges:0, breakNudges:0, breaksTaken:0 };
     breaksTaken = 0; presenceStart = null; lastBreakEnd = Date.now();
+    hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + cur)) || 0;
+    hydrationLastClickMl = 0;
+    renderHydration();
     speak("Good morning! A new day of posture tracking has started.");
   }
 }
