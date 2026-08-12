@@ -32,16 +32,11 @@ const dzDot = document.getElementById('dzDot');
 const dzTolerance = document.getElementById('dzTolerance');
 const lmLateral = document.getElementById('lmLateral');
 const lmSlump = document.getElementById('lmSlump');
-const lmLateralTol = document.getElementById('lmLateralTol');
-const lmSlumpTol = document.getElementById('lmSlumpTol');
 const lmLean = document.getElementById('lmLean');
-const lmLeanTol = document.getElementById('lmLeanTol');
 
 const gearBtn = document.getElementById('gearBtn');
-const devicePopover = document.getElementById('devicePopover');
-
-const settingsToggle = document.getElementById('settingsToggle');
-const settingsContent = document.getElementById('settingsContent');
+const settingsModalOverlay = document.getElementById('settingsModalOverlay');
+const settingsModalClose = document.getElementById('settingsModalClose');
 
 const toleranceSlider = document.getElementById('toleranceSlider');
 const compressionToleranceSlider = document.getElementById('compressionToleranceSlider');
@@ -78,7 +73,7 @@ let aiChart = null;
 let landmarker = null;
 let running = false;
 let rafId = null;
-let muted = false;
+let voiceNudgesEnabled = true; // positively-named on purpose — the old `muted`/`!muted` double-negative was why the switch's visual state and actual behavior could go out of sync
 let bgAudioEnabled = false;
 
 let baselineLateral = null;
@@ -105,6 +100,15 @@ let lastStillnessNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
 
 let presenceStart = null;
+// Persisted alongside the in-memory value so a finished block's length can
+// still be recovered by logRetrospectiveBreak() even after a full page
+// reload, not just a same-tab stop/start — otherwise that specific gap
+// (browser closed and reopened) would silently lose its work-block credit.
+function setPresenceStart(ts) {
+  presenceStart = ts;
+  if (ts === null) localStorage.removeItem(PRESENCE_START_KEY);
+  else localStorage.setItem(PRESENCE_START_KEY, String(ts));
+}
 let isPersonPresent = false;
 let lastBreakEnd = null;
 let breakStart = null;
@@ -159,6 +163,42 @@ let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 20
 let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass:300, mug:250, can:355, bottle:500 };
 let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
 let hydrationLastClickMl = 0; // amount of the most recent log, for undo — 0 means nothing to undo
+
+// ---- Break gauge ----
+// A continuous sitting block only contributes once it's actually run long
+// enough to have crossed the break-reminder interval at least once — so a
+// 6am 45-second glance at the screen contributes nothing, but a 6am hour of
+// real work contributes exactly as much as a 2pm hour would. Reuses
+// breakIntervalMin directly rather than inventing a second "is this a real
+// work session" threshold — if a block's long enough that the app would
+// have nudged you about it, it's long enough to count.
+// target and taken increment together, by design, at the moment a block
+// actually ends (a break happens) — so the only way target can be ahead of
+// taken is the live, still-in-progress block that hasn't been broken up yet.
+// That gap IS the "you're overdue" signal.
+const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
+const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
+const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
+const PRESENCE_START_KEY = 'plumb:presenceStart'; // persisted so a block's length survives a full page reload, not just a same-tab stop/start
+let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + today())) || 0;
+let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
+let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
+
+function creditBreakTarget(blockSeconds) {
+  const intervalSec = Number(breakSlider.value) * 60;
+  const qualifying = Math.floor(blockSeconds / intervalSec);
+  if (qualifying <= 0) return;
+  breakTargetToday += qualifying;
+  breaksTakenToday += qualifying;
+  localStorage.setItem(BREAK_TARGET_KEY_PREFIX + today(), String(breakTargetToday));
+  localStorage.setItem(BREAK_TAKEN_KEY_PREFIX + today(), String(breaksTakenToday));
+}
+function addBreakMinutesToday(gapSeconds) {
+  const mins = Math.round(gapSeconds / 60);
+  if (mins <= 0) return;
+  breakMinutesToday += mins;
+  localStorage.setItem(BREAK_MINUTES_KEY_PREFIX + today(), String(breakMinutesToday));
+}
 
 let stats = loadTodayStats();
 
@@ -275,7 +315,15 @@ function logRetrospectiveBreak() {
   const gapStart = new Date(lastEnd).getTime();
   const gapEnd = Date.now();
   const gap = (gapEnd - gapStart) / 1000;
+  // The block that was running right before this gap — recovered from
+  // localStorage rather than the in-memory variable, since a full page
+  // reload wipes the latter but not the former.
+  const priorBlockStartRaw = localStorage.getItem(PRESENCE_START_KEY);
+  if (priorBlockStartRaw) {
+    creditBreakTarget((gapStart - Number(priorBlockStartRaw)) / 1000);
+  }
   if (gap < BREAK_MIN_SECONDS) return;
+  addBreakMinutesToday(gap);
   if (gap > BREAK_MAX_SECONDS) {
     // camera was off for longer than a real break — log it as time away
     // instead of inflating "avg break" with one giant outlier
@@ -304,7 +352,9 @@ function endBreak() {
   if (!breakActive || !breakStart) return;
   const end = Date.now();
   const dur = (end - breakStart) / 1000;
+  if (presenceStart) creditBreakTarget((breakStart - presenceStart) / 1000);
   if (dur >= BREAK_MIN_SECONDS) {
+    addBreakMinutesToday(dur);
     logBreakEvent(breakStart, end);
     breaksTaken++;
     let msg = '';
@@ -320,7 +370,8 @@ function endBreak() {
   breakActive = false;
   manualBreak = false;
   breakStart = null;
-  presenceStart = Date.now(); // otherwise the continuous-sitting clock kept running through the break itself
+  setPresenceStart(Date.now()); // otherwise the continuous-sitting clock kept running through the break itself
+  renderBreakGauge();
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
@@ -348,8 +399,10 @@ document.addEventListener('visibilitychange', () => {
     logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
     slouchStartedAt = null; slouchAccumulatedMs = 0;
   }
+  if (presenceStart) creditBreakTarget((hiddenAt - presenceStart) / 1000);
   const hiddenSec = hiddenMs / 1000;
   if (hiddenSec >= BREAK_MIN_SECONDS) {
+    addBreakMinutesToday(hiddenSec);
     if (hiddenSec > BREAK_MAX_SECONDS) logAwayEvent(Date.now() - hiddenMs, Date.now());
     else { logBreakEvent(Date.now() - hiddenMs, Date.now()); breaksTaken++; stats.breaksTaken = breaksTaken; }
   }
@@ -358,10 +411,11 @@ document.addEventListener('visibilitychange', () => {
     breakToggleBtn.classList.remove('break-due', 'break-active');
     breakToggleBtn.textContent = 'take a break';
   }
-  presenceStart = Date.now();
+  setPresenceStart(Date.now());
   isPersonPresent = false; // lets loop() run its normal "you just returned" logic on the next detected frame
   stillnessRef = null; lastMovementAt = null;
   lastBreakNudgeAt = Date.now(); // don't let a stale nudge fire the instant you're back
+  renderBreakGauge();
 });
 
 // ---- Audio helpers ----
@@ -478,8 +532,6 @@ const hydrationFill = document.getElementById('hydrationFill');
 const hydrationConsumedEl = document.getElementById('hydrationConsumed');
 const hydrationTargetEl = document.getElementById('hydrationTarget');
 const hydrationUndoBtn = document.getElementById('hydrationUndoBtn');
-const hydrationSettingsToggle = document.getElementById('hydrationSettingsToggle');
-const hydrationSettingsContent = document.getElementById('hydrationSettingsContent');
 const hydrationTargetInput = document.getElementById('hydrationTargetInput');
 const hydrationSizeInputs = { glass: document.getElementById('hydrationGlassInput'), mug: document.getElementById('hydrationMugInput'), can: document.getElementById('hydrationCanInput'), bottle: document.getElementById('hydrationBottleInput') };
 const hydrationButtons = { glass: document.getElementById('hydrationGlassBtn'), mug: document.getElementById('hydrationMugBtn'), can: document.getElementById('hydrationCanBtn'), bottle: document.getElementById('hydrationBottleBtn') };
@@ -490,6 +542,25 @@ function renderHydration() {
   hydrationConsumedEl.textContent = hydrationConsumedMl;
   hydrationTargetEl.textContent = hydrationTargetMl;
   hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
+}
+
+// ---- Break gauge wiring ----
+const breakFill = document.getElementById('breakFill');
+const breakTakenEl = document.getElementById('breakTaken');
+const breakTargetEl = document.getElementById('breakTarget');
+const breakMinutesEl = document.getElementById('breakMinutes');
+// liveContinuousMin/liveIntervalMin let the gauge reflect an in-progress
+// block that hasn't ended yet — called with no args from anywhere that just
+// needs to repaint committed totals (day switch, break just ended, etc).
+function renderBreakGauge(liveContinuousMin = 0, liveIntervalMin = null) {
+  const intervalMin = liveIntervalMin || Number(breakSlider.value);
+  const liveExtra = Math.floor(liveContinuousMin / intervalMin);
+  const target = breakTargetToday + liveExtra;
+  const pct = target > 0 ? Math.max(0, Math.min(100, (breaksTakenToday / target) * 100)) : 0;
+  breakFill.style.height = pct + '%';
+  breakTakenEl.textContent = breaksTakenToday;
+  breakTargetEl.textContent = target;
+  breakMinutesEl.textContent = breakMinutesToday;
 }
 function logHydration(ml) {
   hydrationConsumedMl += ml;
@@ -521,11 +592,8 @@ Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
     hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`;
   });
 });
-hydrationSettingsToggle.addEventListener('click', () => {
-  hydrationSettingsContent.classList.toggle('hidden');
-  hydrationSettingsToggle.querySelector('.arrow').textContent = hydrationSettingsContent.classList.contains('hidden') ? '▼' : '▲';
-});
 renderHydration();
+renderBreakGauge();
 
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
@@ -544,7 +612,7 @@ async function ensurePiperVoice(voiceId) {
   } catch(err) { console.warn('Piper:', err); testVoiceBtn.textContent = 'test voice'; updateVoiceReady(false); return false; }
 }
 async function speak(text) {
-  if (muted) return;
+  if (!voiceNudgesEnabled) return;
   await ensureAudioUnlocked();
   const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v=>v.name===currentVoiceId);
   if (isBrowserVoice) {
@@ -631,7 +699,7 @@ async function startCamera() {
     lastFrameTime = performance.now();
     await mergeRemoteStats();
     logRetrospectiveBreak();
-    presenceStart = null; lastBreakEnd = Date.now(); breakStart = null; isPersonPresent = false; breakActive = false; manualBreak = false;
+    setPresenceStart(null); lastBreakEnd = Date.now(); breakStart = null; isPersonPresent = false; breakActive = false; manualBreak = false;
     breakToggleBtn.textContent = 'take a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId); await ensureAudioUnlocked();
@@ -684,11 +752,9 @@ populateCameraList();
 if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', populateCameraList);
 cameraSelect.addEventListener('change', () => { localStorage.setItem('plumb:cameraId', cameraSelect.value); if(running){ stopCamera(); startCamera(); } });
 
-// ---- Settings toggle ----
-settingsToggle.addEventListener('click', () => {
-  settingsContent.classList.toggle('hidden');
-  settingsToggle.querySelector('.arrow').textContent = settingsContent.classList.contains('hidden') ? '▼' : '▲';
-});
+// ---- Settings modal ----
+gearBtn.addEventListener('click', () => settingsModalOverlay.classList.add('open'));
+settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
 // ---- UI helpers ----
 // mode: 'good' | 'mild' | 'sustained' | 'idle'
@@ -755,10 +821,14 @@ function maybeSwitchDay() {
   if (stats.date !== cur) {
     saveStats();
     stats = { date:cur, sessionSeconds:0, slouchSeconds:0, postureNudges:0, breakNudges:0, breaksTaken:0 };
-    breaksTaken = 0; presenceStart = null; lastBreakEnd = Date.now();
+    breaksTaken = 0; setPresenceStart(null); lastBreakEnd = Date.now();
     hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + cur)) || 0;
     hydrationLastClickMl = 0;
+    breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + cur)) || 0;
+    breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + cur)) || 0;
+    breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + cur)) || 0;
     renderHydration();
+    renderBreakGauge();
     speak("Good morning! A new day of posture tracking has started.");
   }
 }
@@ -788,12 +858,20 @@ function loop() {
         if (gap >= BREAK_MIN_SECONDS) {
           endBreak();
         }
+      } else if (presenceStart) {
+        // A blip too brief to ever become a tracked break (breakActive never
+        // got set), but the continuous-sitting clock is still restarting
+        // below — credit whatever block preceded it, same as every other
+        // path that resets presenceStart, so this one case doesn't quietly
+        // fall through uncredited.
+        creditBreakTarget((Date.now() - presenceStart) / 1000);
       }
       isPersonPresent = true;
-      presenceStart = Date.now();
+      setPresenceStart(Date.now());
       lastBreakEnd = Date.now();
       // reset break start timer for auto-break
       breakStart = null;
+      renderBreakGauge();
     }
 
     // update break button colour if break reminder time reached
@@ -806,6 +884,7 @@ function loop() {
       breakToggleBtn.classList.remove('break-due');
       breakToggleBtn.textContent = 'take a break';
     }
+    renderBreakGauge(continuousMin, breakIntervalMin);
 
     if (breakActive) {
       setStatus('idle', 'on a break', 'back in a few');
@@ -1108,7 +1187,12 @@ window.addEventListener('beforeunload', () => {
 });
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
-muteBtn.addEventListener('click', () => { muted = !muted; muteBtn.textContent = muted ? 'unmute' : 'mute'; muteBtn.classList.toggle('is-on', !muted); });
+function renderMuteBtn() {
+  muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
+  muteBtn.classList.toggle('is-on', voiceNudgesEnabled);
+}
+renderMuteBtn(); // paint the correct initial state — this is the actual fix, not just the rename
+muteBtn.addEventListener('click', () => { voiceNudgesEnabled = !voiceNudgesEnabled; renderMuteBtn(); });
 bgAudioBtn.addEventListener('click', () => { if(bgAudioEnabled) stopBgSilentAudio(); else startBgSilentAudio(); });
 
 function paintSliderTrack(slider) {
@@ -1117,25 +1201,12 @@ function paintSliderTrack(slider) {
 }
 [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
-toleranceSlider.addEventListener('input', () => { toleranceVal.textContent = toleranceSlider.value; paintSliderTrack(toleranceSlider); lmLateralTol.textContent = Number(toleranceSlider.value).toFixed(2); });
-compressionToleranceSlider.addEventListener('input', () => { compressionToleranceVal.textContent = compressionToleranceSlider.value; paintSliderTrack(compressionToleranceSlider); lmSlumpTol.textContent = Number(compressionToleranceSlider.value).toFixed(2); });
-leanToleranceSlider.addEventListener('input', () => { leanToleranceVal.textContent = leanToleranceSlider.value; paintSliderTrack(leanToleranceSlider); lmLeanTol.textContent = Number(leanToleranceSlider.value).toFixed(2); });
+toleranceSlider.addEventListener('input', () => { toleranceVal.textContent = toleranceSlider.value; paintSliderTrack(toleranceSlider); });
+compressionToleranceSlider.addEventListener('input', () => { compressionToleranceVal.textContent = compressionToleranceSlider.value; paintSliderTrack(compressionToleranceSlider); });
+leanToleranceSlider.addEventListener('input', () => { leanToleranceVal.textContent = leanToleranceSlider.value; paintSliderTrack(leanToleranceSlider); });
 sustainSlider.addEventListener('input', () => { sustainVal.textContent = `${sustainSlider.value}s`; paintSliderTrack(sustainSlider); });
-breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); });
+breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); renderBreakGauge(); });
 stillnessSlider.addEventListener('input', () => { stillnessVal.textContent = `${stillnessSlider.value} min`; paintSliderTrack(stillnessSlider); });
-
-// ---- Device/voice popover ----
-gearBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  devicePopover.classList.toggle('is-open');
-  gearBtn.classList.toggle('is-open');
-});
-document.addEventListener('click', (e) => {
-  if (!devicePopover.contains(e.target) && e.target !== gearBtn) {
-    devicePopover.classList.remove('is-open');
-    gearBtn.classList.remove('is-open');
-  }
-});
 
 // ---- Picture-in-Picture status window ----
 // Independent of mute — popping this out doesn't change voice nudges either way.
