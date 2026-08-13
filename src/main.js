@@ -6,7 +6,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SYNC_CONFIGURED = SUPABASE_URL.startsWith('http') && !!SUPABASE_ANON_KEY;
 
-// ---- DOM references ----
+// ---- DOM references (all at top) ----
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
@@ -66,6 +66,31 @@ const panelAi = document.getElementById('panelAi');
 const aiSummaryText = document.getElementById('aiSummaryText');
 const aiMeta = document.getElementById('aiMeta');
 const aiStatGrid = document.getElementById('aiStatGrid');
+
+// Hydration & break gauge DOM (moved here, removed later duplicates)
+const hydrationFill = document.getElementById('hydrationFill');
+const hydrationConsumedEl = document.getElementById('hydrationConsumed');
+const hydrationTargetEl = document.getElementById('hydrationTarget');
+const hydrationUndoBtn = document.getElementById('hydrationUndoBtn');
+const hydrationTargetInput = document.getElementById('hydrationTargetInput');
+const hydrationSizeInputs = {
+  glass: document.getElementById('hydrationGlassInput'),
+  mug: document.getElementById('hydrationMugInput'),
+  can: document.getElementById('hydrationCanInput'),
+  bottle: document.getElementById('hydrationBottleInput')
+};
+const hydrationButtons = {
+  glass: document.getElementById('hydrationGlassBtn'),
+  mug: document.getElementById('hydrationMugBtn'),
+  can: document.getElementById('hydrationCanBtn'),
+  bottle: document.getElementById('hydrationBottleBtn')
+};
+
+const breakFill = document.getElementById('breakFill');
+const breakTakenEl = document.getElementById('breakTaken');
+const breakTargetEl = document.getElementById('breakTarget');
+const breakMinutesEl = document.getElementById('breakMinutes');
+
 let currentChart = null;
 let aiChart = null;
 
@@ -93,9 +118,9 @@ let lastStillnessNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
 
 // ---- Presence / absence / break state ----
-let presenceStartedAt = null;      // when the current sitting block started (person present)
-let absenceStartedAt = null;       // when the current absence started (person gone / tab hidden)
-let breakStartedAt = null;         // when an actual break started (after min threshold passed)
+let presenceStartedAt = null;
+let absenceStartedAt = null;
+let breakStartedAt = null;
 let breakActive = false;
 let manualBreak = false;
 let isPersonPresent = false;
@@ -103,21 +128,37 @@ let isPersonPresent = false;
 const BREAK_MIN_SECONDS = 60;      // 1 minute
 const BREAK_MAX_SECONDS = 60 * 60; // 60 minutes -> away
 
-// Break gauge persisted state
+// ---- Local storage keys ----
 const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
 const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
 const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
-const PRESENCE_START_KEY = 'plumb:presenceStart'; // for retrospective continuity (not used for block tracking in this version)
+const PRESENCE_START_KEY = 'plumb:presenceStart';
 const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
 
+const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
+const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
+const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
+const LOG_KEY = (d) => `plumb:${d}`;
+
+// ---- Date helpers (function declarations, hoisted) ----
+function dateForTimestamp(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function today() {
+  return dateForTimestamp(Date.now());
+}
+function addDaysToDateStr(ds, n) {
+  const d = new Date(ds + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return dateForTimestamp(d.getTime());
+}
+
+// ---- State initialisation (after function declarations) ----
 let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + today())) || 0;
 let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
 let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
 
-// Hydration
-const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
-const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
-const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
 let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 2000;
 let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass:300, mug:250, can:355, bottle:500 };
 let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
@@ -137,31 +178,7 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-// Date helpers
-function dateForTimestamp(ms) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-function today() {
-  return dateForTimestamp(Date.now());
-}
-const addDaysToDateStr = (ds, n) => {
-  const d = new Date(ds + 'T00:00:00');
-  d.setDate(d.getDate() + n);
-  return dateForTimestamp(d.getTime());
-};
-
-const LOG_KEY = (d) => `plumb:${d}`;
-
-let stats = loadTodayStats();
-
-async function mergeRemoteStats() {
-  // This function is now a stub. Daily aggregates should be computed from
-  // event rows, not merged with Math.max. We'll replace it later.
-  if (!SYNC_CONFIGURED) return;
-  // no-op for now
-}
-
+// ---- Stats functions ----
 function loadTodayStats() {
   const raw = localStorage.getItem(LOG_KEY(today()));
   if (raw) {
@@ -173,12 +190,10 @@ function loadTodayStats() {
   }
   return { date: today(), sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
 }
-
 function saveStatsLocal() {
   stats.breaksTaken = breaksTakenToday;
   localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
 }
-
 function setSyncStatus(mode, text) {
   syncDot.classList.remove('ok', 'err');
   if (mode) syncDot.classList.add(mode);
@@ -189,9 +204,6 @@ else setSyncStatus('', 'Cloud sync: ready');
 
 async function syncToSupabase() {
   if (!SYNC_CONFIGURED) return;
-  // We'll upload presence/break/away events and posture episodes only.
-  // Daily aggregates should be computed server-side or from events.
-  // For now, sync the local aggregate as before, but it's not the source of truth.
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs`, {
       method: 'POST',
@@ -218,6 +230,7 @@ async function flushEvents() {
 
 function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
 
+// ---- Alert feed ----
 function addAlertToFeed(type, message) {
   const now = new Date();
   const time = now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
@@ -367,7 +380,6 @@ function endBreak() {
 
   if (dur >= BREAK_MIN_SECONDS) {
     if (dur <= BREAK_MAX_SECONDS) {
-      // Real break
       logBreakEvent(breakStartedAt, end, manualBreak ? 'manual' : 'auto');
       addBreakMinutesToday(dur);
       incrementBreaksTaken();
@@ -378,7 +390,6 @@ function endBreak() {
       const mins = Math.round(dur / 60);
       addAlertToFeed('break', `Break ended (${mins > 0 ? mins + ' min' : Math.round(dur) + ' sec'})`);
     } else {
-      // Longer than max -> away, not break
       logAwayEvent(breakStartedAt, end);
       addAlertToFeed('away', `Away for ${Math.round(dur/3600)}h ${Math.round((dur%3600)/60)}m`);
     }
@@ -389,7 +400,6 @@ function endBreak() {
   breakActive = false;
   manualBreak = false;
   breakStartedAt = null;
-  // Start new presence block from now
   setPresenceStart(Date.now());
   renderBreakGauge();
   breakToggleBtn.textContent = 'take a break';
@@ -409,32 +419,24 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     hiddenAt = Date.now();
     if (running) {
-      // Tab hidden: finalize current presence block, start absence
       if (!breakActive) {
         finalizePresenceBlock('tab_hidden');
         absenceStartedAt = hiddenAt;
         isPersonPresent = false;
-      } else {
-        // Already on break, just note hidden time for later
       }
     }
     return;
   }
-  // Tab visible again
   if (!hiddenAt || !running) { hiddenAt = null; return; }
   const hiddenMs = Date.now() - hiddenAt;
   hiddenAt = null;
-  if (hiddenMs < 2000) return; // trivial tab switch
+  if (hiddenMs < 2000) return;
 
-  // If we were in the middle of a break, end it using hiddenAt as start?
   if (breakActive && breakStartedAt) {
-    // Break continued while hidden; treat the whole hidden duration as part of break
-    // but our breakStartedAt may be earlier. We'll just endBreak now.
     endBreak();
     return;
   }
 
-  // We were absent before hiding; now classify the whole gap
   if (absenceStartedAt) {
     const gapStart = absenceStartedAt;
     const gapEnd = Date.now();
@@ -451,7 +453,6 @@ document.addEventListener('visibilitychange', () => {
     absenceStartedAt = null;
   }
 
-  // Reset for new presence block
   isPersonPresent = false;
   setPresenceStart(Date.now());
   stillnessRef = null;
@@ -477,11 +478,15 @@ function startBgSilentAudio() {
   bgAudioBtn.textContent = 'background nudges: on';
   bgAudioBtn.classList.add('is-on');
 }
-function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudioEnabled = false; bgAudioBtn.textContent = 'background nudges'; bgAudioBtn.classList.remove('is-on'); }
+function stopBgSilentAudio() {
+  if (silentAudioEl) silentAudioEl.pause();
+  bgAudioEnabled = false;
+  bgAudioBtn.textContent = 'background nudges';
+  bgAudioBtn.classList.remove('is-on');
+}
 
 function updateVoiceReady(ready) { voiceReady.classList.toggle('ready', ready); }
 
-// Piper voices unchanged ...
 const PIPER_VOICES = [
   { id: 'en_GB-alan-medium', name: 'Alan — UK male, steady' },
   { id: 'en_GB-northern_english_male-medium', name: 'Nathan — UK male, northern' },
@@ -548,32 +553,13 @@ voiceSelect.addEventListener('change', () => {
   updateVoiceReady(false);
 });
 
-// Hydration functions unchanged ...
-const hydrationFill = document.getElementById('hydrationFill');
-const hydrationConsumedEl = document.getElementById('hydrationConsumed');
-const hydrationTargetEl = document.getElementById('hydrationTarget');
-const hydrationUndoBtn = document.getElementById('hydrationUndoBtn');
-const hydrationTargetInput = document.getElementById('hydrationTargetInput');
-const hydrationSizeInputs = { glass: document.getElementById('hydrationGlassInput'), mug: document.getElementById('hydrationMugInput'), can: document.getElementById('hydrationCanInput'), bottle: document.getElementById('hydrationBottleInput') };
-const hydrationButtons = { glass: document.getElementById('hydrationGlassBtn'), mug: document.getElementById('hydrationMugBtn'), can: document.getElementById('hydrationCanBtn'), bottle: document.getElementById('hydrationBottleBtn') };
-
+// ---- Hydration functions ----
 function renderHydration() {
   const pct = hydrationTargetMl > 0 ? Math.max(0, Math.min(100, (hydrationConsumedMl / hydrationTargetMl) * 100)) : 0;
   hydrationFill.style.height = pct + '%';
   hydrationConsumedEl.textContent = hydrationConsumedMl;
   hydrationTargetEl.textContent = hydrationTargetMl;
   hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
-}
-
-function renderBreakGauge(liveContinuousMin = 0) {
-  const intervalMin = Number(breakSlider.value);
-  const liveExtra = Math.floor(liveContinuousMin / intervalMin);
-  const target = breakTargetToday + liveExtra;
-  const pct = target > 0 ? Math.max(0, Math.min(100, (breaksTakenToday / target) * 100)) : 0;
-  breakFill.style.height = pct + '%';
-  breakTakenEl.textContent = breaksTakenToday;
-  breakTargetEl.textContent = target;
-  breakMinutesEl.textContent = breakMinutesToday;
 }
 
 function logHydration(ml) {
@@ -591,6 +577,7 @@ function undoHydration() {
 }
 Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key])));
 hydrationUndoBtn.addEventListener('click', undoHydration);
+
 hydrationTargetInput.value = hydrationTargetMl;
 hydrationTargetInput.addEventListener('change', () => {
   hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 2000);
@@ -606,9 +593,21 @@ Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
   });
 });
 renderHydration();
+
+// ---- Break gauge rendering ----
+function renderBreakGauge(liveContinuousMin = 0) {
+  const intervalMin = Number(breakSlider.value);
+  const liveExtra = Math.floor(liveContinuousMin / intervalMin);
+  const target = breakTargetToday + liveExtra;
+  const pct = target > 0 ? Math.max(0, Math.min(100, (breaksTakenToday / target) * 100)) : 0;
+  breakFill.style.height = pct + '%';
+  breakTakenEl.textContent = breaksTakenToday;
+  breakTargetEl.textContent = target;
+  breakMinutesEl.textContent = breakMinutesToday;
+}
 renderBreakGauge();
 
-// Piper / speak functions unchanged ...
+// ---- Voice helpers ----
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
@@ -625,6 +624,7 @@ async function ensurePiperVoice(voiceId) {
     return true;
   } catch(err) { console.warn('Piper:', err); testVoiceBtn.textContent = 'test voice'; updateVoiceReady(false); return false; }
 }
+
 async function speak(text) {
   if (!voiceNudgesEnabled) return;
   await ensureAudioUnlocked();
@@ -651,7 +651,7 @@ async function speak(text) {
   if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); }
 }
 
-// Phrases ...
+// ---- Phrases ----
 const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it."];
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust."];
 const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture."];
@@ -660,7 +660,7 @@ const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment."];
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
-// Math helpers unchanged ...
+// ---- Math helpers (function declarations) ----
 function midpoint(a,b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2 }; }
 function shoulderWidthOf(lSh, rSh) { return Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001; }
 function neckCompressionRatio(earMid, shMid, lSh, rSh) {
@@ -678,7 +678,7 @@ function leanInRatio(lSh, rSh, baselineSw) {
   return (sw - baselineSw) / baselineSw;
 }
 
-// Pose model init unchanged ...
+// ---- Pose detection ----
 async function initModel() {
   const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
   landmarker = await PoseLandmarker.createFromOptions(vision, {
@@ -709,7 +709,7 @@ async function startCamera() {
     lastFrameTime = performance.now();
     await mergeRemoteStats();
     logRetrospectiveBreak();
-    setPresenceStart(null); // will be set when person detected
+    setPresenceStart(null);
     absenceStartedAt = null;
     breakActive = false;
     manualBreak = false;
@@ -752,7 +752,7 @@ function stopCamera() {
   stopBgSilentAudio(); saveStats();
 }
 
-// Camera picker unchanged ...
+// ---- Camera picker ----
 async function populateCameraList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -769,11 +769,11 @@ populateCameraList();
 if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', populateCameraList);
 cameraSelect.addEventListener('change', () => { localStorage.setItem('plumb:cameraId', cameraSelect.value); if(running){ stopCamera(); startCamera(); } });
 
-// Settings modal unchanged ...
+// ---- Settings modal ----
 gearBtn.addEventListener('click', () => settingsModalOverlay.classList.add('open'));
 settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
-// UI helpers ...
+// ---- UI helpers ----
 function setStatus(mode, text, caption) {
   statusCard.classList.remove('state-good','state-mild','state-sustained','state-idle');
   statusCard.classList.add(`state-${mode === 'good' ? 'good' : mode === 'idle' ? 'idle' : mode}`);
@@ -781,7 +781,6 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// Glyph code unchanged ...
 const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
 const RAW_CURVE_K = 12;
 const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 18, LEAN_CURVE_K = 8;
@@ -833,7 +832,6 @@ function maybeSwitchDay() {
   }
 }
 
-// Retrospective break on startup
 function logRetrospectiveBreak() {
   const lastEnd = localStorage.getItem(LAST_SESSION_END_KEY);
   if (!lastEnd) return;
@@ -872,14 +870,11 @@ function loop() {
     const earMid = midpoint(leftEar,rightEar), shMid = midpoint(leftSh,rightSh);
 
     if (!isPersonPresent) {
-      // Person appeared
       if (breakActive && !manualBreak && breakStartedAt) {
-        // Auto-break candidate: check if it's been long enough
         const gap = (Date.now() - breakStartedAt) / 1000;
         if (gap >= BREAK_MIN_SECONDS) {
           endBreak();
         } else {
-          // Too short: cancel the half-started auto-break
           breakActive = false;
           breakStartedAt = null;
           manualBreak = false;
@@ -887,7 +882,6 @@ function loop() {
           breakToggleBtn.classList.remove('break-active', 'break-due');
         }
       } else if (absenceStartedAt) {
-        // We were absent but didn't have a formal break started; classify gap
         const gapStart = absenceStartedAt;
         const gapEnd = Date.now();
         const classification = classifyGap(gapStart, gapEnd);
@@ -903,7 +897,6 @@ function loop() {
         absenceStartedAt = null;
       }
 
-      // Start new presence block
       isPersonPresent = true;
       setPresenceStart(Date.now());
       stillnessRef = null;
@@ -912,7 +905,6 @@ function loop() {
       renderBreakGauge();
     }
 
-    // Break due indicator
     const breakIntervalMin = Number(breakSlider.value);
     const continuousMin = presenceStartedAt ? (Date.now() - presenceStartedAt) / 60000 : 0;
     if (!breakActive && continuousMin >= breakIntervalMin) {
@@ -957,7 +949,6 @@ function loop() {
 
       updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
 
-      // Stillness
       if (!stillnessRef) {
         stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now();
       } else {
@@ -1003,13 +994,11 @@ function loop() {
       }
     }
   } else {
-    // No person detected
     if (isPersonPresent && !breakActive) {
-      // Person left
       finalizePresenceBlock('person_left');
       isPersonPresent = false;
       absenceStartedAt = Date.now();
-      breakStartedAt = null; // will be set after min threshold
+      breakStartedAt = null;
       setStatus('idle', 'no one detected', 'step into frame to resume');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, 0, false);
@@ -1018,10 +1007,9 @@ function loop() {
     if (!isPersonPresent && !breakActive && absenceStartedAt) {
       const absence = (Date.now() - absenceStartedAt) / 1000;
       if (absence >= BREAK_MIN_SECONDS) {
-        // Auto-start break after threshold
         breakActive = true;
         manualBreak = false;
-        breakStartedAt = absenceStartedAt; // use absence start as break start
+        breakStartedAt = absenceStartedAt;
         breakToggleBtn.textContent = 'end break';
         breakToggleBtn.classList.add('break-active');
         breakToggleBtn.classList.remove('break-due');
@@ -1033,7 +1021,7 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// Calibration unchanged ...
+// ---- Calibration ----
 calibrateBtn.addEventListener('click', () => {
   const result = landmarker.detectForVideo(video, performance.now());
   if (result.landmarks && result.landmarks.length>0) {
@@ -1051,23 +1039,20 @@ calibrateBtn.addEventListener('click', () => {
   }
 });
 
-// Break button
+// ---- Break button ----
 breakToggleBtn.addEventListener('click', () => {
   if (!running) return;
-  if (breakActive) {
-    endBreak();
-  } else {
-    startBreak(true);
-  }
+  if (breakActive) endBreak();
+  else startBreak(true);
 });
 
-// Camera toggle
+// ---- Camera toggle ----
 cameraToggleBtn.addEventListener('click', () => {
   if (running) stopCamera();
   else startCamera();
 });
 
-// Report modal functions unchanged ...
+// ---- Report modal functions ----
 async function fetchEventsForRange(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
@@ -1211,12 +1196,13 @@ modalTabs.addEventListener('click', e => {
   }
 });
 
-// Event wiring
+// ---- Event wiring ----
+let stats = loadTodayStats();
 maybeSwitchDay();
 setInterval(() => { maybeSwitchDay(); saveStats(); }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');
-  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt=null; }
+  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   saveStats();
 });
@@ -1243,7 +1229,7 @@ sustainSlider.addEventListener('input', () => { sustainVal.textContent = `${sust
 breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); renderBreakGauge(); });
 stillnessSlider.addEventListener('input', () => { stillnessVal.textContent = `${stillnessSlider.value} min`; paintSliderTrack(stillnessSlider); });
 
-// PiP status window (unchanged, but note: tracking loop stays in main tab)
+// PiP status window (unchanged)
 if ('documentPictureInPicture' in window) {
   const statusCardHome = statusCard.parentElement;
   const statusCardNextSibling = statusCard.nextSibling;
