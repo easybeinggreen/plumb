@@ -73,54 +73,57 @@ let aiChart = null;
 let landmarker = null;
 let running = false;
 let rafId = null;
-let voiceNudgesEnabled = true; // positively-named on purpose — the old `muted`/`!muted` double-negative was why the switch's visual state and actual behavior could go out of sync
+let voiceNudgesEnabled = true;
 let bgAudioEnabled = false;
 
 let baselineLateral = null;
 let baselineNeckRatio = null;
-let baselineShoulderWidth = null; // for lean-in: shoulder width grows in-frame as you move toward the camera
+let baselineShoulderWidth = null;
 let lastFrameTime = performance.now();
 
 let slouchStartedAt = null;
 let slouchType = null;
-let slouchAccumulatedMs = 0; // capped, frame-based — kept in sync with stats.slouchSeconds so
-                              // event durations can never exceed the session time they came from
-let displayLateral = 0, displayCompression = 0, displayLean = 0; // smoothed, for the glyph only — raw values still drive tolerance/nudge logic
+let slouchAccumulatedMs = 0;
+let displayLateral = 0, displayCompression = 0, displayLean = 0;
 let lastPostureNudgeAt = 0;
 
-// Stillness tracking — independent of whether current posture is "good" or "bad".
-// stillnessRef is the last position we counted as a real change; if nothing moves
-// more than STILLNESS_MOVE_THRESHOLD away from it for stillnessSlider minutes, we
-// nudge regardless of posture score. This is a first-guess threshold, not a
-// research-derived one — the duration (stillnessSlider) is the evidence-backed part,
-// the "did you actually move" sensitivity is a rough heuristic to tune by feel.
 let stillnessRef = null;
 let lastMovementAt = null;
 let lastStillnessNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
 
-let presenceStart = null;
-// Persisted alongside the in-memory value so a finished block's length can
-// still be recovered by logRetrospectiveBreak() even after a full page
-// reload, not just a same-tab stop/start — otherwise that specific gap
-// (browser closed and reopened) would silently lose its work-block credit.
-function setPresenceStart(ts) {
-  presenceStart = ts;
-  if (ts === null) localStorage.removeItem(PRESENCE_START_KEY);
-  else localStorage.setItem(PRESENCE_START_KEY, String(ts));
-}
-let isPersonPresent = false;
-let lastBreakEnd = null;
-let breakStart = null;
-let breaksTaken = 0;
-let lastBreakNudgeAt = 0;
-let manualBreak = false;
+// ---- Presence / absence / break state ----
+let presenceStartedAt = null;      // when the current sitting block started (person present)
+let absenceStartedAt = null;       // when the current absence started (person gone / tab hidden)
+let breakStartedAt = null;         // when an actual break started (after min threshold passed)
 let breakActive = false;
-const BREAK_MIN_SECONDS = 15;
-const BREAK_MAX_SECONDS = 2 * 60 * 60; // 2 hours — beyond this it's logged as "away", not a break
+let manualBreak = false;
+let isPersonPresent = false;
+
+const BREAK_MIN_SECONDS = 60;      // 1 minute
+const BREAK_MAX_SECONDS = 60 * 60; // 60 minutes -> away
+
+// Break gauge persisted state
+const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
+const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
+const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
+const PRESENCE_START_KEY = 'plumb:presenceStart'; // for retrospective continuity (not used for block tracking in this version)
+const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
+
+let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + today())) || 0;
+let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
+let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
+
+// Hydration
+const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
+const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
+const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
+let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 2000;
+let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass:300, mug:250, can:355, bottle:500 };
+let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
+let hydrationLastClickMl = 0;
 
 let eventBuffer = [];
-
 let audioCtx = null;
 let silentAudioEl = null;
 
@@ -134,10 +137,7 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-// A day is always this device's local calendar day. Timestamps stay UTC
-// (correct for exact instants); only date *labels* need to stay local,
-// computed straight from date parts rather than round-tripped through
-// toISOString() (which silently shifts the date for any non-UTC+0 offset).
+// Date helpers
 const dateForTimestamp = (ms) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -150,77 +150,14 @@ const addDaysToDateStr = (ds, n) => {
 };
 
 const LOG_KEY = (d) => `plumb:${d}`;
-const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
-
-// ---- Hydration ----
-// Local-only for now (localStorage, day-scoped via the same today() used
-// everywhere else) — not synced to Supabase yet, deliberately, to avoid
-// touching schema/RLS while those are already a known sore spot.
-const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
-const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
-const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
-let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 2000;
-let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass:300, mug:250, can:355, bottle:500 };
-let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
-let hydrationLastClickMl = 0; // amount of the most recent log, for undo — 0 means nothing to undo
-
-// ---- Break gauge ----
-// A continuous sitting block only contributes once it's actually run long
-// enough to have crossed the break-reminder interval at least once — so a
-// 6am 45-second glance at the screen contributes nothing, but a 6am hour of
-// real work contributes exactly as much as a 2pm hour would. Reuses
-// breakIntervalMin directly rather than inventing a second "is this a real
-// work session" threshold — if a block's long enough that the app would
-// have nudged you about it, it's long enough to count.
-// target and taken increment together, by design, at the moment a block
-// actually ends (a break happens) — so the only way target can be ahead of
-// taken is the live, still-in-progress block that hasn't been broken up yet.
-// That gap IS the "you're overdue" signal.
-const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
-const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
-const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
-const PRESENCE_START_KEY = 'plumb:presenceStart'; // persisted so a block's length survives a full page reload, not just a same-tab stop/start
-let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + today())) || 0;
-let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
-let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
-
-function creditBreakTarget(blockSeconds) {
-  const intervalSec = Number(breakSlider.value) * 60;
-  const qualifying = Math.floor(blockSeconds / intervalSec);
-  if (qualifying <= 0) return;
-  breakTargetToday += qualifying;
-  breaksTakenToday += qualifying;
-  localStorage.setItem(BREAK_TARGET_KEY_PREFIX + today(), String(breakTargetToday));
-  localStorage.setItem(BREAK_TAKEN_KEY_PREFIX + today(), String(breaksTakenToday));
-}
-function addBreakMinutesToday(gapSeconds) {
-  const mins = Math.round(gapSeconds / 60);
-  if (mins <= 0) return;
-  breakMinutesToday += mins;
-  localStorage.setItem(BREAK_MINUTES_KEY_PREFIX + today(), String(breakMinutesToday));
-}
 
 let stats = loadTodayStats();
 
-// ---- Multi‑device merge ----
 async function mergeRemoteStats() {
+  // This function is now a stub. Daily aggregates should be computed from
+  // event rows, not merged with Math.max. We'll replace it later.
   if (!SYNC_CONFIGURED) return;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs?date=eq.${stats.date}&select=*`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (!res.ok) throw new Error('fetch failed');
-    const rows = await res.json();
-    if (rows.length > 0) {
-      const remote = rows[0];
-      stats.sessionSeconds = Math.max(stats.sessionSeconds, remote.session_seconds || 0);
-      stats.slouchSeconds = Math.max(stats.slouchSeconds, remote.slouch_seconds || 0);
-      stats.postureNudges = Math.max(stats.postureNudges, remote.posture_nudges || 0);
-      stats.breakNudges = Math.max(stats.breakNudges, remote.break_nudges || 0);
-      stats.breaksTaken = Math.max(stats.breaksTaken, remote.breaks_taken || 0);
-      breaksTaken = stats.breaksTaken;
-    }
-  } catch (err) { console.warn('mergeRemoteStats:', err); }
+  // no-op for now
 }
 
 function loadTodayStats() {
@@ -236,11 +173,10 @@ function loadTodayStats() {
 }
 
 function saveStatsLocal() {
-  stats.breaksTaken = breaksTaken;
+  stats.breaksTaken = breaksTakenToday;
   localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
 }
 
-// ---- Cloud sync ----
 function setSyncStatus(mode, text) {
   syncDot.classList.remove('ok', 'err');
   if (mode) syncDot.classList.add(mode);
@@ -251,11 +187,14 @@ else setSyncStatus('', 'Cloud sync: ready');
 
 async function syncToSupabase() {
   if (!SYNC_CONFIGURED) return;
+  // We'll upload presence/break/away events and posture episodes only.
+  // Daily aggregates should be computed server-side or from events.
+  // For now, sync the local aggregate as before, but it's not the source of truth.
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify([{ date: stats.date, session_seconds: Math.round(stats.sessionSeconds), slouch_seconds: Math.round(stats.slouchSeconds), posture_nudges: stats.postureNudges, break_nudges: stats.breakNudges, breaks_taken: stats.breaksTaken, updated_at: new Date().toISOString() }]),
+      body: JSON.stringify([{ date: stats.date, session_seconds: Math.round(stats.sessionSeconds), slouch_seconds: Math.round(stats.slouchSeconds), posture_nudges: stats.postureNudges, break_nudges: stats.breakNudges, breaks_taken: breaksTakenToday, updated_at: new Date().toISOString() }]),
       keepalive: true
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -277,7 +216,6 @@ async function flushEvents() {
 
 function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
 
-// ---- Alert feed ----
 function addAlertToFeed(type, message) {
   const now = new Date();
   const time = now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
@@ -290,135 +228,237 @@ function addAlertToFeed(type, message) {
 }
 
 // ---- Event logging ----
-function logSlouchEvent(type, startTime, endTime) {
+function logEvent(event) {
+  eventBuffer.push(event);
+}
+
+function logPresenceEvent(startTime, endTime, endedBy) {
   const dur = Math.round((endTime - startTime)/1000);
   if (dur <= 0) return;
-  eventBuffer.push({ date: dateForTimestamp(startTime), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type, duration_seconds: dur });
+  logEvent({
+    date: dateForTimestamp(startTime),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type: 'presence',
+    duration_seconds: dur,
+    ended_by: endedBy,
+    created_at: new Date().toISOString()
+  });
 }
-function logBreakEvent(startTime, endTime) {
+
+function logBreakEvent(startTime, endTime, kind) {
   const dur = Math.round((endTime - startTime)/1000);
   if (dur <= 0) return;
-  eventBuffer.push({ date: dateForTimestamp(startTime), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type: 'break', duration_seconds: dur });
+  const preBreakSitting = presenceStartedAt ? Math.round((startTime - presenceStartedAt)/1000) : 0;
+  const intervalSec = Number(breakSlider.value) * 60;
+  const lateness = Math.max(0, Math.round(preBreakSitting - intervalSec));
+  logEvent({
+    date: dateForTimestamp(startTime),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type: 'break',
+    duration_seconds: dur,
+    kind: kind,
+    pre_break_sitting_seconds: preBreakSitting,
+    lateness_seconds: lateness,
+    created_at: new Date().toISOString()
+  });
 }
+
 function logAwayEvent(startTime, endTime) {
   const dur = Math.round((endTime - startTime)/1000);
   if (dur <= 0) return;
-  eventBuffer.push({ date: dateForTimestamp(startTime), start_time: new Date(startTime).toISOString(), end_time: new Date(endTime).toISOString(), type: 'away', duration_seconds: dur });
+  logEvent({
+    date: dateForTimestamp(startTime),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type: 'away',
+    duration_seconds: dur,
+    created_at: new Date().toISOString()
+  });
 }
+
 function logCalibrationEvent() {
-  eventBuffer.push({ date: today(), start_time: new Date().toISOString(), end_time: new Date().toISOString(), type: 'calibration', duration_seconds: 0 });
+  logEvent({
+    date: today(),
+    start_time: new Date().toISOString(),
+    end_time: new Date().toISOString(),
+    type: 'calibration',
+    duration_seconds: 0,
+    created_at: new Date().toISOString()
+  });
 }
 
-function logRetrospectiveBreak() {
-  const lastEnd = localStorage.getItem(LAST_SESSION_END_KEY);
-  if (!lastEnd) return;
-  const gapStart = new Date(lastEnd).getTime();
-  const gapEnd = Date.now();
-  const gap = (gapEnd - gapStart) / 1000;
-  // The block that was running right before this gap — recovered from
-  // localStorage rather than the in-memory variable, since a full page
-  // reload wipes the latter but not the former.
-  const priorBlockStartRaw = localStorage.getItem(PRESENCE_START_KEY);
-  if (priorBlockStartRaw) {
-    creditBreakTarget((gapStart - Number(priorBlockStartRaw)) / 1000);
-  }
-  if (gap < BREAK_MIN_SECONDS) return;
-  addBreakMinutesToday(gap);
-  if (gap > BREAK_MAX_SECONDS) {
-    // camera was off for longer than a real break — log it as time away
-    // instead of inflating "avg break" with one giant outlier
-    logAwayEvent(gapStart, gapEnd);
-  } else {
-    logBreakEvent(gapStart, gapEnd);
-    breaksTaken++;
-    stats.breaksTaken = breaksTaken;
-  }
+function logPostureEvent(type, startTime, endTime) {
+  const dur = Math.round((endTime - startTime)/1000);
+  if (dur <= 0) return;
+  logEvent({
+    date: dateForTimestamp(startTime),
+    start_time: new Date(startTime).toISOString(),
+    end_time: new Date(endTime).toISOString(),
+    type: type,
+    duration_seconds: dur,
+    created_at: new Date().toISOString()
+  });
 }
 
-// ---- Break control ----
+// ---- Break target credit ----
+function creditBreakTargetFromSitting(sittingSeconds) {
+  const intervalSec = Number(breakSlider.value) * 60;
+  const qualifying = Math.floor(sittingSeconds / intervalSec);
+  if (qualifying <= 0) return;
+  breakTargetToday += qualifying;
+  localStorage.setItem(BREAK_TARGET_KEY_PREFIX + today(), String(breakTargetToday));
+}
+
+function addBreakMinutesToday(gapSeconds) {
+  const mins = Math.round(gapSeconds / 60);
+  if (mins <= 0) return;
+  breakMinutesToday += mins;
+  localStorage.setItem(BREAK_MINUTES_KEY_PREFIX + today(), String(breakMinutesToday));
+}
+
+function incrementBreaksTaken() {
+  breaksTakenToday += 1;
+  localStorage.setItem(BREAK_TAKEN_KEY_PREFIX + today(), String(breaksTakenToday));
+}
+
+// ---- Presence block finalisation ----
+function finalizePresenceBlock(endedBy = 'person_left') {
+  if (!presenceStartedAt) return;
+  const end = Date.now();
+  const sittingSeconds = (end - presenceStartedAt) / 1000;
+  if (sittingSeconds > 0) {
+    logPresenceEvent(presenceStartedAt, end, endedBy);
+    creditBreakTargetFromSitting(sittingSeconds);
+  }
+  presenceStartedAt = null;
+}
+
+// ---- Gap classification ----
+function classifyGap(startTime, endTime) {
+  const sec = (endTime - startTime) / 1000;
+  if (sec < BREAK_MIN_SECONDS) return 'micro';
+  if (sec <= BREAK_MAX_SECONDS) return 'break';
+  return 'away';
+}
+
+// ---- Start / end break ----
 function startBreak(manual = false) {
   if (breakActive) return;
+  finalizePresenceBlock(manual ? 'manual_break' : 'auto_break');
   breakActive = true;
   manualBreak = manual;
-  breakStart = Date.now();
-  if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+  breakStartedAt = Date.now();
+  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchAccumulatedMs = 0; }
   stillnessRef = null; lastMovementAt = null;
   addAlertToFeed('break', manual ? 'Manual break started' : 'Break started (camera lost)');
   breakToggleBtn.textContent = 'end break';
   breakToggleBtn.classList.add('break-active');
   breakToggleBtn.classList.remove('break-due');
 }
+
 function endBreak() {
-  if (!breakActive || !breakStart) return;
+  if (!breakActive || !breakStartedAt) return;
   const end = Date.now();
-  const dur = (end - breakStart) / 1000;
-  if (presenceStart) creditBreakTarget((breakStart - presenceStart) / 1000);
+  const dur = (end - breakStartedAt) / 1000;
+
   if (dur >= BREAK_MIN_SECONDS) {
-    addBreakMinutesToday(dur);
-    logBreakEvent(breakStart, end);
-    breaksTaken++;
-    let msg = '';
-    if (dur >= 300) msg = 'Great long break — you’re refreshed.';
-    else if (dur >= 60) msg = 'Good break — that was a nice stretch.';
-    // under 60s no spoken welcome
-    if (msg) speak(msg);
-    const mins = Math.round(dur / 60);
-    addAlertToFeed('break', `Break ended (${mins > 0 ? mins + ' min' : Math.round(dur) + ' sec'})`);
+    if (dur <= BREAK_MAX_SECONDS) {
+      // Real break
+      logBreakEvent(breakStartedAt, end, manualBreak ? 'manual' : 'auto');
+      addBreakMinutesToday(dur);
+      incrementBreaksTaken();
+      let msg = '';
+      if (dur >= 300) msg = 'Great long break — you’re refreshed.';
+      else if (dur >= 60) msg = 'Good break — that was a nice stretch.';
+      if (msg) speak(msg);
+      const mins = Math.round(dur / 60);
+      addAlertToFeed('break', `Break ended (${mins > 0 ? mins + ' min' : Math.round(dur) + ' sec'})`);
+    } else {
+      // Longer than max -> away, not break
+      logAwayEvent(breakStartedAt, end);
+      addAlertToFeed('away', `Away for ${Math.round(dur/3600)}h ${Math.round((dur%3600)/60)}m`);
+    }
   } else {
     addAlertToFeed('break', `Short absence ignored`);
   }
+
   breakActive = false;
   manualBreak = false;
-  breakStart = null;
-  setPresenceStart(Date.now()); // otherwise the continuous-sitting clock kept running through the break itself
+  breakStartedAt = null;
+  // Start new presence block from now
+  setPresenceStart(Date.now());
   renderBreakGauge();
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
 
-// requestAnimationFrame is paused (or heavily throttled) while the tab is
-// backgrounded — laptop lid closed, screen locked, tab minimized. Nothing in
-// loop() runs during that time, so any Date.now()-based "how long has this
-// been continuous" clock (presenceStart, slouchStartedAt, lastMovementAt) is
-// left pointing at a stale timestamp. If the camera sees you again the
-// instant the screen reopens, loop() skips straight past the normal
-// "you just returned" reset — so the whole hidden duration silently counts
-// as continuous sitting and can trigger an immediate break-due nudge right
-// when you've just come back. This listener is what actually catches the
-// gap; camera-loss detection alone doesn't, because the loop never gets a
-// chance to run while hidden.
+// ---- Presence start helper ----
+function setPresenceStart(ts) {
+  presenceStartedAt = ts;
+  if (ts === null) localStorage.removeItem(PRESENCE_START_KEY);
+  else localStorage.setItem(PRESENCE_START_KEY, String(ts));
+}
+
+// ---- Visibility change handling ----
 let hiddenAt = null;
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (document.hidden) {
+    hiddenAt = Date.now();
+    if (running) {
+      // Tab hidden: finalize current presence block, start absence
+      if (!breakActive) {
+        finalizePresenceBlock('tab_hidden');
+        absenceStartedAt = hiddenAt;
+        isPersonPresent = false;
+      } else {
+        // Already on break, just note hidden time for later
+      }
+    }
+    return;
+  }
+  // Tab visible again
   if (!hiddenAt || !running) { hiddenAt = null; return; }
   const hiddenMs = Date.now() - hiddenAt;
   hiddenAt = null;
-  if (hiddenMs < 2000) return; // trivial tab-switch, not a real gap
+  if (hiddenMs < 2000) return; // trivial tab switch
 
-  if (slouchStartedAt) {
-    logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
-    slouchStartedAt = null; slouchAccumulatedMs = 0;
+  // If we were in the middle of a break, end it using hiddenAt as start?
+  if (breakActive && breakStartedAt) {
+    // Break continued while hidden; treat the whole hidden duration as part of break
+    // but our breakStartedAt may be earlier. We'll just endBreak now.
+    endBreak();
+    return;
   }
-  if (presenceStart) creditBreakTarget((hiddenAt - presenceStart) / 1000);
-  const hiddenSec = hiddenMs / 1000;
-  if (hiddenSec >= BREAK_MIN_SECONDS) {
-    addBreakMinutesToday(hiddenSec);
-    if (hiddenSec > BREAK_MAX_SECONDS) logAwayEvent(Date.now() - hiddenMs, Date.now());
-    else { logBreakEvent(Date.now() - hiddenMs, Date.now()); breaksTaken++; stats.breaksTaken = breaksTaken; }
+
+  // We were absent before hiding; now classify the whole gap
+  if (absenceStartedAt) {
+    const gapStart = absenceStartedAt;
+    const gapEnd = Date.now();
+    const classification = classifyGap(gapStart, gapEnd);
+    if (classification === 'break') {
+      logBreakEvent(gapStart, gapEnd, 'retrospective');
+      addBreakMinutesToday((gapEnd - gapStart)/1000);
+      incrementBreaksTaken();
+      addAlertToFeed('break', `Retrospective break logged (${Math.round((gapEnd-gapStart)/60000)} min)`);
+    } else if (classification === 'away') {
+      logAwayEvent(gapStart, gapEnd);
+      addAlertToFeed('away', `Away for ${Math.round((gapEnd-gapStart)/3600)}h`);
+    }
+    absenceStartedAt = null;
   }
-  if (!manualBreak) {
-    breakActive = false; breakStart = null;
-    breakToggleBtn.classList.remove('break-due', 'break-active');
-    breakToggleBtn.textContent = 'take a break';
-  }
+
+  // Reset for new presence block
+  isPersonPresent = false;
   setPresenceStart(Date.now());
-  isPersonPresent = false; // lets loop() run its normal "you just returned" logic on the next detected frame
-  stillnessRef = null; lastMovementAt = null;
-  lastBreakNudgeAt = Date.now(); // don't let a stale nudge fire the instant you're back
+  stillnessRef = null;
+  lastMovementAt = null;
+  lastBreakNudgeAt = Date.now();
   renderBreakGauge();
 });
 
-// ---- Audio helpers ----
+// ---- Audio / voice ----
 async function ensureAudioUnlocked() {
   if (!audioCtx) { try { audioCtx = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){ return false; } }
   if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -437,31 +477,24 @@ function startBgSilentAudio() {
 }
 function stopBgSilentAudio() { if (silentAudioEl) silentAudioEl.pause(); bgAudioEnabled = false; bgAudioBtn.textContent = 'background nudges'; bgAudioBtn.classList.remove('is-on'); }
 
-// ---- Voice ----
 function updateVoiceReady(ready) { voiceReady.classList.toggle('ready', ready); }
 
-// Piper's en_GB catalog — 2 confirmed male, 6 female. No en_AU voices exist in Piper at all.
-// This is a placeholder set: swap/extend once we've picked the final 8 (see notes).
+// Piper voices unchanged ...
 const PIPER_VOICES = [
-  { id: 'en_GB-alan-medium',                  name: 'Alan — UK male, steady' },
+  { id: 'en_GB-alan-medium', name: 'Alan — UK male, steady' },
   { id: 'en_GB-northern_english_male-medium', name: 'Nathan — UK male, northern' },
-  { id: 'en_GB-alba-medium',                  name: 'Alba — UK female, warm' },
-  { id: 'en_GB-southern_english_female-low',  name: 'Southern — UK female, light' },
-  { id: 'en_GB-cori-medium',                  name: 'Cori — UK female, crisp' },
-  { id: 'en_GB-jenny_dioco-medium',           name: 'Jenny — UK female, bright' },
-  { id: 'en_GB-aru-medium',                   name: 'Aru — UK, low & brisk' },
-  { id: 'en_GB-semaine-medium',               name: 'Semaine — UK, measured' },
+  { id: 'en_GB-alba-medium', name: 'Alba — UK female, warm' },
+  { id: 'en_GB-southern_english_female-low', name: 'Southern — UK female, light' },
+  { id: 'en_GB-cori-medium', name: 'Cori — UK female, crisp' },
+  { id: 'en_GB-jenny_dioco-medium', name: 'Jenny — UK female, bright' },
+  { id: 'en_GB-aru-medium', name: 'Aru — UK, low & brisk' },
+  { id: 'en_GB-semaine-medium', name: 'Semaine — UK, measured' },
 ];
-// Preferred default when the person hasn't chosen a voice yet. This is a
-// Chrome/Chromium browser voice (speechSynthesis), not a Piper one — if it's
-// not available (Safari, Firefox, or Chrome without Google voices installed),
-// the selection logic below falls back to the bundled Piper voice safely.
 const DEFAULT_VOICE_ID = 'Google UK English Female';
 
 function populateVoiceList() {
   const currentVal = voiceSelect.value;
   voiceSelect.innerHTML = '';
-
   const piperGroup = document.createElement('optgroup');
   piperGroup.label = 'offline (piper)';
   PIPER_VOICES.forEach(v => {
@@ -471,7 +504,6 @@ function populateVoiceList() {
     piperGroup.appendChild(opt);
   });
   voiceSelect.appendChild(piperGroup);
-
   if (window.speechSynthesis) {
     const voices = window.speechSynthesis.getVoices();
     const englishVoices = voices.filter(v => v.lang.startsWith('en') &&
@@ -489,13 +521,6 @@ function populateVoiceList() {
       voiceSelect.appendChild(browserGroup);
     }
   }
-
-  // Selection priority: (1) whatever's already showing in the dropdown, (2) a
-  // previously saved choice, (3) our preferred default IF the person has never
-  // chosen anything AND that voice is actually available, (4) if browser voices
-  // haven't finished loading yet, wait rather than lock in a fallback early —
-  // onvoiceschanged will re-run this once they're ready — otherwise (5) the
-  // bundled Piper voice.
   const hasStoredChoice = !!localStorage.getItem('plumb:voice');
   const voicesStillLoading = window.speechSynthesis && window.speechSynthesis.getVoices().length === 0;
   if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
@@ -511,15 +536,9 @@ function populateVoiceList() {
     voiceSelect.value = currentVoiceId;
     localStorage.setItem('plumb:voice', currentVoiceId);
   }
-  // else: no stored choice, preferred default not found yet, browser voices
-  // still loading — leave it, onvoiceschanged will re-run this shortly
 }
-
-if (window.speechSynthesis) {
-  window.speechSynthesis.onvoiceschanged = populateVoiceList;
-}
+if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = populateVoiceList;
 populateVoiceList();
-
 voiceSelect.addEventListener('change', () => {
   currentVoiceId = voiceSelect.value;
   localStorage.setItem('plumb:voice', currentVoiceId);
@@ -527,7 +546,7 @@ voiceSelect.addEventListener('change', () => {
   updateVoiceReady(false);
 });
 
-// ---- Hydration wiring ----
+// Hydration functions unchanged ...
 const hydrationFill = document.getElementById('hydrationFill');
 const hydrationConsumedEl = document.getElementById('hydrationConsumed');
 const hydrationTargetEl = document.getElementById('hydrationTarget');
@@ -544,16 +563,8 @@ function renderHydration() {
   hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
 }
 
-// ---- Break gauge wiring ----
-const breakFill = document.getElementById('breakFill');
-const breakTakenEl = document.getElementById('breakTaken');
-const breakTargetEl = document.getElementById('breakTarget');
-const breakMinutesEl = document.getElementById('breakMinutes');
-// liveContinuousMin/liveIntervalMin let the gauge reflect an in-progress
-// block that hasn't ended yet — called with no args from anywhere that just
-// needs to repaint committed totals (day switch, break just ended, etc).
-function renderBreakGauge(liveContinuousMin = 0, liveIntervalMin = null) {
-  const intervalMin = liveIntervalMin || Number(breakSlider.value);
+function renderBreakGauge(liveContinuousMin = 0) {
+  const intervalMin = Number(breakSlider.value);
   const liveExtra = Math.floor(liveContinuousMin / intervalMin);
   const target = breakTargetToday + liveExtra;
   const pct = target > 0 ? Math.max(0, Math.min(100, (breaksTakenToday / target) * 100)) : 0;
@@ -562,6 +573,7 @@ function renderBreakGauge(liveContinuousMin = 0, liveIntervalMin = null) {
   breakTargetEl.textContent = target;
   breakMinutesEl.textContent = breakMinutesToday;
 }
+
 function logHydration(ml) {
   hydrationConsumedMl += ml;
   hydrationLastClickMl = ml;
@@ -577,7 +589,6 @@ function undoHydration() {
 }
 Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key])));
 hydrationUndoBtn.addEventListener('click', undoHydration);
-
 hydrationTargetInput.value = hydrationTargetMl;
 hydrationTargetInput.addEventListener('change', () => {
   hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 2000);
@@ -595,6 +606,7 @@ Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
 renderHydration();
 renderBreakGauge();
 
+// Piper / speak functions unchanged ...
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
@@ -637,7 +649,7 @@ async function speak(text) {
   if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); }
 }
 
-// ---- Phrases ----
+// Phrases ...
 const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it."];
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust."];
 const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture."];
@@ -646,7 +658,7 @@ const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment."];
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
-// ---- Math ----
+// Math helpers unchanged ...
 function midpoint(a,b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2 }; }
 function shoulderWidthOf(lSh, rSh) { return Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001; }
 function neckCompressionRatio(earMid, shMid, lSh, rSh) {
@@ -656,19 +668,15 @@ function neckCompressionRatio(earMid, shMid, lSh, rSh) {
 }
 function lateralDeviation(earMid, shMid, lSh, rSh) {
   const sw = shoulderWidthOf(lSh, rSh);
-  return (earMid.x - shMid.x) / sw;  // negative = right
+  return (earMid.x - shMid.x) / sw;
 }
-// Positive = shoulders have grown wider in-frame since calibration, i.e. you've
-// moved closer to the camera. This is the "leaning toward the screen" signal
-// neckCompressionRatio structurally can't see, because that ratio is deliberately
-// normalized to cancel out exactly this kind of distance change.
 function leanInRatio(lSh, rSh, baselineSw) {
   if (!baselineSw) return 0;
   const sw = shoulderWidthOf(lSh, rSh);
   return (sw - baselineSw) / baselineSw;
 }
 
-// ---- Pose detection ----
+// Pose model init unchanged ...
 async function initModel() {
   const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
   landmarker = await PoseLandmarker.createFromOptions(vision, {
@@ -699,7 +707,12 @@ async function startCamera() {
     lastFrameTime = performance.now();
     await mergeRemoteStats();
     logRetrospectiveBreak();
-    setPresenceStart(null); lastBreakEnd = Date.now(); breakStart = null; isPersonPresent = false; breakActive = false; manualBreak = false;
+    setPresenceStart(null); // will be set when person detected
+    absenceStartedAt = null;
+    breakActive = false;
+    manualBreak = false;
+    breakStartedAt = null;
+    isPersonPresent = false;
     breakToggleBtn.textContent = 'take a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId); await ensureAudioUnlocked();
@@ -715,8 +728,10 @@ async function startCamera() {
 }
 
 function stopCamera() {
-  running = false; if (rafId) cancelAnimationFrame(rafId);
-  if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+  running = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  finalizePresenceBlock('camera_stopped');
+  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchAccumulatedMs = 0; }
   stillnessRef = null; lastMovementAt = null;
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   if (video.srcObject) { video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject = null; }
@@ -735,7 +750,7 @@ function stopCamera() {
   stopBgSilentAudio(); saveStats();
 }
 
-// ---- Camera picker ----
+// Camera picker unchanged ...
 async function populateCameraList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -752,12 +767,11 @@ populateCameraList();
 if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', populateCameraList);
 cameraSelect.addEventListener('change', () => { localStorage.setItem('plumb:cameraId', cameraSelect.value); if(running){ stopCamera(); startCamera(); } });
 
-// ---- Settings modal ----
+// Settings modal unchanged ...
 gearBtn.addEventListener('click', () => settingsModalOverlay.classList.add('open'));
 settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
-// ---- UI helpers ----
-// mode: 'good' | 'mild' | 'sustained' | 'idle'
+// UI helpers ...
 function setStatus(mode, text, caption) {
   statusCard.classList.remove('state-good','state-mild','state-sustained','state-idle');
   statusCard.classList.add(`state-${mode === 'good' ? 'good' : mode === 'idle' ? 'idle' : mode}`);
@@ -765,26 +779,9 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// The tolerance ellipse sizes linearly off the sliders (so "twice the
-// tolerance" really does look twice as big — that direct correspondence is
-// what makes dragging the slider feel connected to the visual).
-//
-// The dot's position is driven ENTIRELY by the raw measured value on a fixed
-// scale — tolerance never enters this calculation at all. It used to be tied
-// to the ellipse's own (tolerance-driven) radius, which meant the tolerance
-// slider itself controlled how far the dot could move: a high tolerance
-// barely moved the dot even while leaning, a low one made tiny jitter look
-// dramatic. A curve (tanh) on the raw value still gives small real
-// movements a big visibility boost, just without pulling tolerance into it.
+// Glyph code unchanged ...
 const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
 const RAW_CURVE_K = 12;
-// Lean-in doesn't get its own axis on the 2D dial (there isn't a third position
-// to put it in) — instead it grows the dot itself, since "closer to camera" reads
-// naturally as "bigger." Only grows on leaning IN (positive lean); leaning back
-// away from baseline just holds at the base radius rather than shrinking, since
-// that direction isn't what we're trying to flag. Delta and curve are separate
-// from the lateral/compression tanh so the size change reads as a gradual,
-// noticeable ramp rather than snapping to max the moment you cross tolerance.
 const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 18, LEAN_CURVE_K = 8;
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
@@ -797,7 +794,7 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
 
-  const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K); // 0..1
+  const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K);
   dzDot.style.r = (DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA) + 'px';
 }
 
@@ -821,15 +818,35 @@ function maybeSwitchDay() {
   if (stats.date !== cur) {
     saveStats();
     stats = { date:cur, sessionSeconds:0, slouchSeconds:0, postureNudges:0, breakNudges:0, breaksTaken:0 };
-    breaksTaken = 0; setPresenceStart(null); lastBreakEnd = Date.now();
+    breaksTakenToday = 0;
+    breakTargetToday = 0;
+    breakMinutesToday = 0;
+    setPresenceStart(null);
+    absenceStartedAt = null;
     hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + cur)) || 0;
     hydrationLastClickMl = 0;
-    breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + cur)) || 0;
-    breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + cur)) || 0;
-    breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + cur)) || 0;
     renderHydration();
     renderBreakGauge();
     speak("Good morning! A new day of posture tracking has started.");
+  }
+}
+
+// Retrospective break on startup
+function logRetrospectiveBreak() {
+  const lastEnd = localStorage.getItem(LAST_SESSION_END_KEY);
+  if (!lastEnd) return;
+  const gapStart = new Date(lastEnd).getTime();
+  const gapEnd = Date.now();
+  const classification = classifyGap(gapStart, gapEnd);
+  if (classification === 'micro') return;
+  if (classification === 'break') {
+    logBreakEvent(gapStart, gapEnd, 'retrospective');
+    addBreakMinutesToday((gapEnd - gapStart)/1000);
+    incrementBreaksTaken();
+    addAlertToFeed('break', `Retrospective break logged (${Math.round((gapEnd-gapStart)/60000)} min)`);
+  } else if (classification === 'away') {
+    logAwayEvent(gapStart, gapEnd);
+    addAlertToFeed('away', `Away for ${Math.round((gapEnd-gapStart)/3600)}h`);
   }
 }
 
@@ -853,30 +870,49 @@ function loop() {
     const earMid = midpoint(leftEar,rightEar), shMid = midpoint(leftSh,rightSh);
 
     if (!isPersonPresent) {
-      if (breakActive && !manualBreak && breakStart) {
-        const gap = (Date.now() - breakStart)/1000;
+      // Person appeared
+      if (breakActive && !manualBreak && breakStartedAt) {
+        // Auto-break candidate: check if it's been long enough
+        const gap = (Date.now() - breakStartedAt) / 1000;
         if (gap >= BREAK_MIN_SECONDS) {
           endBreak();
+        } else {
+          // Too short: cancel the half-started auto-break
+          breakActive = false;
+          breakStartedAt = null;
+          manualBreak = false;
+          breakToggleBtn.textContent = 'take a break';
+          breakToggleBtn.classList.remove('break-active', 'break-due');
         }
-      } else if (presenceStart) {
-        // A blip too brief to ever become a tracked break (breakActive never
-        // got set), but the continuous-sitting clock is still restarting
-        // below — credit whatever block preceded it, same as every other
-        // path that resets presenceStart, so this one case doesn't quietly
-        // fall through uncredited.
-        creditBreakTarget((Date.now() - presenceStart) / 1000);
+      } else if (absenceStartedAt) {
+        // We were absent but didn't have a formal break started; classify gap
+        const gapStart = absenceStartedAt;
+        const gapEnd = Date.now();
+        const classification = classifyGap(gapStart, gapEnd);
+        if (classification === 'break') {
+          logBreakEvent(gapStart, gapEnd, 'auto');
+          addBreakMinutesToday((gapEnd - gapStart)/1000);
+          incrementBreaksTaken();
+          addAlertToFeed('break', `Break ended (${Math.round((gapEnd-gapStart)/60000)} min)`);
+        } else if (classification === 'away') {
+          logAwayEvent(gapStart, gapEnd);
+          addAlertToFeed('away', `Away for ${Math.round((gapEnd-gapStart)/3600)}h`);
+        }
+        absenceStartedAt = null;
       }
+
+      // Start new presence block
       isPersonPresent = true;
       setPresenceStart(Date.now());
-      lastBreakEnd = Date.now();
-      // reset break start timer for auto-break
-      breakStart = null;
+      stillnessRef = null;
+      lastMovementAt = null;
+      lastBreakNudgeAt = Date.now();
       renderBreakGauge();
     }
 
-    // update break button colour if break reminder time reached
+    // Break due indicator
     const breakIntervalMin = Number(breakSlider.value);
-    const continuousMin = presenceStart ? (Date.now() - presenceStart) / 60000 : 0;
+    const continuousMin = presenceStartedAt ? (Date.now() - presenceStartedAt) / 60000 : 0;
     if (!breakActive && continuousMin >= breakIntervalMin) {
       breakToggleBtn.classList.add('break-due');
       breakToggleBtn.textContent = 'time for a break';
@@ -884,13 +920,13 @@ function loop() {
       breakToggleBtn.classList.remove('break-due');
       breakToggleBtn.textContent = 'take a break';
     }
-    renderBreakGauge(continuousMin, breakIntervalMin);
+    renderBreakGauge(continuousMin);
 
     if (breakActive) {
       setStatus('idle', 'on a break', 'back in a few');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, 0, false);
-      stillnessRef = null; lastMovementAt = null; // a break is itself a posture change — don't fire a stillness nudge right after
+      stillnessRef = null; lastMovementAt = null;
       rafId = requestAnimationFrame(loop);
       return;
     }
@@ -904,11 +940,6 @@ function loop() {
     const calibrated = baselineLateral!==null && baselineNeckRatio!==null && baselineShoulderWidth!==null;
     updateLiveMetrics(lateral, compression, lean, calibrated);
 
-    // Smooth the glyph's displayed position only — the raw lateral/compression/lean
-    // above still drive tolerance checks and nudges, so alerts stay responsive
-    // even though the dot itself doesn't jitter frame to frame. 0.08 favors a
-    // steady, confident-looking dot over a twitchy-but-instant one — raise it
-    // if it ever starts feeling laggy.
     displayLateral += (lateral - displayLateral) * 0.08;
     displayCompression += (compression - displayCompression) * 0.08;
     displayLean += (lean - displayLean) * 0.08;
@@ -924,9 +955,7 @@ function loop() {
 
       updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
 
-      // Stillness — tracked independently of tolerance/slouch state. Held rigidly
-      // "good" for a long stretch is its own problem (see the creep research), so
-      // this runs regardless of isSlouching.
+      // Stillness
       if (!stillnessRef) {
         stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now();
       } else {
@@ -940,7 +969,7 @@ function loop() {
       if (stillMs / 60000 >= stillMin && Date.now() - lastStillnessNudgeAt > 60000) {
         const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length]; stillIdx++;
         speak(p); addAlertToFeed('stillness_prompt', p); lastStillnessNudgeAt = Date.now();
-        stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now(); // don't re-fire every frame after
+        stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now();
       }
 
       if (isSlouching) {
@@ -960,35 +989,41 @@ function loop() {
         }
       } else {
         if (slouchStartedAt) {
-          // Use the accumulated, dt-capped duration rather than a raw
-          // Date.now() diff — if the tab was throttled/backgrounded mid-slouch,
-          // this stays consistent with stats.slouchSeconds instead of logging
-          // the full uncapped wall-clock gap (which is what caused >100% totals).
-          logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
+          logPostureEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
           slouchStartedAt = null; slouchAccumulatedMs = 0;
         }
         setStatus('good', 'sitting tall', 'calibrated to your desk');
       }
 
-      if (presenceStart && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
+      if (presenceStartedAt && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
         const p = BREAK_PROMPT_PHRASES[breakIdx% BREAK_PROMPT_PHRASES.length]; breakIdx++;
         speak(p); addAlertToFeed('break_prompt', p); stats.breakNudges++; lastBreakNudgeAt = Date.now();
       }
     }
   } else {
+    // No person detected
     if (isPersonPresent && !breakActive) {
-      if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs); slouchStartedAt = null; slouchAccumulatedMs = 0; }
-      breakStart = Date.now();
+      // Person left
+      finalizePresenceBlock('person_left');
       isPersonPresent = false;
+      absenceStartedAt = Date.now();
+      breakStartedAt = null; // will be set after min threshold
       setStatus('idle', 'no one detected', 'step into frame to resume');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, 0, false);
       stillnessRef = null; lastMovementAt = null;
     }
-    if (!isPersonPresent && breakStart && !breakActive) {
-      const absence = (Date.now() - breakStart)/1000;
+    if (!isPersonPresent && !breakActive && absenceStartedAt) {
+      const absence = (Date.now() - absenceStartedAt) / 1000;
       if (absence >= BREAK_MIN_SECONDS) {
-        startBreak(false);
+        // Auto-start break after threshold
+        breakActive = true;
+        manualBreak = false;
+        breakStartedAt = absenceStartedAt; // use absence start as break start
+        breakToggleBtn.textContent = 'end break';
+        breakToggleBtn.classList.add('break-active');
+        breakToggleBtn.classList.remove('break-due');
+        addAlertToFeed('break', 'Auto break started');
       }
     }
   }
@@ -996,7 +1031,7 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- Calibration (always possible) ----
+// Calibration unchanged ...
 calibrateBtn.addEventListener('click', () => {
   const result = landmarker.detectForVideo(video, performance.now());
   if (result.landmarks && result.landmarks.length>0) {
@@ -1005,7 +1040,7 @@ calibrateBtn.addEventListener('click', () => {
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
     baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
-    stillnessRef = null; lastMovementAt = null; // recalibration resets what "unchanged" means
+    stillnessRef = null; lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
     speak("Calibrated. That's your good posture.");
     addAlertToFeed('calibration', 'Posture calibrated'); logCalibrationEvent();
@@ -1014,7 +1049,7 @@ calibrateBtn.addEventListener('click', () => {
   }
 });
 
-// ---- Break button ----
+// Break button
 breakToggleBtn.addEventListener('click', () => {
   if (!running) return;
   if (breakActive) {
@@ -1024,16 +1059,13 @@ breakToggleBtn.addEventListener('click', () => {
   }
 });
 
-// ---- Camera toggle button ----
+// Camera toggle
 cameraToggleBtn.addEventListener('click', () => {
-  if (running) {
-    stopCamera();
-  } else {
-    startCamera();
-  }
+  if (running) stopCamera();
+  else startCamera();
 });
 
-// ---- Report modal (unchanged) ----
+// Report modal functions unchanged ...
 async function fetchEventsForRange(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
@@ -1177,11 +1209,12 @@ modalTabs.addEventListener('click', e => {
   }
 });
 
-// ---- Event wiring ----
+// Event wiring
 maybeSwitchDay();
 setInterval(() => { maybeSwitchDay(); saveStats(); }, 10000);
 window.addEventListener('beforeunload', () => {
-  if (slouchStartedAt) { logSlouchEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt=null; }
+  finalizePresenceBlock('page_unload');
+  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt=null; }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   saveStats();
 });
@@ -1191,7 +1224,7 @@ function renderMuteBtn() {
   muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
   muteBtn.classList.toggle('is-on', voiceNudgesEnabled);
 }
-renderMuteBtn(); // paint the correct initial state — this is the actual fix, not just the rename
+renderMuteBtn();
 muteBtn.addEventListener('click', () => { voiceNudgesEnabled = !voiceNudgesEnabled; renderMuteBtn(); });
 bgAudioBtn.addEventListener('click', () => { if(bgAudioEnabled) stopBgSilentAudio(); else startBgSilentAudio(); });
 
@@ -1208,11 +1241,7 @@ sustainSlider.addEventListener('input', () => { sustainVal.textContent = `${sust
 breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); renderBreakGauge(); });
 stillnessSlider.addEventListener('input', () => { stillnessVal.textContent = `${stillnessSlider.value} min`; paintSliderTrack(stillnessSlider); });
 
-// ---- Picture-in-Picture status window ----
-// Independent of mute — popping this out doesn't change voice nudges either way.
-// Moves the actual statusCard node into the PiP window rather than building a
-// second copy, so updatePostureGlyph()/setStatus() keep working unchanged
-// regardless of which window the card currently lives in.
+// PiP status window (unchanged, but note: tracking loop stays in main tab)
 if ('documentPictureInPicture' in window) {
   const statusCardHome = statusCard.parentElement;
   const statusCardNextSibling = statusCard.nextSibling;
