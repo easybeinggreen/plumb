@@ -138,11 +138,13 @@ const PIPER_WASM_PATHS = {
 };
 
 // Date helpers
-const dateForTimestamp = (ms) => {
+function dateForTimestamp(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-const today = () => dateForTimestamp(Date.now());
+}
+function today() {
+  return dateForTimestamp(Date.now());
+}
 const addDaysToDateStr = (ds, n) => {
   const d = new Date(ds + 'T00:00:00');
   d.setDate(d.getDate() + n);
