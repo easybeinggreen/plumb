@@ -55,7 +55,6 @@ const syncDot = document.getElementById('syncDot');
 const syncText = document.getElementById('syncText');
 const alertFeed = document.getElementById('alertFeed');
 
-// Report modal
 const modalOverlay = document.getElementById('modalOverlay');
 const modalClose = document.getElementById('modalClose');
 const modalTabs = document.getElementById('modalTabs');
@@ -67,7 +66,6 @@ const aiSummaryText = document.getElementById('aiSummaryText');
 const aiMeta = document.getElementById('aiMeta');
 const aiStatGrid = document.getElementById('aiStatGrid');
 
-// Hydration & break gauge DOM (moved here, removed later duplicates)
 const hydrationFill = document.getElementById('hydrationFill');
 const hydrationConsumedEl = document.getElementById('hydrationConsumed');
 const hydrationTargetEl = document.getElementById('hydrationTarget');
@@ -117,18 +115,18 @@ let lastMovementAt = null;
 let lastStillnessNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
 
-// ---- Presence / absence / break state ----
 let presenceStartedAt = null;
 let absenceStartedAt = null;
 let breakStartedAt = null;
 let breakActive = false;
 let manualBreak = false;
 let isPersonPresent = false;
+let breakPreSittingSeconds = 0;
+let lastFinalizedSittingSeconds = 0;
 
 const BREAK_MIN_SECONDS = 60;      // 1 minute
 const BREAK_MAX_SECONDS = 60 * 60; // 60 minutes -> away
 
-// ---- Local storage keys ----
 const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
 const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
 const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
@@ -140,7 +138,6 @@ const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
 const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
 const LOG_KEY = (d) => `plumb:${d}`;
 
-// ---- Date helpers (function declarations, hoisted) ----
 function dateForTimestamp(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -154,13 +151,12 @@ function addDaysToDateStr(ds, n) {
   return dateForTimestamp(d.getTime());
 }
 
-// ---- State initialisation (after function declarations) ----
 let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + today())) || 0;
 let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
 let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
 
 let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 2000;
-let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass:300, mug:250, can:355, bottle:500 };
+let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass: 300, mug: 250, can: 355, bottle: 500 };
 let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
 let hydrationLastClickMl = 0;
 
@@ -178,7 +174,6 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-// ---- Stats functions ----
 function loadTodayStats() {
   const raw = localStorage.getItem(LOG_KEY(today()));
   if (raw) {
@@ -190,10 +185,14 @@ function loadTodayStats() {
   }
   return { date: today(), sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
 }
+
+let stats = loadTodayStats();
+
 function saveStatsLocal() {
   stats.breaksTaken = breaksTakenToday;
   localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
 }
+
 function setSyncStatus(mode, text) {
   syncDot.classList.remove('ok', 'err');
   if (mode) syncDot.classList.add(mode);
@@ -201,6 +200,11 @@ function setSyncStatus(mode, text) {
 }
 if (!SYNC_CONFIGURED) setSyncStatus('', 'Cloud sync: not configured');
 else setSyncStatus('', 'Cloud sync: ready');
+
+async function mergeRemoteStats() {
+  // Placeholder – daily aggregates will be computed from events later.
+  return;
+}
 
 async function syncToSupabase() {
   if (!SYNC_CONFIGURED) return;
@@ -230,10 +234,9 @@ async function flushEvents() {
 
 function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
 
-// ---- Alert feed ----
 function addAlertToFeed(type, message) {
   const now = new Date();
-  const time = now.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const item = document.createElement('div');
   item.style.marginBottom = '3px';
   item.innerHTML = `<span style="font-family:var(--mono);">${time}</span> <span style="color:var(--ink);">${message}</span>`;
@@ -242,13 +245,12 @@ function addAlertToFeed(type, message) {
   while (alertFeed.children.length > 15) alertFeed.removeChild(alertFeed.lastChild);
 }
 
-// ---- Event logging ----
 function logEvent(event) {
   eventBuffer.push(event);
 }
 
 function logPresenceEvent(startTime, endTime, endedBy) {
-  const dur = Math.round((endTime - startTime)/1000);
+  const dur = Math.round((endTime - startTime) / 1000);
   if (dur <= 0) return;
   logEvent({
     date: dateForTimestamp(startTime),
@@ -261,12 +263,11 @@ function logPresenceEvent(startTime, endTime, endedBy) {
   });
 }
 
-function logBreakEvent(startTime, endTime, kind) {
-  const dur = Math.round((endTime - startTime)/1000);
+function logBreakEvent(startTime, endTime, kind, preBreakSittingSeconds = 0) {
+  const dur = Math.round((endTime - startTime) / 1000);
   if (dur <= 0) return;
-  const preBreakSitting = presenceStartedAt ? Math.round((startTime - presenceStartedAt)/1000) : 0;
   const intervalSec = Number(breakSlider.value) * 60;
-  const lateness = Math.max(0, Math.round(preBreakSitting - intervalSec));
+  const lateness = Math.max(0, Math.round(preBreakSittingSeconds - intervalSec));
   logEvent({
     date: dateForTimestamp(startTime),
     start_time: new Date(startTime).toISOString(),
@@ -274,14 +275,14 @@ function logBreakEvent(startTime, endTime, kind) {
     type: 'break',
     duration_seconds: dur,
     kind: kind,
-    pre_break_sitting_seconds: preBreakSitting,
+    pre_break_sitting_seconds: Math.round(preBreakSittingSeconds),
     lateness_seconds: lateness,
     created_at: new Date().toISOString()
   });
 }
 
 function logAwayEvent(startTime, endTime) {
-  const dur = Math.round((endTime - startTime)/1000);
+  const dur = Math.round((endTime - startTime) / 1000);
   if (dur <= 0) return;
   logEvent({
     date: dateForTimestamp(startTime),
@@ -305,7 +306,7 @@ function logCalibrationEvent() {
 }
 
 function logPostureEvent(type, startTime, endTime) {
-  const dur = Math.round((endTime - startTime)/1000);
+  const dur = Math.round((endTime - startTime) / 1000);
   if (dur <= 0) return;
   logEvent({
     date: dateForTimestamp(startTime),
@@ -317,7 +318,6 @@ function logPostureEvent(type, startTime, endTime) {
   });
 }
 
-// ---- Break target credit ----
 function creditBreakTargetFromSitting(sittingSeconds) {
   const intervalSec = Number(breakSlider.value) * 60;
   const qualifying = Math.floor(sittingSeconds / intervalSec);
@@ -338,19 +338,18 @@ function incrementBreaksTaken() {
   localStorage.setItem(BREAK_TAKEN_KEY_PREFIX + today(), String(breaksTakenToday));
 }
 
-// ---- Presence block finalisation ----
 function finalizePresenceBlock(endedBy = 'person_left') {
   if (!presenceStartedAt) return;
   const end = Date.now();
   const sittingSeconds = (end - presenceStartedAt) / 1000;
   if (sittingSeconds > 0) {
+    lastFinalizedSittingSeconds = sittingSeconds;
     logPresenceEvent(presenceStartedAt, end, endedBy);
     creditBreakTargetFromSitting(sittingSeconds);
   }
   presenceStartedAt = null;
 }
 
-// ---- Gap classification ----
 function classifyGap(startTime, endTime) {
   const sec = (endTime - startTime) / 1000;
   if (sec < BREAK_MIN_SECONDS) return 'micro';
@@ -358,10 +357,16 @@ function classifyGap(startTime, endTime) {
   return 'away';
 }
 
-// ---- Start / end break ----
+function setPresenceStart(ts) {
+  presenceStartedAt = ts;
+  if (ts === null) localStorage.removeItem(PRESENCE_START_KEY);
+  else localStorage.setItem(PRESENCE_START_KEY, String(ts));
+}
+
 function startBreak(manual = false) {
   if (breakActive) return;
   finalizePresenceBlock(manual ? 'manual_break' : 'auto_break');
+  breakPreSittingSeconds = lastFinalizedSittingSeconds;
   breakActive = true;
   manualBreak = manual;
   breakStartedAt = Date.now();
@@ -380,7 +385,7 @@ function endBreak() {
 
   if (dur >= BREAK_MIN_SECONDS) {
     if (dur <= BREAK_MAX_SECONDS) {
-      logBreakEvent(breakStartedAt, end, manualBreak ? 'manual' : 'auto');
+      logBreakEvent(breakStartedAt, end, manualBreak ? 'manual' : 'auto', breakPreSittingSeconds);
       addBreakMinutesToday(dur);
       incrementBreaksTaken();
       let msg = '';
@@ -400,35 +405,22 @@ function endBreak() {
   breakActive = false;
   manualBreak = false;
   breakStartedAt = null;
+  breakPreSittingSeconds = 0;
   setPresenceStart(Date.now());
   renderBreakGauge();
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
 
-// ---- Presence start helper ----
-function setPresenceStart(ts) {
-  presenceStartedAt = ts;
-  if (ts === null) localStorage.removeItem(PRESENCE_START_KEY);
-  else localStorage.setItem(PRESENCE_START_KEY, String(ts));
-}
-
-// ---- Visibility change handling ----
 let hiddenAt = null;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     hiddenAt = Date.now();
-    if (running) {
-      if (!breakActive) {
-        finalizePresenceBlock('tab_hidden');
-        absenceStartedAt = hiddenAt;
-        isPersonPresent = false;
-      }
-    }
     return;
   }
   if (!hiddenAt || !running) { hiddenAt = null; return; }
-  const hiddenMs = Date.now() - hiddenAt;
+  const hiddenStart = hiddenAt;
+  const hiddenMs = Date.now() - hiddenStart;
   hiddenAt = null;
   if (hiddenMs < 2000) return;
 
@@ -437,36 +429,30 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
 
-  if (absenceStartedAt) {
-    const gapStart = absenceStartedAt;
-    const gapEnd = Date.now();
-    const classification = classifyGap(gapStart, gapEnd);
-    if (classification === 'break') {
-      logBreakEvent(gapStart, gapEnd, 'retrospective');
-      addBreakMinutesToday((gapEnd - gapStart)/1000);
-      incrementBreaksTaken();
-      addAlertToFeed('break', `Retrospective break logged (${Math.round((gapEnd-gapStart)/60000)} min)`);
-    } else if (classification === 'away') {
-      logAwayEvent(gapStart, gapEnd);
-      addAlertToFeed('away', `Away for ${Math.round((gapEnd-gapStart)/3600)}h`);
-    }
-    absenceStartedAt = null;
+  finalizePresenceBlock('tab_hidden');
+  const classification = classifyGap(hiddenStart, Date.now());
+  if (classification === 'break') {
+    logBreakEvent(hiddenStart, Date.now(), 'retrospective', lastFinalizedSittingSeconds);
+    addBreakMinutesToday((Date.now() - hiddenStart) / 1000);
+    incrementBreaksTaken();
+    addAlertToFeed('break', `Retrospective break logged (${Math.round((Date.now() - hiddenStart) / 60000)} min)`);
+  } else if (classification === 'away') {
+    logAwayEvent(hiddenStart, Date.now());
+    addAlertToFeed('away', `Away for ${Math.round((Date.now() - hiddenStart) / 3600)}h`);
   }
 
   isPersonPresent = false;
   setPresenceStart(Date.now());
-  stillnessRef = null;
-  lastMovementAt = null;
-  lastBreakNudgeAt = Date.now();
+  stillnessRef = null; lastMovementAt = null; lastBreakNudgeAt = Date.now();
   renderBreakGauge();
 });
 
-// ---- Audio / voice ----
 async function ensureAudioUnlocked() {
-  if (!audioCtx) { try { audioCtx = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){ return false; } }
+  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return false; } }
   if (audioCtx.state === 'suspended') await audioCtx.resume();
   return true;
 }
+
 function startBgSilentAudio() {
   if (!silentAudioEl) {
     silentAudioEl = new Audio();
@@ -478,6 +464,7 @@ function startBgSilentAudio() {
   bgAudioBtn.textContent = 'background nudges: on';
   bgAudioBtn.classList.add('is-on');
 }
+
 function stopBgSilentAudio() {
   if (silentAudioEl) silentAudioEl.pause();
   bgAudioEnabled = false;
@@ -553,7 +540,6 @@ voiceSelect.addEventListener('change', () => {
   updateVoiceReady(false);
 });
 
-// ---- Hydration functions ----
 function renderHydration() {
   const pct = hydrationTargetMl > 0 ? Math.max(0, Math.min(100, (hydrationConsumedMl / hydrationTargetMl) * 100)) : 0;
   hydrationFill.style.height = pct + '%';
@@ -568,6 +554,7 @@ function logHydration(ml) {
   localStorage.setItem(HYDRATION_LOG_PREFIX + today(), String(hydrationConsumedMl));
   renderHydration();
 }
+
 function undoHydration() {
   if (!hydrationLastClickMl) return;
   hydrationConsumedMl = Math.max(0, hydrationConsumedMl - hydrationLastClickMl);
@@ -594,7 +581,6 @@ Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
 });
 renderHydration();
 
-// ---- Break gauge rendering ----
 function renderBreakGauge(liveContinuousMin = 0) {
   const intervalMin = Number(breakSlider.value);
   const liveExtra = Math.floor(liveContinuousMin / intervalMin);
@@ -607,33 +593,38 @@ function renderBreakGauge(liveContinuousMin = 0) {
 }
 renderBreakGauge();
 
-// ---- Voice helpers ----
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return true;
   try {
     testVoiceBtn.textContent = 'loading voice…';
-    try { Object.defineProperty(navigator, 'hardwareConcurrency', { value:1, configurable:true }); } catch(e){}
+    try { Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true }); } catch (e) {}
     piperSession = await piperTTS.TtsSession.create({
-      voiceId, wasmPaths: PIPER_WASM_PATHS,
-      progress: p => { testVoiceBtn.textContent = `Downloading… ${Math.round(p.loaded*100/p.total)}%`; }
+      voiceId,
+      wasmPaths: PIPER_WASM_PATHS,
+      progress: p => { testVoiceBtn.textContent = `Downloading… ${Math.round(p.loaded * 100 / p.total)}%`; }
     });
     await piperSession.waitReady;
     piperSessionVoice = voiceId;
     testVoiceBtn.textContent = 'test voice';
     updateVoiceReady(true);
     return true;
-  } catch(err) { console.warn('Piper:', err); testVoiceBtn.textContent = 'test voice'; updateVoiceReady(false); return false; }
+  } catch (err) {
+    console.warn('Piper:', err);
+    testVoiceBtn.textContent = 'test voice';
+    updateVoiceReady(false);
+    return false;
+  }
 }
 
 async function speak(text) {
   if (!voiceNudgesEnabled) return;
   await ensureAudioUnlocked();
-  const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v=>v.name===currentVoiceId);
+  const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v => v.name === currentVoiceId);
   if (isBrowserVoice) {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      const voice = window.speechSynthesis.getVoices().find(v=>v.name===currentVoiceId);
+      const voice = window.speechSynthesis.getVoices().find(v => v.name === currentVoiceId);
       if (voice) u.voice = voice;
       window.speechSynthesis.speak(u);
       return;
@@ -644,14 +635,19 @@ async function speak(text) {
     if (ok) {
       const wav = await piperSession.predict(text);
       const buffer = await audioCtx.decodeAudioData(await wav.arrayBuffer());
-      const src = audioCtx.createBufferSource(); src.buffer = buffer; src.connect(audioCtx.destination); src.start(0);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(audioCtx.destination);
+      src.start(0);
       return;
     }
-  } catch(e) { console.warn('Piper fallback:', e); }
-  if ('speechSynthesis' in window) { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); }
+  } catch (e) { console.warn('Piper fallback:', e); }
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  }
 }
 
-// ---- Phrases ----
 const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it."];
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust."];
 const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture."];
@@ -660,8 +656,7 @@ const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment."];
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
-// ---- Math helpers (function declarations) ----
-function midpoint(a,b) { return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, z:(a.z+b.z)/2 }; }
+function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
 function shoulderWidthOf(lSh, rSh) { return Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001; }
 function neckCompressionRatio(earMid, shMid, lSh, rSh) {
   const gap = Math.max(shMid.y - earMid.y, 0.0001);
@@ -678,12 +673,15 @@ function leanInRatio(lSh, rSh, baselineSw) {
   return (sw - baselineSw) / baselineSw;
 }
 
-// ---- Pose detection ----
 async function initModel() {
   const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
   landmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
-    runningMode: 'VIDEO', numPoses: 1
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+      delegate: 'GPU'
+    },
+    runningMode: 'VIDEO',
+    numPoses: 1
   });
 }
 
@@ -692,10 +690,14 @@ async function startCamera() {
   cameraToggleBtn.disabled = true;
   try {
     if (!landmarker) await initModel();
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width:640, height:480, ...(cameraSelect.value ? { deviceId:{exact:cameraSelect.value} }:{}) }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, ...(cameraSelect.value ? { deviceId: { exact: cameraSelect.value } } : {}) },
+      audio: false
+    });
     video.srcObject = stream;
     await new Promise(r => video.onloadedmetadata = r);
-    overlay.width = video.videoWidth; overlay.height = video.videoHeight;
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
     await video.play();
     populateCameraList();
     placeholder.style.display = 'none';
@@ -714,13 +716,15 @@ async function startCamera() {
     breakActive = false;
     manualBreak = false;
     breakStartedAt = null;
+    breakPreSittingSeconds = 0;
     isPersonPresent = false;
     breakToggleBtn.textContent = 'take a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
-    ensurePiperVoice(currentVoiceId); await ensureAudioUnlocked();
+    ensurePiperVoice(currentVoiceId);
+    await ensureAudioUnlocked();
     if (bgAudioEnabled) startBgSilentAudio();
     loop();
-  } catch(err) {
+  } catch (err) {
     placeholder.textContent = `camera error: ${err.message}`;
     cameraToggleBtn.textContent = 'start camera';
     cameraToggleBtn.classList.add('start-camera');
@@ -734,10 +738,12 @@ function stopCamera() {
   if (rafId) cancelAnimationFrame(rafId);
   finalizePresenceBlock('camera_stopped');
   if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchAccumulatedMs = 0; }
-  stillnessRef = null; lastMovementAt = null;
+  stillnessRef = null;
+  lastMovementAt = null;
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
-  if (video.srcObject) { video.srcObject.getTracks().forEach(t=>t.stop()); video.srcObject = null; }
-  placeholder.style.display = 'flex'; placeholder.textContent = 'camera is off — press start camera to begin';
+  if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+  placeholder.style.display = 'flex';
+  placeholder.textContent = 'camera is off — press start camera to begin';
   cameraToggleBtn.textContent = 'start camera';
   cameraToggleBtn.classList.add('start-camera');
   cameraToggleBtn.classList.remove('stop-camera');
@@ -749,33 +755,40 @@ function stopCamera() {
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
   if (breakActive) endBreak();
-  stopBgSilentAudio(); saveStats();
+  stopBgSilentAudio();
+  saveStats();
 }
 
-// ---- Camera picker ----
 async function populateCameraList() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const cams = devices.filter(d=>d.kind==='videoinput');
+    const cams = devices.filter(d => d.kind === 'videoinput');
     if (!cams.length) return;
-    const saved = localStorage.getItem('plumb:cameraId'), prev = cameraSelect.value;
+    const saved = localStorage.getItem('plumb:cameraId');
+    const prev = cameraSelect.value;
     cameraSelect.innerHTML = '<option value="">Default camera</option>';
-    cams.forEach((cam,i) => { const o = document.createElement('option'); o.value = cam.deviceId; o.textContent = cam.label || `Camera ${i+1}`; cameraSelect.appendChild(o); });
-    if (saved && cams.some(c=>c.deviceId===saved)) cameraSelect.value = saved;
-    else if (prev && cams.some(c=>c.deviceId===prev)) cameraSelect.value = prev;
-  } catch(e) {}
+    cams.forEach((cam, i) => {
+      const o = document.createElement('option');
+      o.value = cam.deviceId;
+      o.textContent = cam.label || `Camera ${i + 1}`;
+      cameraSelect.appendChild(o);
+    });
+    if (saved && cams.some(c => c.deviceId === saved)) cameraSelect.value = saved;
+    else if (prev && cams.some(c => c.deviceId === prev)) cameraSelect.value = prev;
+  } catch (e) {}
 }
 populateCameraList();
 if (navigator.mediaDevices?.addEventListener) navigator.mediaDevices.addEventListener('devicechange', populateCameraList);
-cameraSelect.addEventListener('change', () => { localStorage.setItem('plumb:cameraId', cameraSelect.value); if(running){ stopCamera(); startCamera(); } });
+cameraSelect.addEventListener('change', () => {
+  localStorage.setItem('plumb:cameraId', cameraSelect.value);
+  if (running) { stopCamera(); startCamera(); }
+});
 
-// ---- Settings modal ----
 gearBtn.addEventListener('click', () => settingsModalOverlay.classList.add('open'));
 settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
-// ---- UI helpers ----
 function setStatus(mode, text, caption) {
-  statusCard.classList.remove('state-good','state-mild','state-sustained','state-idle');
+  statusCard.classList.remove('state-good', 'state-mild', 'state-sustained', 'state-idle');
   statusCard.classList.add(`state-${mode === 'good' ? 'good' : mode === 'idle' ? 'idle' : mode}`);
   statusValue.textContent = text;
   if (caption !== undefined) statusCaption.textContent = caption;
@@ -784,6 +797,7 @@ function setStatus(mode, text, caption) {
 const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
 const RAW_CURVE_K = 12;
 const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 18, LEAN_CURVE_K = 8;
+
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
   const ellipseRy = Math.min(ELLIPSE_MAX_PX, compTol * TOLERANCE_SCALE);
@@ -801,11 +815,17 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
 
 function updateLiveMetrics(lateral, compression, lean, calibrated) {
   if (!calibrated) {
-    lmLateral.textContent = '—'; lmSlump.textContent = '—'; lmLean.textContent = '—';
-    lmLateral.classList.remove('over'); lmSlump.classList.remove('over'); lmLean.classList.remove('over');
+    lmLateral.textContent = '—';
+    lmSlump.textContent = '—';
+    lmLean.textContent = '—';
+    lmLateral.classList.remove('over');
+    lmSlump.classList.remove('over');
+    lmLean.classList.remove('over');
     return;
   }
-  const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), leanTol = Number(leanToleranceSlider.value);
+  const latTol = Number(toleranceSlider.value);
+  const compTol = Number(compressionToleranceSlider.value);
+  const leanTol = Number(leanToleranceSlider.value);
   lmLateral.textContent = lateral.toFixed(2);
   lmSlump.textContent = compression.toFixed(2);
   lmLean.textContent = lean.toFixed(2);
@@ -818,7 +838,7 @@ function maybeSwitchDay() {
   const cur = today();
   if (stats.date !== cur) {
     saveStats();
-    stats = { date:cur, sessionSeconds:0, slouchSeconds:0, postureNudges:0, breakNudges:0, breaksTaken:0 };
+    stats = { date: cur, sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
     breaksTakenToday = 0;
     breakTargetToday = 0;
     breakMinutesToday = 0;
@@ -841,33 +861,37 @@ function logRetrospectiveBreak() {
   if (classification === 'micro') return;
   if (classification === 'break') {
     logBreakEvent(gapStart, gapEnd, 'retrospective');
-    addBreakMinutesToday((gapEnd - gapStart)/1000);
+    addBreakMinutesToday((gapEnd - gapStart) / 1000);
     incrementBreaksTaken();
-    addAlertToFeed('break', `Retrospective break logged (${Math.round((gapEnd-gapStart)/60000)} min)`);
+    addAlertToFeed('break', `Retrospective break logged (${Math.round((gapEnd - gapStart) / 60000)} min)`);
   } else if (classification === 'away') {
     logAwayEvent(gapStart, gapEnd);
-    addAlertToFeed('away', `Away for ${Math.round((gapEnd-gapStart)/3600)}h`);
+    addAlertToFeed('away', `Away for ${Math.round((gapEnd - gapStart) / 3600)}h`);
   }
 }
 
-// ---- Main loop ----
 function loop() {
   if (!running) return;
   const now = performance.now();
-  const dt = Math.min((now - lastFrameTime)/1000, 0.5);
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
   maybeSwitchDay();
 
   const result = landmarker.detectForVideo(video, now);
-  ctx.clearRect(0,0,overlay.width,overlay.height);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
 
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
-    const leftEar=lm[7], rightEar=lm[8], leftSh=lm[11], rightSh=lm[12];
-    ctx.fillStyle='rgba(44,110,142,0.9)';
-    [leftEar,rightEar,leftSh,rightSh].forEach(p => { ctx.beginPath(); ctx.arc(p.x*overlay.width, p.y*overlay.height,4,0,2*Math.PI); ctx.fill(); });
+    const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
+    ctx.fillStyle = 'rgba(44,110,142,0.9)';
+    [leftEar, rightEar, leftSh, rightSh].forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    });
 
-    const earMid = midpoint(leftEar,rightEar), shMid = midpoint(leftSh,rightSh);
+    const earMid = midpoint(leftEar, rightEar);
+    const shMid = midpoint(leftSh, rightSh);
 
     if (!isPersonPresent) {
       if (breakActive && !manualBreak && breakStartedAt) {
@@ -878,6 +902,7 @@ function loop() {
           breakActive = false;
           breakStartedAt = null;
           manualBreak = false;
+          breakPreSittingSeconds = 0;
           breakToggleBtn.textContent = 'take a break';
           breakToggleBtn.classList.remove('break-active', 'break-due');
         }
@@ -886,13 +911,13 @@ function loop() {
         const gapEnd = Date.now();
         const classification = classifyGap(gapStart, gapEnd);
         if (classification === 'break') {
-          logBreakEvent(gapStart, gapEnd, 'auto');
-          addBreakMinutesToday((gapEnd - gapStart)/1000);
+          logBreakEvent(gapStart, gapEnd, 'auto', lastFinalizedSittingSeconds);
+          addBreakMinutesToday((gapEnd - gapStart) / 1000);
           incrementBreaksTaken();
-          addAlertToFeed('break', `Break ended (${Math.round((gapEnd-gapStart)/60000)} min)`);
+          addAlertToFeed('break', `Break ended (${Math.round((gapEnd - gapStart) / 60000)} min)`);
         } else if (classification === 'away') {
           logAwayEvent(gapStart, gapEnd);
-          addAlertToFeed('away', `Away for ${Math.round((gapEnd-gapStart)/3600)}h`);
+          addAlertToFeed('away', `Away for ${Math.round((gapEnd - gapStart) / 3600)}h`);
         }
         absenceStartedAt = null;
       }
@@ -920,18 +945,19 @@ function loop() {
       setStatus('idle', 'on a break', 'back in a few');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, 0, false);
-      stillnessRef = null; lastMovementAt = null;
+      stillnessRef = null;
+      lastMovementAt = null;
       rafId = requestAnimationFrame(loop);
       return;
     }
 
     stats.sessionSeconds += dt;
 
-    const lateral = baselineLateral!==null ? lateralDeviation(earMid,shMid,leftSh,rightSh) - baselineLateral : 0;
-    const neckRatio = neckCompressionRatio(earMid,shMid,leftSh,rightSh);
-    const compression = baselineNeckRatio!==null ? baselineNeckRatio - neckRatio : 0;
+    const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
+    const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
+    const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
     const lean = leanInRatio(leftSh, rightSh, baselineShoulderWidth);
-    const calibrated = baselineLateral!==null && baselineNeckRatio!==null && baselineShoulderWidth!==null;
+    const calibrated = baselineLateral !== null && baselineNeckRatio !== null && baselineShoulderWidth !== null;
     updateLiveMetrics(lateral, compression, lean, calibrated);
 
     displayLateral += (lateral - displayLateral) * 0.08;
@@ -942,55 +968,84 @@ function loop() {
       setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
     } else {
-      const latTol = Number(toleranceSlider.value), compTol = Number(compressionToleranceSlider.value), leanTol = Number(leanToleranceSlider.value), sus = Number(sustainSlider.value)*1000;
-      const leftLean = lateral > latTol, rightLean = lateral < -latTol, comp = compression > compTol, leaningIn = lean > leanTol;
+      const latTol = Number(toleranceSlider.value);
+      const compTol = Number(compressionToleranceSlider.value);
+      const leanTol = Number(leanToleranceSlider.value);
+      const sus = Number(sustainSlider.value) * 1000;
+      const leftLean = lateral > latTol;
+      const rightLean = lateral < -latTol;
+      const comp = compression > compTol;
+      const leaningIn = lean > leanTol;
       const isSlouching = leftLean || rightLean || comp || leaningIn;
       const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : leaningIn ? 'lean_in' : null;
 
       updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
 
       if (!stillnessRef) {
-        stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now();
+        stillnessRef = { lateral, compression, lean };
+        lastMovementAt = Date.now();
       } else {
         const moved = Math.abs(lateral - stillnessRef.lateral) > STILLNESS_MOVE_THRESHOLD
           || Math.abs(compression - stillnessRef.compression) > STILLNESS_MOVE_THRESHOLD
           || Math.abs(lean - stillnessRef.lean) > STILLNESS_MOVE_THRESHOLD;
-        if (moved) { stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now(); }
+        if (moved) {
+          stillnessRef = { lateral, compression, lean };
+          lastMovementAt = Date.now();
+        }
       }
       const stillMin = Number(stillnessSlider.value);
       const stillMs = Date.now() - (lastMovementAt || Date.now());
       if (stillMs / 60000 >= stillMin && Date.now() - lastStillnessNudgeAt > 60000) {
-        const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length]; stillIdx++;
-        speak(p); addAlertToFeed('stillness_prompt', p); lastStillnessNudgeAt = Date.now();
-        stillnessRef = { lateral, compression, lean }; lastMovementAt = Date.now();
+        const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length];
+        stillIdx++;
+        speak(p);
+        addAlertToFeed('stillness_prompt', p);
+        lastStillnessNudgeAt = Date.now();
+        stillnessRef = { lateral, compression, lean };
+        lastMovementAt = Date.now();
       }
 
       if (isSlouching) {
         stats.slouchSeconds += dt;
-        if (!slouchStartedAt) { slouchStartedAt = Date.now(); slouchType = currentType; slouchAccumulatedMs = 0; }
+        if (!slouchStartedAt) {
+          slouchStartedAt = Date.now();
+          slouchType = currentType;
+          slouchAccumulatedMs = 0;
+        }
         slouchAccumulatedMs += dt * 1000;
         const dur = Date.now() - slouchStartedAt;
-        const label = currentType === 'compression' ? 'slumping' : currentType === 'lateral_left' ? 'leaning left' : currentType === 'lateral_right' ? 'leaning right' : 'leaning in';
-        setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur/1000)}s and counting`);
+        const label = currentType === 'compression' ? 'slumping'
+          : currentType === 'lateral_left' ? 'leaning left'
+          : currentType === 'lateral_right' ? 'leaning right'
+          : 'leaning in';
+        setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur / 1000)}s and counting`);
         if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
           let phrase;
-          if (currentType==='compression') { phrase = SLUMP_PHRASES[slumpIdx%SLUMP_PHRASES.length]; slumpIdx++; }
-          else if (currentType==='lateral_left') { phrase = LEFT_PHRASES[leftIdx%LEFT_PHRASES.length]; leftIdx++; }
-          else if (currentType==='lateral_right') { phrase = RIGHT_PHRASES[rightIdx%RIGHT_PHRASES.length]; rightIdx++; }
-          else { phrase = LEAN_PHRASES[leanIdx%LEAN_PHRASES.length]; leanIdx++; }
-          speak(phrase); addAlertToFeed(currentType, phrase); stats.postureNudges++; lastPostureNudgeAt = Date.now();
+          if (currentType === 'compression') { phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length]; slumpIdx++; }
+          else if (currentType === 'lateral_left') { phrase = LEFT_PHRASES[leftIdx % LEFT_PHRASES.length]; leftIdx++; }
+          else if (currentType === 'lateral_right') { phrase = RIGHT_PHRASES[rightIdx % RIGHT_PHRASES.length]; rightIdx++; }
+          else { phrase = LEAN_PHRASES[leanIdx % LEAN_PHRASES.length]; leanIdx++; }
+          speak(phrase);
+          addAlertToFeed(currentType, phrase);
+          stats.postureNudges++;
+          lastPostureNudgeAt = Date.now();
         }
       } else {
         if (slouchStartedAt) {
           logPostureEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
-          slouchStartedAt = null; slouchAccumulatedMs = 0;
+          slouchStartedAt = null;
+          slouchAccumulatedMs = 0;
         }
         setStatus('good', 'sitting tall', 'calibrated to your desk');
       }
 
       if (presenceStartedAt && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
-        const p = BREAK_PROMPT_PHRASES[breakIdx% BREAK_PROMPT_PHRASES.length]; breakIdx++;
-        speak(p); addAlertToFeed('break_prompt', p); stats.breakNudges++; lastBreakNudgeAt = Date.now();
+        const p = BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length];
+        breakIdx++;
+        speak(p);
+        addAlertToFeed('break_prompt', p);
+        stats.breakNudges++;
+        lastBreakNudgeAt = Date.now();
       }
     }
   } else {
@@ -1002,7 +1057,8 @@ function loop() {
       setStatus('idle', 'no one detected', 'step into frame to resume');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
       updateLiveMetrics(0, 0, 0, false);
-      stillnessRef = null; lastMovementAt = null;
+      stillnessRef = null;
+      lastMovementAt = null;
     }
     if (!isPersonPresent && !breakActive && absenceStartedAt) {
       const absence = (Date.now() - absenceStartedAt) / 1000;
@@ -1010,6 +1066,7 @@ function loop() {
         breakActive = true;
         manualBreak = false;
         breakStartedAt = absenceStartedAt;
+        breakPreSittingSeconds = lastFinalizedSittingSeconds;
         breakToggleBtn.textContent = 'end break';
         breakToggleBtn.classList.add('break-active');
         breakToggleBtn.classList.remove('break-due');
@@ -1021,38 +1078,37 @@ function loop() {
   rafId = requestAnimationFrame(loop);
 }
 
-// ---- Calibration ----
 calibrateBtn.addEventListener('click', () => {
   const result = landmarker.detectForVideo(video, performance.now());
-  if (result.landmarks && result.landmarks.length>0) {
+  if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
-    const earMid = midpoint(lm[7],lm[8]), shMid = midpoint(lm[11],lm[12]);
+    const earMid = midpoint(lm[7], lm[8]);
+    const shMid = midpoint(lm[11], lm[12]);
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
     baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
-    stillnessRef = null; lastMovementAt = null;
+    stillnessRef = null;
+    lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
     speak("Calibrated. That's your good posture.");
-    addAlertToFeed('calibration', 'Posture calibrated'); logCalibrationEvent();
+    addAlertToFeed('calibration', 'Posture calibrated');
+    logCalibrationEvent();
     calibrateBtn.textContent = 'recalibrate posture';
     calibrateBtn.classList.add('is-confirmed');
   }
 });
 
-// ---- Break button ----
 breakToggleBtn.addEventListener('click', () => {
   if (!running) return;
   if (breakActive) endBreak();
   else startBreak(true);
 });
 
-// ---- Camera toggle ----
 cameraToggleBtn.addEventListener('click', () => {
   if (running) stopCamera();
   else startCamera();
 });
 
-// ---- Report modal functions ----
 async function fetchEventsForRange(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
@@ -1061,8 +1117,9 @@ async function fetchEventsForRange(start, end) {
     });
     if (!res.ok) throw new Error('fetch');
     return await res.json();
-  } catch(e) { console.warn(e); return []; }
+  } catch (e) { console.warn(e); return []; }
 }
+
 async function fetchDailyLogs(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
@@ -1071,18 +1128,19 @@ async function fetchDailyLogs(start, end) {
     });
     if (!res.ok) throw new Error('fetch');
     return await res.json();
-  } catch(e) { console.warn(e); return []; }
+  } catch (e) { console.warn(e); return []; }
 }
 
 async function showReport(range) {
   let start, end;
   const curDate = today();
-  if (range==='today') { start=curDate; end=curDate; }
-  else if (range==='week') { start = addDaysToDateStr(curDate, -6); end=curDate; }
-  else if (range==='month') { start = addDaysToDateStr(curDate, -29); end=curDate; }
-  else if (range==='ai') { renderAiSummary(); return; }
+  if (range === 'today') { start = curDate; end = curDate; }
+  else if (range === 'week') { start = addDaysToDateStr(curDate, -6); end = curDate; }
+  else if (range === 'month') { start = addDaysToDateStr(curDate, -29); end = curDate; }
+  else if (range === 'ai') { renderAiSummary(); return; }
 
-  panelNumeric.classList.add('active'); panelAi.classList.remove('active');
+  panelNumeric.classList.add('active');
+  panelAi.classList.remove('active');
 
   const events = await fetchEventsForRange(start, end);
   const logs = await fetchDailyLogs(start, end);
@@ -1090,42 +1148,48 @@ async function showReport(range) {
   const dateMap = {};
   let ds0 = start;
   while (ds0 <= end) {
-    dateMap[ds0] = { break:0, left:0, right:0, slump:0, lean:0, away:0, breaks:0, sessionSeconds:0 };
+    dateMap[ds0] = { break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 };
     ds0 = addDaysToDateStr(ds0, 1);
   }
   events.forEach(e => {
     const ds = e.date;
-    if (!dateMap[ds]) dateMap[ds] = { break:0, left:0, right:0, slump:0, lean:0, away:0, breaks:0, sessionSeconds:0 };
-    const dur = e.duration_seconds||0;
-    if (e.type==='break') { dateMap[ds].break += dur; dateMap[ds].breaks++; }
-    else if (e.type==='away') dateMap[ds].away += dur;
-    else if (e.type==='lateral_left') dateMap[ds].left += dur;
-    else if (e.type==='lateral_right') dateMap[ds].right += dur;
-    else if (e.type==='compression') dateMap[ds].slump += dur;
-    else if (e.type==='lean_in') dateMap[ds].lean += dur;
+    if (!dateMap[ds]) dateMap[ds] = { break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 };
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'break') { dateMap[ds].break += dur; dateMap[ds].breaks++; }
+    else if (e.type === 'away') dateMap[ds].away += dur;
+    else if (e.type === 'lateral_left') dateMap[ds].left += dur;
+    else if (e.type === 'lateral_right') dateMap[ds].right += dur;
+    else if (e.type === 'compression') dateMap[ds].slump += dur;
+    else if (e.type === 'lean_in') dateMap[ds].lean += dur;
   });
-  logs.forEach(log => { if (dateMap[log.date]) dateMap[log.date].sessionSeconds = log.session_seconds||0; });
+  logs.forEach(log => { if (dateMap[log.date]) dateMap[log.date].sessionSeconds = log.session_seconds || 0; });
 
   const dates = Object.keys(dateMap).sort();
-  const labels = dates.map(ds => new Date(ds+'T00:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }));
-  const breakMin = dates.map(ds => Math.round(dateMap[ds].break/60));
-  const leftMin = dates.map(ds => Math.round(dateMap[ds].left/60));
-  const rightMin = dates.map(ds => Math.round(dateMap[ds].right/60));
-  const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump/60));
-  const leanMin = dates.map(ds => Math.round(dateMap[ds].lean/60));
-  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean)/60)));
+  const labels = dates.map(ds => new Date(ds + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+  const breakMin = dates.map(ds => Math.round(dateMap[ds].break / 60));
+  const leftMin = dates.map(ds => Math.round(dateMap[ds].left / 60));
+  const rightMin = dates.map(ds => Math.round(dateMap[ds].right / 60));
+  const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump / 60));
+  const leanMin = dates.map(ds => Math.round(dateMap[ds].lean / 60));
+  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean) / 60)));
 
-  let totalBreak=0, totalSession=0, totalSlouch=0, totalBreaks=0, totalAway=0;
-  Object.values(dateMap).forEach(day => { totalBreak+=day.break; totalSession+=day.sessionSeconds; totalSlouch+=day.left+day.right+day.slump+day.lean; totalBreaks+=day.breaks; totalAway+=day.away; });
+  let totalBreak = 0, totalSession = 0, totalSlouch = 0, totalBreaks = 0, totalAway = 0;
+  Object.values(dateMap).forEach(day => {
+    totalBreak += day.break;
+    totalSession += day.sessionSeconds;
+    totalSlouch += day.left + day.right + day.slump + day.lean;
+    totalBreaks += day.breaks;
+    totalAway += day.away;
+  });
   const overall = totalBreak + totalSession;
-  const slouchPct = overall ? Math.min(100, Math.round(totalSlouch/overall*100)) : 0;
-  const avgBreak = totalBreaks ? Math.round(totalBreak/totalBreaks/60) : 0;
+  const slouchPct = overall ? Math.min(100, Math.round(totalSlouch / overall * 100)) : 0;
+  const avgBreak = totalBreaks ? Math.round(totalBreak / totalBreaks / 60) : 0;
   reportSummary.innerHTML = `
-    <div class="metric"><div class="value">${Math.round(overall/60)}m</div><div class="label">monitored</div></div>
+    <div class="metric"><div class="value">${Math.round(overall / 60)}m</div><div class="label">monitored</div></div>
     <div class="metric"><div class="value">${slouchPct}%</div><div class="label">time slouching</div></div>
     <div class="metric"><div class="value">${totalBreaks}</div><div class="label">breaks</div></div>
     <div class="metric"><div class="value">${avgBreak}m</div><div class="label">avg break</div></div>
-    ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway/3600)}h</div><div class="label">time away</div></div>` : ''}
+    ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway / 3600)}h</div><div class="label">time away</div></div>` : ''}
   `;
 
   if (currentChart) currentChart.destroy();
@@ -1134,17 +1198,21 @@ async function showReport(range) {
     data: {
       labels,
       datasets: [
-        { label:'good posture', data:goodMin, backgroundColor:'#0A2626', stack:'s' },
-        { label:'leaning left', data:leftMin, backgroundColor:'#F0DAC7', stack:'s' },
-        { label:'leaning right', data:rightMin, backgroundColor:'#E4C1A0', stack:'s' },
-        { label:'slumping', data:slumpMin, backgroundColor:'#C1622E', stack:'s' },
-        { label:'leaning in', data:leanMin, backgroundColor:'#2E7D6B', stack:'s' },
-        { label:'break', data:breakMin, backgroundColor:'#C9C2B3', stack:'s' }
+        { label: 'good posture', data: goodMin, backgroundColor: '#0A2626', stack: 's' },
+        { label: 'leaning left', data: leftMin, backgroundColor: '#F0DAC7', stack: 's' },
+        { label: 'leaning right', data: rightMin, backgroundColor: '#E4C1A0', stack: 's' },
+        { label: 'slumping', data: slumpMin, backgroundColor: '#C1622E', stack: 's' },
+        { label: 'leaning in', data: leanMin, backgroundColor: '#2E7D6B', stack: 's' },
+        { label: 'break', data: breakMin, backgroundColor: '#C9C2B3', stack: 's' }
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: true,
-      scales: { x:{ stacked:true, grid:{ display:false } }, y:{ stacked:true, title:{ display:true, text:'minutes' }, grid:{ color:'rgba(10,38,38,0.06)' } } },
+      responsive: true,
+      maintainAspectRatio: true,
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } }
+      },
       plugins: {
         legend: { labels: { font: { family: 'Nunito', weight: '700', size: 11 }, boxWidth: 12, padding: 12 } },
         tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
@@ -1154,13 +1222,15 @@ async function showReport(range) {
 }
 
 async function renderAiSummary() {
-  panelNumeric.classList.remove('active'); panelAi.classList.add('active');
+  panelNumeric.classList.remove('active');
+  panelAi.classList.add('active');
   try {
     const res = await fetch('./data/summary.json', { cache: 'no-store' });
     const data = await res.json();
     if (!data.summary) {
       aiSummaryText.textContent = "no summary yet — this fills in after the weekly GitHub Action runs.";
-      aiMeta.textContent = ''; aiStatGrid.innerHTML = '';
+      aiMeta.textContent = '';
+      aiStatGrid.innerHTML = '';
       if (aiChart) { aiChart.destroy(); aiChart = null; }
       return;
     }
@@ -1168,53 +1238,76 @@ async function renderAiSummary() {
     aiMeta.textContent = data.generatedAt ? `generated ${new Date(data.generatedAt).toLocaleString()} · based on ${data.stats.daysLogged} logged days` : '';
     const s = data.stats;
     aiStatGrid.innerHTML = `
-      <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes||0)/60)}h</div><div class="label">tracked time</div></div>
-      <div class="metric"><div class="value">${s.slouchRatePct||0}%</div><div class="label">time slouching</div></div>
-      <div class="metric"><div class="value">${s.totalMoveNudges||0}</div><div class="label">move nudges</div></div>
+      <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes || 0) / 60)}h</div><div class="label">tracked time</div></div>
+      <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">time slouching</div></div>
+      <div class="metric"><div class="value">${s.totalMoveNudges || 0}</div><div class="label">move nudges</div></div>
     `;
     const days = s.days || [];
     if (aiChart) aiChart.destroy();
     aiChart = new Chart(document.getElementById('aiDailyChart').getContext('2d'), {
       type: 'bar',
-      data: { labels: days.map(d => d.date), datasets: [{ label: 'slouch minutes', data: days.map(d => d.slouchMinutes||0), backgroundColor: '#C1622E', borderRadius: 4 }] },
-      options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display:false } },
-        scales: { y: { title: { display:true, text:'minutes' }, grid:{ color:'rgba(10,38,38,0.06)' } }, x: { grid:{ display:false } } } }
+      data: {
+        labels: days.map(d => d.date),
+        datasets: [{ label: 'slouch minutes', data: days.map(d => d.slouchMinutes || 0), backgroundColor: '#C1622E', borderRadius: 4 }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } },
+          x: { grid: { display: false } }
+        }
+      }
     });
   } catch (err) {
     aiSummaryText.textContent = "couldn't load this week's summary.";
-    aiMeta.textContent = ''; aiStatGrid.innerHTML = '';
+    aiMeta.textContent = '';
+    aiStatGrid.innerHTML = '';
   }
 }
 
-reportBtn.addEventListener('click', () => { modalOverlay.classList.add('open'); const active = document.querySelector('.tab.active'); showReport(active ? active.dataset.range : 'today'); });
+reportBtn.addEventListener('click', () => {
+  modalOverlay.classList.add('open');
+  const active = document.querySelector('.tab.active');
+  showReport(active ? active.dataset.range : 'today');
+});
 modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
 modalTabs.addEventListener('click', e => {
   if (e.target.classList.contains('tab')) {
-    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     e.target.classList.add('active');
     showReport(e.target.dataset.range);
   }
 });
 
-// ---- Event wiring ----
-let stats = loadTodayStats();
 maybeSwitchDay();
 setInterval(() => { maybeSwitchDay(); saveStats(); }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');
-  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; }
+  if (slouchStartedAt) {
+    logPostureEvent(slouchType, slouchStartedAt, Date.now());
+    slouchStartedAt = null;
+  }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   saveStats();
 });
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
+
 function renderMuteBtn() {
   muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
   muteBtn.classList.toggle('is-on', voiceNudgesEnabled);
 }
 renderMuteBtn();
-muteBtn.addEventListener('click', () => { voiceNudgesEnabled = !voiceNudgesEnabled; renderMuteBtn(); });
-bgAudioBtn.addEventListener('click', () => { if(bgAudioEnabled) stopBgSilentAudio(); else startBgSilentAudio(); });
+muteBtn.addEventListener('click', () => {
+  voiceNudgesEnabled = !voiceNudgesEnabled;
+  renderMuteBtn();
+});
+bgAudioBtn.addEventListener('click', () => {
+  if (bgAudioEnabled) stopBgSilentAudio();
+  else startBgSilentAudio();
+});
 
 function paintSliderTrack(slider) {
   const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
@@ -1222,14 +1315,32 @@ function paintSliderTrack(slider) {
 }
 [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
-toleranceSlider.addEventListener('input', () => { toleranceVal.textContent = toleranceSlider.value; paintSliderTrack(toleranceSlider); });
-compressionToleranceSlider.addEventListener('input', () => { compressionToleranceVal.textContent = compressionToleranceSlider.value; paintSliderTrack(compressionToleranceSlider); });
-leanToleranceSlider.addEventListener('input', () => { leanToleranceVal.textContent = leanToleranceSlider.value; paintSliderTrack(leanToleranceSlider); });
-sustainSlider.addEventListener('input', () => { sustainVal.textContent = `${sustainSlider.value}s`; paintSliderTrack(sustainSlider); });
-breakSlider.addEventListener('input', () => { breakVal.textContent = `${breakSlider.value} min`; paintSliderTrack(breakSlider); renderBreakGauge(); });
-stillnessSlider.addEventListener('input', () => { stillnessVal.textContent = `${stillnessSlider.value} min`; paintSliderTrack(stillnessSlider); });
+toleranceSlider.addEventListener('input', () => {
+  toleranceVal.textContent = toleranceSlider.value;
+  paintSliderTrack(toleranceSlider);
+});
+compressionToleranceSlider.addEventListener('input', () => {
+  compressionToleranceVal.textContent = compressionToleranceSlider.value;
+  paintSliderTrack(compressionToleranceSlider);
+});
+leanToleranceSlider.addEventListener('input', () => {
+  leanToleranceVal.textContent = leanToleranceSlider.value;
+  paintSliderTrack(leanToleranceSlider);
+});
+sustainSlider.addEventListener('input', () => {
+  sustainVal.textContent = `${sustainSlider.value}s`;
+  paintSliderTrack(sustainSlider);
+});
+breakSlider.addEventListener('input', () => {
+  breakVal.textContent = `${breakSlider.value} min`;
+  paintSliderTrack(breakSlider);
+  renderBreakGauge();
+});
+stillnessSlider.addEventListener('input', () => {
+  stillnessVal.textContent = `${stillnessSlider.value} min`;
+  paintSliderTrack(stillnessSlider);
+});
 
-// PiP status window (unchanged)
 if ('documentPictureInPicture' in window) {
   const statusCardHome = statusCard.parentElement;
   const statusCardNextSibling = statusCard.nextSibling;
