@@ -134,8 +134,7 @@
   .live-metrics b.over { color: var(--terracotta-dark); }
   .live-metrics i { font-style: normal; opacity: 0.6; }
 
-  /* compact layout used only when the card is popped into the PiP window —
-     the full-size version has too much dead space around the dot at that scale */
+  /* compact layout used only when the card is popped into the PiP window */
   #statusCard.pip-mode { padding: 12px 10px 10px; gap: 5px; }
   #statusCard.pip-mode .glyph-wrap { width: min(96px, 42vw); height: min(96px, 42vh); }
   #statusCard.pip-mode .status-value { font-size: 16px; }
@@ -169,8 +168,7 @@
   }
   @keyframes hydration-wave { from { background-position-x: 0; } to { background-position-x: -40px; } }
 
-  /* Breaks aren't liquid, so no wave — a plain fill in the accent colour,
-     kept visually distinct from water at a glance. */
+  /* Breaks aren't liquid, so no wave */
   .break-fill { background: linear-gradient(180deg, var(--accent-light), var(--accent)); }
   .break-fill::before { content: none; }
 
@@ -180,14 +178,14 @@
 
   .hydration-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: 1; }
   .hydration-btn {
-    display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px;
     border-radius: var(--radius-sm); border: 1.5px solid var(--ink-faint-2); background: transparent;
     transition: border-color .15s ease, background .15s ease, transform .05s ease;
   }
   .hydration-btn:hover { border-color: var(--water); background: rgba(62,124,166,0.06); }
   .hydration-btn:active { transform: scale(0.95); }
-  .hydration-btn svg { width: 19px; height: 19px; color: var(--water); }
-  .hydration-btn-label { font-size: 10.5px; font-weight: 700; color: var(--ink-soft); }
+  .hydration-btn svg { width: 16px; height: 16px; color: var(--water); }
+  .hydration-btn-label { font-size: 9.5px; font-weight: 700; color: var(--ink-soft); }
 
   .hydration-undo { align-self: center; font-size: 11px; color: var(--ink-soft); background: none; border: none; text-decoration: underline; padding: 2px 4px; cursor: pointer; }
   .hydration-undo:hover { color: var(--ink); }
@@ -329,7 +327,7 @@
               <div class="hydration-fill break-fill" id="breakFill"></div>
             </div>
             <div class="hydration-readout"><b id="breakTaken">0</b> / <span id="breakTarget">0</span> breaks</div>
-            <div class="hydration-readout small"><span id="breakMinutes">0</span>min away today</div>
+            <div class="hydration-readout small"><span id="breakMinutes">0</span> min break time today</div>
           </div>
         </div>
         <div class="hydration-buttons">
@@ -433,6 +431,7 @@
     <div class="tab-panel active" id="panelNumeric">
       <div class="report-summary" id="reportSummary"></div>
       <div class="chart-container"><canvas id="slouchChart"></canvas></div>
+      <div class="chart-container" style="margin-top:12px;"><canvas id="todayTimelineChart" style="display:none;"></canvas></div>
     </div>
     <div class="tab-panel" id="panelAi">
       <p class="ai-summary-text" id="aiSummaryText">loading…</p>
