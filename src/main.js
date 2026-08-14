@@ -223,14 +223,43 @@ async function syncToSupabase() {
 
 async function flushEvents() {
   if (!SYNC_CONFIGURED || eventBuffer.length === 0) return;
-  const toSend = [...eventBuffer]; eventBuffer = [];
+
+  // Make every row have the same shape so PostgREST accepts the batch.
+  const toSend = eventBuffer.map(ev => ({
+    date: ev.date || null,
+    start_time: ev.start_time || null,
+    end_time: ev.end_time || null,
+    type: ev.type || null,
+    duration_seconds: ev.duration_seconds || 0,
+    ended_by: ev.ended_by || null,
+    kind: ev.kind || null,
+    pre_break_sitting_seconds: ev.pre_break_sitting_seconds || 0,
+    lateness_seconds: ev.lateness_seconds || 0,
+    created_at: ev.created_at || new Date().toISOString()
+  }));
+
+  eventBuffer = [];
+
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'return=minimal' },
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'return=minimal'
+      },
       body: JSON.stringify(toSend)
     });
-    if (!res.ok) { console.error('Event upload:', res.status, await res.text()); eventBuffer.push(...toSend); }
-  } catch (err) { console.error('Event upload:', err); eventBuffer.push(...toSend); }
+
+    if (!res.ok) {
+      console.error('Event upload:', res.status, await res.text());
+      eventBuffer.push(...toSend);
+    }
+  } catch (err) {
+    console.error('Event upload:', err);
+    eventBuffer.push(...toSend);
+  }
 }
 
 function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
