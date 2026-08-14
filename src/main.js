@@ -113,6 +113,7 @@ let lastPostureNudgeAt = 0;
 let stillnessRef = null;
 let lastMovementAt = null;
 let lastStillnessNudgeAt = 0;
+let lastBreakNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
 
 let presenceStartedAt = null;
