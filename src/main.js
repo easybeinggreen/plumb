@@ -926,20 +926,37 @@ function markMinutes(event, states, state) {
 
 function renderTodayTimeline(events) {
   const canvas = todayTimelineCanvas;
-  const width = canvas.clientWidth || canvas.parentElement.clientWidth || 600;
-  const height = 140; // timeline + legend + labels
+  const container = canvas.parentElement;
+
+  // Get the real available width from the modal container.
+  const containerWidth = container.getBoundingClientRect().width || container.clientWidth || 600;
+  const width = Math.max(containerWidth, 300);
+  const height = 175;
   const dpr = window.devicePixelRatio || 1;
 
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
+  canvas.style.display = 'block';
 
   const ctx2 = canvas.getContext('2d');
   ctx2.scale(dpr, dpr);
   ctx2.clearRect(0, 0, width, height);
 
+  const timelineHeight = 100;
+  const legendY = timelineHeight + 22;
+  const hourLabelY = timelineHeight + 14;
+
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const nowMinute = Math.floor((now - midnight) / 60000);
+
+  // Start with past as "not tracking" and future as empty.
   const states = new Array(1440).fill('not_tracking');
+  for (let m = Math.max(0, Math.min(1439, nowMinute + 1)); m < 1440; m++) {
+    states[m] = 'future';
+  }
 
   events.forEach(e => { if (e.type === 'presence') markMinutes(e, states, 'good'); });
   events.forEach(e => {
@@ -953,7 +970,7 @@ function renderTodayTimeline(events) {
     else if (e.type === 'not_tracking') markMinutes(e, states, 'not_tracking');
   });
 
-  // Build segments
+  // Build segments.
   const segments = [];
   let cur = states[0];
   let start = 0;
@@ -971,29 +988,29 @@ function renderTodayTimeline(events) {
     slouch: '#C1622E',
     break: '#C9C2B3',
     away: '#9FB0B5',
-    not_tracking: '#E0DDD5'
+    not_tracking: '#F0EDE6',
+    future: 'transparent'
   };
 
   const labels = {
     good: 'sitting well',
     slouch: 'slouching',
-    break: 'break',
-    away: 'away',
+    break: 'break (1–60m)',
+    away: 'away (60m+)',
     not_tracking: 'not tracking'
   };
 
-  const timelineHeight = 90;
-  const legendY = timelineHeight + 10;
-
-  // Draw timeline segments
+  // Draw timeline segments.
   segments.forEach(seg => {
+    if (seg.state === 'future') return;
+
     const x = (seg.startMin / 1440) * width;
     const w = ((seg.endMin - seg.startMin) / 1440) * width;
     ctx2.fillStyle = colors[seg.state] || '#ccc';
     ctx2.fillRect(x, 0, w, timelineHeight);
   });
 
-  // Hour gridlines and labels
+  // Hour gridlines and labels.
   ctx2.fillStyle = '#4B615E';
   ctx2.font = '10px Nunito, sans-serif';
 
@@ -1008,7 +1025,7 @@ function renderTodayTimeline(events) {
       ctx2.lineTo(x, timelineHeight);
       ctx2.stroke();
 
-      ctx2.fillText(String(h).padStart(2, '0') + ':00', x + 2, timelineHeight + 12);
+      ctx2.fillText(String(h).padStart(2, '0') + ':00', x + 2, hourLabelY);
     } else {
       ctx2.strokeStyle = 'rgba(10,38,38,0.05)';
       ctx2.beginPath();
@@ -1018,11 +1035,7 @@ function renderTodayTimeline(events) {
     }
   }
 
-  // Current time marker
-  const now = new Date();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const nowMinute = (now - midnight) / 60000;
-
+  // Current time marker.
   if (nowMinute >= 0 && nowMinute <= 1440) {
     const x = (nowMinute / 1440) * width;
 
@@ -1038,7 +1051,7 @@ function renderTodayTimeline(events) {
     ctx2.fillText('now', x + 3, 9);
   }
 
-  // Legend
+  // Legend.
   const legendItems = [
     { key: 'good', color: colors.good },
     { key: 'slouch', color: colors.slouch },
@@ -1054,7 +1067,7 @@ function renderTodayTimeline(events) {
     const swatchSize = 8;
     const text = labels[item.key];
     const textWidth = ctx2.measureText(text).width;
-    const totalWidth = swatchSize + 4 + textWidth + 12;
+    const totalWidth = swatchSize + 4 + textWidth + 14;
 
     ctx2.fillStyle = item.color;
     ctx2.fillRect(legendX, legendY, swatchSize, swatchSize);
@@ -1065,15 +1078,23 @@ function renderTodayTimeline(events) {
     legendX += totalWidth;
   });
 
-  // Store segments for hover tooltip
+  // Store segments for hover tooltip.
   canvas._timelineSegments = segments;
   canvas._timelineColors = colors;
   canvas._timelineLabels = labels;
   canvas._timelineWidth = width;
   canvas._timelineHeight = timelineHeight;
-  canvas._timelineDpr = dpr;
+  canvas._timelineMidnight = midnight;
 
-  // Hover tooltip using browser's native title attribute
+  function formatDuration(mins) {
+    if (mins >= 60) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+    return `${mins}m`;
+  }
+
   canvas.onmousemove = (e) => {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -1087,14 +1108,13 @@ function renderTodayTimeline(events) {
     const minute = (x / width) * 1440;
     const seg = segments.find(s => minute >= s.startMin && minute < s.endMin);
 
-    if (seg) {
+    if (seg && seg.state !== 'future') {
       const startTime = new Date(midnight.getTime() + seg.startMin * 60000);
       const endTime = new Date(midnight.getTime() + seg.endMin * 60000);
-      const durMin = seg.endMin - seg.startMin;
       const startLabel = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const endLabel = endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      canvas.title = `${labels[seg.state]}\n${startLabel} – ${endLabel}\n${durMin} min`;
+      canvas.title = `${labels[seg.state]}\n${startLabel} – ${endLabel}\n${formatDuration(seg.endMin - seg.startMin)}`;
     } else {
       canvas.title = '';
     }
