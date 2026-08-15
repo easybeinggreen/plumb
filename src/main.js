@@ -938,22 +938,18 @@ function renderTodayTimeline(events) {
 
   const states = new Array(1440).fill('not_tracking');
 
-  // Pass 1: presence -> good
   events.forEach(e => { if (e.type === 'presence') markMinutes(e, states, 'good'); });
-  // Pass 2: slouch -> slouch
   events.forEach(e => {
-    if (['lateral_left','lateral_right','compression','lean_in'].includes(e.type)) {
+    if (['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) {
       markMinutes(e, states, 'slouch');
     }
   });
-  // Pass 3: break, away, not_tracking -> respective
   events.forEach(e => {
     if (e.type === 'break') markMinutes(e, states, 'break');
     else if (e.type === 'away') markMinutes(e, states, 'away');
     else if (e.type === 'not_tracking') markMinutes(e, states, 'not_tracking');
   });
 
-  // Compress consecutive minutes
   const segments = [];
   let cur = states[0];
   let start = 0;
@@ -983,7 +979,6 @@ function renderTodayTimeline(events) {
     ctx2.fillRect(x, 0, w, height);
   });
 
-  // Current time marker
   const now = new Date();
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const nowMinute = (now - midnight) / 60000;
@@ -997,7 +992,6 @@ function renderTodayTimeline(events) {
     ctx2.stroke();
   }
 
-  // Hour labels
   ctx2.fillStyle = '#4B615E';
   ctx2.font = '10px Nunito, sans-serif';
   for (let h = 0; h <= 24; h += 3) {
@@ -1089,7 +1083,6 @@ async function showReport(range) {
     ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway / 3600)}h</div><div class="label">time away</div></div>` : ''}
   `;
 
-  // Chart section
   slouchChartCtx.canvas.style.display = 'none';
   todayTimelineCanvas.style.display = 'none';
 
