@@ -1181,6 +1181,248 @@ modalTabs.addEventListener('click', e => {
   }
 });
 
+// ---- Critical listeners restored ----
+cameraToggleBtn.addEventListener('click', () => {
+  if (running) stopCamera();
+  else startCamera();
+});
+
+breakToggleBtn.addEventListener('click', () => {
+  if (!running) return;
+  if (breakActive) endBreak();
+  else startBreak(true);
+});
+
+calibrateBtn.addEventListener('click', () => {
+  const result = landmarker.detectForVideo(video, performance.now());
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const earMid = midpoint(lm[7], lm[8]);
+    const shMid = midpoint(lm[11], lm[12]);
+    baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
+    baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
+    baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
+    stillnessRef = null;
+    lastMovementAt = null;
+    statusCaption.textContent = 'calibrated to your desk';
+    speak("Calibrated. That's your good posture.");
+    addAlertToFeed('calibration', 'Posture calibrated');
+    logCalibrationEvent();
+    calibrateBtn.textContent = 'recalibrate posture';
+    calibrateBtn.classList.add('is-confirmed');
+  }
+});
+
+// ---- Main loop ----
+function loop() {
+  if (!running) return;
+  const now = performance.now();
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
+  lastFrameTime = now;
+  maybeSwitchDay();
+
+  const result = landmarker.detectForVideo(video, now);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
+    ctx.fillStyle = 'rgba(44,110,142,0.9)';
+    [leftEar, rightEar, leftSh, rightSh].forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+
+    const earMid = midpoint(leftEar, rightEar);
+    const shMid = midpoint(leftSh, rightSh);
+
+    if (!isPersonPresent) {
+      if (breakActive && !manualBreak && breakStartedAt) {
+        const gap = (Date.now() - breakStartedAt) / 1000;
+        if (gap >= BREAK_MIN_SECONDS) {
+          endBreak();
+        } else {
+          breakActive = false;
+          breakStartedAt = null;
+          manualBreak = false;
+          breakPreSittingSeconds = 0;
+          breakToggleBtn.textContent = 'take a break';
+          breakToggleBtn.classList.remove('break-active', 'break-due');
+        }
+      } else if (absenceStartedAt) {
+        const gapStart = absenceStartedAt;
+        const gapEnd = Date.now();
+        const classification = classifyGap(gapStart, gapEnd);
+        if (classification === 'break') {
+          logBreakEvent(gapStart, gapEnd, 'auto', lastFinalizedSittingSeconds);
+          addBreakMinutesToday((gapEnd - gapStart) / 1000);
+          incrementBreaksTaken();
+          addAlertToFeed('break', `Break ended (${Math.round((gapEnd - gapStart) / 60000)} min)`);
+        } else if (classification === 'away') {
+          logAwayEvent(gapStart, gapEnd);
+          addAlertToFeed('away', `Away for ${Math.round((gapEnd - gapStart) / 3600)}h`);
+        }
+        absenceStartedAt = null;
+      }
+
+      isPersonPresent = true;
+      setPresenceStart(Date.now());
+      stillnessRef = null;
+      lastMovementAt = null;
+      lastBreakNudgeAt = Date.now();
+      renderBreakGauge();
+    }
+
+    const breakIntervalMin = Number(breakSlider.value);
+    const continuousMin = presenceStartedAt ? (Date.now() - presenceStartedAt) / 60000 : 0;
+    if (!breakActive && continuousMin >= breakIntervalMin) {
+      breakToggleBtn.classList.add('break-due');
+      breakToggleBtn.textContent = 'time for a break';
+    } else if (!breakActive) {
+      breakToggleBtn.classList.remove('break-due');
+      breakToggleBtn.textContent = 'take a break';
+    }
+    renderBreakGauge(continuousMin);
+
+    if (breakActive) {
+      setStatus('idle', 'on a break', 'back in a few');
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updateLiveMetrics(0, 0, 0, false);
+      stillnessRef = null;
+      lastMovementAt = null;
+      rafId = requestAnimationFrame(loop);
+      return;
+    }
+
+    stats.sessionSeconds += dt;
+
+    const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
+    const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
+    const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
+    const lean = leanInRatio(leftSh, rightSh, baselineShoulderWidth);
+    const calibrated = baselineLateral !== null && baselineNeckRatio !== null && baselineShoulderWidth !== null;
+    updateLiveMetrics(lateral, compression, lean, calibrated);
+
+    displayLateral += (lateral - displayLateral) * 0.08;
+    displayCompression += (compression - displayCompression) * 0.08;
+    displayLean += (lean - displayLean) * 0.08;
+
+    if (!calibrated) {
+      setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+    } else {
+      const latTol = Number(toleranceSlider.value);
+      const compTol = Number(compressionToleranceSlider.value);
+      const leanTol = Number(leanToleranceSlider.value);
+      const sus = Number(sustainSlider.value) * 1000;
+      const leftLean = lateral > latTol;
+      const rightLean = lateral < -latTol;
+      const comp = compression > compTol;
+      const leaningIn = lean > leanTol;
+      const isSlouching = leftLean || rightLean || comp || leaningIn;
+      const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : leaningIn ? 'lean_in' : null;
+
+      updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
+
+      if (!stillnessRef) {
+        stillnessRef = { lateral, compression, lean };
+        lastMovementAt = Date.now();
+      } else {
+        const moved = Math.abs(lateral - stillnessRef.lateral) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(compression - stillnessRef.compression) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(lean - stillnessRef.lean) > STILLNESS_MOVE_THRESHOLD;
+        if (moved) {
+          stillnessRef = { lateral, compression, lean };
+          lastMovementAt = Date.now();
+        }
+      }
+      const stillMin = Number(stillnessSlider.value);
+      const stillMs = Date.now() - (lastMovementAt || Date.now());
+      if (stillMs / 60000 >= stillMin && Date.now() - lastStillnessNudgeAt > 60000) {
+        const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length];
+        stillIdx++;
+        speak(p);
+        addAlertToFeed('stillness_prompt', p);
+        lastStillnessNudgeAt = Date.now();
+        stillnessRef = { lateral, compression, lean };
+        lastMovementAt = Date.now();
+      }
+
+      if (isSlouching) {
+        stats.slouchSeconds += dt;
+        if (!slouchStartedAt) {
+          slouchStartedAt = Date.now();
+          slouchType = currentType;
+          slouchAccumulatedMs = 0;
+        }
+        slouchAccumulatedMs += dt * 1000;
+        const dur = Date.now() - slouchStartedAt;
+        const label = currentType === 'compression' ? 'slumping'
+          : currentType === 'lateral_left' ? 'leaning left'
+          : currentType === 'lateral_right' ? 'leaning right'
+          : 'leaning in';
+        setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur / 1000)}s and counting`);
+        if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
+          let phrase;
+          if (currentType === 'compression') { phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length]; slumpIdx++; }
+          else if (currentType === 'lateral_left') { phrase = LEFT_PHRASES[leftIdx % LEFT_PHRASES.length]; leftIdx++; }
+          else if (currentType === 'lateral_right') { phrase = RIGHT_PHRASES[rightIdx % RIGHT_PHRASES.length]; rightIdx++; }
+          else { phrase = LEAN_PHRASES[leanIdx % LEAN_PHRASES.length]; leanIdx++; }
+          speak(phrase);
+          addAlertToFeed(currentType, phrase);
+          stats.postureNudges++;
+          lastPostureNudgeAt = Date.now();
+        }
+      } else {
+        if (slouchStartedAt) {
+          logPostureEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
+          slouchStartedAt = null;
+          slouchAccumulatedMs = 0;
+        }
+        setStatus('good', 'sitting tall', 'calibrated to your desk');
+      }
+
+      if (presenceStartedAt && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
+        const p = BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length];
+        breakIdx++;
+        speak(p);
+        addAlertToFeed('break_prompt', p);
+        stats.breakNudges++;
+        lastBreakNudgeAt = Date.now();
+      }
+    }
+  } else {
+    if (isPersonPresent && !breakActive) {
+      finalizePresenceBlock('person_left');
+      isPersonPresent = false;
+      absenceStartedAt = Date.now();
+      breakStartedAt = null;
+      setStatus('idle', 'no one detected', 'step into frame to resume');
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updateLiveMetrics(0, 0, 0, false);
+      stillnessRef = null;
+      lastMovementAt = null;
+    }
+    if (!isPersonPresent && !breakActive && absenceStartedAt) {
+      const absence = (Date.now() - absenceStartedAt) / 1000;
+      if (absence >= BREAK_MIN_SECONDS) {
+        breakActive = true;
+        manualBreak = false;
+        breakStartedAt = absenceStartedAt;
+        breakPreSittingSeconds = lastFinalizedSittingSeconds;
+        breakToggleBtn.textContent = 'end break';
+        breakToggleBtn.classList.add('break-active');
+        breakToggleBtn.classList.remove('break-due');
+        addAlertToFeed('break', 'Auto break started');
+      }
+    }
+  }
+
+  rafId = requestAnimationFrame(loop);
+}
+
+// ---- Init ----
 maybeSwitchDay();
 setInterval(() => { maybeSwitchDay(); saveStats(); }, 10000);
 window.addEventListener('beforeunload', () => {
