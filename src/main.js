@@ -743,13 +743,11 @@ async function openTrackingPip() {
     return false;
   }
 
-  // Store original locations to restore later.
   originalStatusParent = statusCard.parentElement;
   originalStatusNextSibling = statusCard.nextSibling;
   originalVideoParent = video.parentElement;
   originalVideoNextSibling = video.nextSibling;
 
-  // Prepare PiP document.
   trackingPipWindow.document.title = 'plumb';
   trackingPipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
   const fontLink = document.createElement('link');
@@ -757,7 +755,6 @@ async function openTrackingPip() {
   fontLink.href = 'https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap';
   trackingPipWindow.document.head.appendChild(fontLink);
 
-  // Style body to match app background.
   trackingPipWindow.document.body.style.margin = '0';
   trackingPipWindow.document.body.style.background = 'var(--paper)';
   trackingPipWindow.document.body.style.display = 'flex';
@@ -765,11 +762,9 @@ async function openTrackingPip() {
   trackingPipWindow.document.body.style.justifyContent = 'center';
   trackingPipWindow.document.body.style.height = '100vh';
 
-  // Move statusCard into PiP, apply compact mode.
   statusCard.classList.add('pip-mode');
   trackingPipWindow.document.body.appendChild(statusCard);
 
-  // Move video and overlay into PiP, hide them.
   video.style.position = 'absolute';
   video.style.left = '-9999px';
   video.style.top = '-9999px';
@@ -785,10 +780,8 @@ async function openTrackingPip() {
   trackingPipWindow.document.body.appendChild(video);
   trackingPipWindow.document.body.appendChild(overlay);
 
-  // Handle manual close of PiP window.
   trackingPipWindow.addEventListener('pagehide', () => {
     if (running) {
-      // Treat as camera stop.
       stopCamera();
     } else {
       closeTrackingPip();
@@ -804,7 +797,6 @@ function closeTrackingPip() {
     trackingPipWindow = null;
   }
 
-  // Restore statusCard.
   if (originalStatusParent) {
     statusCard.classList.remove('pip-mode');
     if (originalStatusNextSibling) {
@@ -814,7 +806,6 @@ function closeTrackingPip() {
     }
   }
 
-  // Restore video and overlay to original parent.
   if (originalVideoParent) {
     video.style.position = '';
     video.style.left = '';
@@ -864,7 +855,6 @@ async function startCamera() {
     populateCameraList();
     placeholder.style.display = 'none';
 
-    // Open tracking PiP if available.
     const pipOpened = await openTrackingPip();
 
     running = true;
@@ -890,7 +880,6 @@ async function startCamera() {
     await ensureAudioUnlocked();
     if (bgAudioEnabled) startBgSilentAudio();
 
-    // Start the loop with the correct RAF.
     nextFrame();
   } catch (err) {
     placeholder.textContent = `camera error: ${err.message}`;
@@ -1052,4 +1041,682 @@ function markMinutes(event, states, state) {
   if (endMs <= startMs) return;
   const startMin = Math.floor((startMs - dayMidnight) / 60000);
   const endMin = Math.ceil((endMs - dayMidnight) / 60000);
-  for
+  for (let m = startMin; m < endMin && m < 1440; m++) {
+    if (m >= 0) states[m] = state;
+  }
+}
+
+function renderTodayTimeline(events) {
+  const canvas = todayTimelineCanvas;
+  const container = canvas.parentElement;
+  const containerWidth = container.getBoundingClientRect().width || container.clientWidth || 600;
+  const width = Math.max(containerWidth, 300);
+  const height = 175;
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+  canvas.style.display = 'block';
+
+  const ctx2 = canvas.getContext('2d');
+  ctx2.scale(dpr, dpr);
+  ctx2.clearRect(0, 0, width, height);
+
+  const timelineHeight = 100;
+  const legendY = timelineHeight + 22;
+  const hourLabelY = timelineHeight + 14;
+
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const nowMinute = Math.floor((now - midnight) / 60000);
+
+  const states = new Array(1440).fill('not_tracking');
+  for (let m = Math.max(0, Math.min(1439, nowMinute + 1)); m < 1440; m++) {
+    states[m] = 'future';
+  }
+
+  events.forEach(e => { if (e.type === 'presence') markMinutes(e, states, 'good'); });
+  events.forEach(e => {
+    if (['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) {
+      markMinutes(e, states, 'slouch');
+    }
+  });
+  events.forEach(e => {
+    if (e.type === 'break') markMinutes(e, states, 'break');
+    else if (e.type === 'away') markMinutes(e, states, 'away');
+    else if (e.type === 'not_tracking') markMinutes(e, states, 'not_tracking');
+  });
+
+  const segments = [];
+  let cur = states[0];
+  let start = 0;
+  for (let i = 1; i < 1440; i++) {
+    if (states[i] !== cur) {
+      segments.push({ state: cur, startMin: start, endMin: i });
+      start = i;
+      cur = states[i];
+    }
+  }
+  segments.push({ state: cur, startMin: start, endMin: 1440 });
+
+  const colors = {
+    good: '#0A2626',
+    slouch: '#C1622E',
+    break: '#C9C2B3',
+    away: '#9FB0B5',
+    not_tracking: '#F0EDE6',
+    future: 'transparent'
+  };
+
+  const labels = {
+    good: 'sitting well',
+    slouch: 'slouching',
+    break: 'break (1–60m)',
+    away: 'away (60m+)',
+    not_tracking: 'not tracking'
+  };
+
+  segments.forEach(seg => {
+    if (seg.state === 'future') return;
+
+    const x = (seg.startMin / 1440) * width;
+    const w = ((seg.endMin - seg.startMin) / 1440) * width;
+    ctx2.fillStyle = colors[seg.state] || '#ccc';
+    ctx2.fillRect(x, 0, w, timelineHeight);
+  });
+
+  ctx2.fillStyle = '#4B615E';
+  ctx2.font = '10px Nunito, sans-serif';
+
+  for (let h = 0; h <= 24; h += 1) {
+    const x = (h / 24) * width;
+
+    if (h % 3 === 0) {
+      ctx2.strokeStyle = 'rgba(10,38,38,0.12)';
+      ctx2.lineWidth = 1;
+      ctx2.beginPath();
+      ctx2.moveTo(x, 0);
+      ctx2.lineTo(x, timelineHeight);
+      ctx2.stroke();
+
+      ctx2.fillText(String(h).padStart(2, '0') + ':00', x + 2, hourLabelY);
+    } else {
+      ctx2.strokeStyle = 'rgba(10,38,38,0.05)';
+      ctx2.beginPath();
+      ctx2.moveTo(x, 0);
+      ctx2.lineTo(x, timelineHeight);
+      ctx2.stroke();
+    }
+  }
+
+  if (nowMinute >= 0 && nowMinute <= 1440) {
+    const x = (nowMinute / 1440) * width;
+
+    ctx2.strokeStyle = '#14403B';
+    ctx2.lineWidth = 2;
+    ctx2.beginPath();
+    ctx2.moveTo(x, 0);
+    ctx2.lineTo(x, timelineHeight);
+    ctx2.stroke();
+
+    ctx2.fillStyle = '#14403B';
+    ctx2.font = 'bold 9px Nunito, sans-serif';
+    ctx2.fillText('now', x + 3, 9);
+  }
+
+  const legendItems = [
+    { key: 'good', color: colors.good },
+    { key: 'slouch', color: colors.slouch },
+    { key: 'break', color: colors.break },
+    { key: 'away', color: colors.away },
+    { key: 'not_tracking', color: colors.not_tracking }
+  ];
+
+  let legendX = 0;
+  ctx2.font = '10px Nunito, sans-serif';
+
+  legendItems.forEach(item => {
+    const swatchSize = 8;
+    const text = labels[item.key];
+    const textWidth = ctx2.measureText(text).width;
+    const totalWidth = swatchSize + 4 + textWidth + 14;
+
+    ctx2.fillStyle = item.color;
+    ctx2.fillRect(legendX, legendY, swatchSize, swatchSize);
+
+    ctx2.fillStyle = '#4B615E';
+    ctx2.fillText(text, legendX + swatchSize + 4, legendY + swatchSize - 1);
+
+    legendX += totalWidth;
+  });
+
+  canvas._timelineSegments = segments;
+  canvas._timelineColors = colors;
+  canvas._timelineLabels = labels;
+  canvas._timelineWidth = width;
+  canvas._timelineHeight = timelineHeight;
+  canvas._timelineMidnight = midnight;
+
+  function formatDuration(mins) {
+    if (mins >= 60) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+    return `${mins}m`;
+  }
+
+  canvas.onmousemove = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (y > timelineHeight) {
+      canvas.title = '';
+      return;
+    }
+
+    const minute = (x / width) * 1440;
+    const seg = segments.find(s => minute >= s.startMin && minute < s.endMin);
+
+    if (seg && seg.state !== 'future') {
+      const startTime = new Date(midnight.getTime() + seg.startMin * 60000);
+      const endTime = new Date(midnight.getTime() + seg.endMin * 60000);
+      const startLabel = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const endLabel = endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      canvas.title = `${labels[seg.state]}\n${startLabel} – ${endLabel}\n${formatDuration(seg.endMin - seg.startMin)}`;
+    } else {
+      canvas.title = '';
+    }
+  };
+
+  canvas.onmouseleave = () => {
+    canvas.title = '';
+  };
+}
+
+async function fetchEventsForRange(start, end) {
+  if (!SYNC_CONFIGURED) return [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=gte.${start}&date=lte.${end}&order=date.asc,start_time.asc`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) throw new Error('fetch');
+    return await res.json();
+  } catch (e) { console.warn(e); return []; }
+}
+
+async function fetchDailyLogs(start, end) {
+  if (!SYNC_CONFIGURED) return [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs?date=gte.${start}&date=lte.${end}&order=date.asc`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) throw new Error('fetch');
+    return await res.json();
+  } catch (e) { console.warn(e); return []; }
+}
+
+async function showReport(range) {
+  let start, end;
+  const curDate = today();
+  if (range === 'today') { start = curDate; end = curDate; }
+  else if (range === 'week') { start = addDaysToDateStr(curDate, -6); end = curDate; }
+  else if (range === 'month') { start = addDaysToDateStr(curDate, -29); end = curDate; }
+  else if (range === 'ai') { renderAiSummary(); return; }
+
+  panelNumeric.classList.add('active');
+  panelAi.classList.remove('active');
+
+  const events = await fetchEventsForRange(start, end);
+  const logs = await fetchDailyLogs(start, end);
+
+  const dateMap = {};
+  let ds0 = start;
+  while (ds0 <= end) {
+    dateMap[ds0] = { break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 };
+    ds0 = addDaysToDateStr(ds0, 1);
+  }
+  events.forEach(e => {
+    const ds = e.date;
+    if (!dateMap[ds]) dateMap[ds] = { break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 };
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'break') { dateMap[ds].break += dur; dateMap[ds].breaks++; }
+    else if (e.type === 'away') dateMap[ds].away += dur;
+    else if (e.type === 'lateral_left') dateMap[ds].left += dur;
+    else if (e.type === 'lateral_right') dateMap[ds].right += dur;
+    else if (e.type === 'compression') dateMap[ds].slump += dur;
+    else if (e.type === 'lean_in') dateMap[ds].lean += dur;
+  });
+  logs.forEach(log => { if (dateMap[log.date]) dateMap[log.date].sessionSeconds = log.session_seconds || 0; });
+
+  const dates = Object.keys(dateMap).sort();
+  const labels = dates.map(ds => new Date(ds + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
+  const breakMin = dates.map(ds => Math.round(dateMap[ds].break / 60));
+  const leftMin = dates.map(ds => Math.round(dateMap[ds].left / 60));
+  const rightMin = dates.map(ds => Math.round(dateMap[ds].right / 60));
+  const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump / 60));
+  const leanMin = dates.map(ds => Math.round(dateMap[ds].lean / 60));
+  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean) / 60)));
+
+  let totalBreak = 0, totalSession = 0, totalSlouch = 0, totalBreaks = 0, totalAway = 0;
+  Object.values(dateMap).forEach(day => {
+    totalBreak += day.break;
+    totalSession += day.sessionSeconds;
+    totalSlouch += day.left + day.right + day.slump + day.lean;
+    totalBreaks += day.breaks;
+    totalAway += day.away;
+  });
+  const overall = totalBreak + totalSession;
+  const slouchPct = overall ? Math.min(100, Math.round(totalSlouch / overall * 100)) : 0;
+  const avgBreak = totalBreaks ? Math.round(totalBreak / totalBreaks / 60) : 0;
+  reportSummary.innerHTML = `
+    <div class="metric"><div class="value">${Math.round(overall / 60)}m</div><div class="label">monitored</div></div>
+    <div class="metric"><div class="value">${slouchPct}%</div><div class="label">time slouching</div></div>
+    <div class="metric"><div class="value">${totalBreaks}</div><div class="label">breaks</div></div>
+    <div class="metric"><div class="value">${avgBreak}m</div><div class="label">avg break</div></div>
+    ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway / 3600)}h</div><div class="label">time away</div></div>` : ''}
+  `;
+
+  slouchChartCtx.canvas.style.display = 'none';
+  todayTimelineCanvas.style.display = 'none';
+
+  if (range === 'today') {
+    todayTimelineCanvas.style.display = 'block';
+    renderTodayTimeline(events);
+  } else {
+    slouchChartCtx.canvas.style.display = 'block';
+    if (currentChart) currentChart.destroy();
+    currentChart = new Chart(slouchChartCtx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'good posture', data: goodMin, backgroundColor: '#0A2626', stack: 's' },
+          { label: 'leaning left', data: leftMin, backgroundColor: '#F0DAC7', stack: 's' },
+          { label: 'leaning right', data: rightMin, backgroundColor: '#E4C1A0', stack: 's' },
+          { label: 'slumping', data: slumpMin, backgroundColor: '#C1622E', stack: 's' },
+          { label: 'leaning in', data: leanMin, backgroundColor: '#2E7D6B', stack: 's' },
+          { label: 'break', data: breakMin, backgroundColor: '#C9C2B3', stack: 's' }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } }
+        },
+        plugins: {
+          legend: { labels: { font: { family: 'Nunito', weight: '700', size: 11 }, boxWidth: 12, padding: 12 } },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
+        }
+      }
+    });
+  }
+}
+
+async function renderAiSummary() {
+  panelNumeric.classList.remove('active');
+  panelAi.classList.add('active');
+  try {
+    const res = await fetch('./data/summary.json', { cache: 'no-store' });
+    const data = await res.json();
+    if (!data.summary) {
+      aiSummaryText.textContent = "no summary yet — this fills in after the weekly GitHub Action runs.";
+      aiMeta.textContent = '';
+      aiStatGrid.innerHTML = '';
+      if (aiChart) { aiChart.destroy(); aiChart = null; }
+      return;
+    }
+    aiSummaryText.textContent = data.summary;
+    aiMeta.textContent = data.generatedAt ? `generated ${new Date(data.generatedAt).toLocaleString()} · based on ${data.stats.daysLogged} logged days` : '';
+    const s = data.stats;
+    aiStatGrid.innerHTML = `
+      <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes || 0) / 60)}h</div><div class="label">tracked time</div></div>
+      <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">time slouching</div></div>
+      <div class="metric"><div class="value">${s.totalMoveNudges || 0}</div><div class="label">move nudges</div></div>
+    `;
+    const days = s.days || [];
+    if (aiChart) aiChart.destroy();
+    aiChart = new Chart(document.getElementById('aiDailyChart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: days.map(d => d.date),
+        datasets: [{ label: 'slouch minutes', data: days.map(d => d.slouchMinutes || 0), backgroundColor: '#C1622E', borderRadius: 4 }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } },
+          x: { grid: { display: false } }
+        }
+      }
+    });
+  } catch (err) {
+    aiSummaryText.textContent = "couldn't load this week's summary.";
+    aiMeta.textContent = '';
+    aiStatGrid.innerHTML = '';
+  }
+}
+
+reportBtn.addEventListener('click', () => {
+  modalOverlay.classList.add('open');
+  const active = document.querySelector('.tab.active');
+  showReport(active ? active.dataset.range : 'today');
+});
+modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
+modalTabs.addEventListener('click', e => {
+  if (e.target.classList.contains('tab')) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    e.target.classList.add('active');
+    showReport(e.target.dataset.range);
+  }
+});
+
+// ---- Critical listeners ----
+cameraToggleBtn.addEventListener('click', () => {
+  if (running) stopCamera();
+  else startCamera();
+});
+
+breakToggleBtn.addEventListener('click', () => {
+  if (!running) return;
+  if (breakActive) endBreak();
+  else startBreak(true);
+});
+
+calibrateBtn.addEventListener('click', () => {
+  const result = landmarker.detectForVideo(video, performance.now());
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const earMid = midpoint(lm[7], lm[8]);
+    const shMid = midpoint(lm[11], lm[12]);
+    baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
+    baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
+    baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
+    stillnessRef = null;
+    lastMovementAt = null;
+    statusCaption.textContent = 'calibrated to your desk';
+    speak("Calibrated. That's your good posture.");
+    addAlertToFeed('calibration', 'Posture calibrated');
+    logCalibrationEvent();
+    calibrateBtn.textContent = 'recalibrate posture';
+    calibrateBtn.classList.add('is-confirmed');
+  }
+});
+
+// ---- Main loop ----
+function loop() {
+  if (!running) return;
+  const now = performance.now();
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
+  lastFrameTime = now;
+  maybeSwitchDay();
+
+  const result = landmarker.detectForVideo(video, now);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
+    ctx.fillStyle = 'rgba(44,110,142,0.9)';
+    [leftEar, rightEar, leftSh, rightSh].forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+
+    const earMid = midpoint(leftEar, rightEar);
+    const shMid = midpoint(leftSh, rightSh);
+
+    if (!isPersonPresent) {
+      if (breakActive && !manualBreak && breakStartedAt) {
+        const gap = (Date.now() - breakStartedAt) / 1000;
+        if (gap >= BREAK_MIN_SECONDS) {
+          endBreak();
+        } else {
+          breakActive = false;
+          breakStartedAt = null;
+          manualBreak = false;
+          breakPreSittingSeconds = 0;
+          breakToggleBtn.textContent = 'take a break';
+          breakToggleBtn.classList.remove('break-active', 'break-due');
+        }
+      } else if (absenceStartedAt) {
+        const gapStart = absenceStartedAt;
+        const gapEnd = Date.now();
+        const classification = classifyGap(gapStart, gapEnd);
+        if (classification === 'break') {
+          logBreakEvent(gapStart, gapEnd, 'auto', lastFinalizedSittingSeconds);
+          addBreakMinutesToday((gapEnd - gapStart) / 1000);
+          incrementBreaksTaken();
+          addAlertToFeed('break', `Break ended (${Math.round((gapEnd - gapStart) / 60000)} min)`);
+        } else if (classification === 'away') {
+          logAwayEvent(gapStart, gapEnd);
+          addAlertToFeed('away', `Away for ${Math.round((gapEnd - gapStart) / 3600)}h`);
+        }
+        absenceStartedAt = null;
+      }
+
+      isPersonPresent = true;
+      setPresenceStart(Date.now());
+      stillnessRef = null;
+      lastMovementAt = null;
+      lastBreakNudgeAt = Date.now();
+      renderBreakGauge();
+    }
+
+    const breakIntervalMin = Number(breakSlider.value);
+    const continuousMin = presenceStartedAt ? (Date.now() - presenceStartedAt) / 60000 : 0;
+    if (!breakActive && continuousMin >= breakIntervalMin) {
+      breakToggleBtn.classList.add('break-due');
+      breakToggleBtn.textContent = 'time for a break';
+    } else if (!breakActive) {
+      breakToggleBtn.classList.remove('break-due');
+      breakToggleBtn.textContent = 'take a break';
+    }
+    renderBreakGauge(continuousMin);
+
+    if (breakActive) {
+      setStatus('idle', 'on a break', 'back in a few');
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updateLiveMetrics(0, 0, 0, false);
+      stillnessRef = null;
+      lastMovementAt = null;
+      nextFrame();
+      return;
+    }
+
+    stats.sessionSeconds += dt;
+
+    const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
+    const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
+    const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
+    const lean = leanInRatio(leftSh, rightSh, baselineShoulderWidth);
+    const calibrated = baselineLateral !== null && baselineNeckRatio !== null && baselineShoulderWidth !== null;
+    updateLiveMetrics(lateral, compression, lean, calibrated);
+
+    displayLateral += (lateral - displayLateral) * 0.08;
+    displayCompression += (compression - displayCompression) * 0.08;
+    displayLean += (lean - displayLean) * 0.08;
+
+    if (!calibrated) {
+      setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+    } else {
+      const latTol = Number(toleranceSlider.value);
+      const compTol = Number(compressionToleranceSlider.value);
+      const leanTol = Number(leanToleranceSlider.value);
+      const sus = Number(sustainSlider.value) * 1000;
+      const leftLean = lateral > latTol;
+      const rightLean = lateral < -latTol;
+      const comp = compression > compTol;
+      const leaningIn = lean > leanTol;
+      const isSlouching = leftLean || rightLean || comp || leaningIn;
+      const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : leaningIn ? 'lean_in' : null;
+
+      updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
+
+      if (!stillnessRef) {
+        stillnessRef = { lateral, compression, lean };
+        lastMovementAt = Date.now();
+      } else {
+        const moved = Math.abs(lateral - stillnessRef.lateral) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(compression - stillnessRef.compression) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(lean - stillnessRef.lean) > STILLNESS_MOVE_THRESHOLD;
+        if (moved) {
+          stillnessRef = { lateral, compression, lean };
+          lastMovementAt = Date.now();
+        }
+      }
+      const stillMin = Number(stillnessSlider.value);
+      const stillMs = Date.now() - (lastMovementAt || Date.now());
+      if (stillMs / 60000 >= stillMin && Date.now() - lastStillnessNudgeAt > 60000) {
+        const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length];
+        stillIdx++;
+        speak(p);
+        addAlertToFeed('stillness_prompt', p);
+        lastStillnessNudgeAt = Date.now();
+        stillnessRef = { lateral, compression, lean };
+        lastMovementAt = Date.now();
+      }
+
+      if (isSlouching) {
+        stats.slouchSeconds += dt;
+        if (!slouchStartedAt) {
+          slouchStartedAt = Date.now();
+          slouchType = currentType;
+          slouchAccumulatedMs = 0;
+        }
+        slouchAccumulatedMs += dt * 1000;
+        const dur = Date.now() - slouchStartedAt;
+        const label = currentType === 'compression' ? 'slumping'
+          : currentType === 'lateral_left' ? 'leaning left'
+          : currentType === 'lateral_right' ? 'leaning right'
+          : 'leaning in';
+        setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur / 1000)}s and counting`);
+        if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
+          let phrase;
+          if (currentType === 'compression') { phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length]; slumpIdx++; }
+          else if (currentType === 'lateral_left') { phrase = LEFT_PHRASES[leftIdx % LEFT_PHRASES.length]; leftIdx++; }
+          else if (currentType === 'lateral_right') { phrase = RIGHT_PHRASES[rightIdx % RIGHT_PHRASES.length]; rightIdx++; }
+          else { phrase = LEAN_PHRASES[leanIdx % LEAN_PHRASES.length]; leanIdx++; }
+          speak(phrase);
+          addAlertToFeed(currentType, phrase);
+          stats.postureNudges++;
+          lastPostureNudgeAt = Date.now();
+        }
+      } else {
+        if (slouchStartedAt) {
+          logPostureEvent(slouchType, slouchStartedAt, slouchStartedAt + slouchAccumulatedMs);
+          slouchStartedAt = null;
+          slouchAccumulatedMs = 0;
+        }
+        setStatus('good', 'sitting tall', 'calibrated to your desk');
+      }
+
+      if (presenceStartedAt && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
+        const p = BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length];
+        breakIdx++;
+        speak(p);
+        addAlertToFeed('break_prompt', p);
+        stats.breakNudges++;
+        lastBreakNudgeAt = Date.now();
+      }
+    }
+  } else {
+    if (isPersonPresent && !breakActive) {
+      finalizePresenceBlock('person_left');
+      isPersonPresent = false;
+      absenceStartedAt = Date.now();
+      breakStartedAt = null;
+      setStatus('idle', 'no one detected', 'step into frame to resume');
+      updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
+      updateLiveMetrics(0, 0, 0, false);
+      stillnessRef = null;
+      lastMovementAt = null;
+    }
+    if (!isPersonPresent && !breakActive && absenceStartedAt) {
+      const absence = (Date.now() - absenceStartedAt) / 1000;
+      if (absence >= BREAK_MIN_SECONDS) {
+        breakActive = true;
+        manualBreak = false;
+        breakStartedAt = absenceStartedAt;
+        breakPreSittingSeconds = lastFinalizedSittingSeconds;
+        breakToggleBtn.textContent = 'end break';
+        breakToggleBtn.classList.add('break-active');
+        breakToggleBtn.classList.remove('break-due');
+        addAlertToFeed('break', 'Auto break started');
+      }
+    }
+  }
+
+  nextFrame();
+}
+
+// ---- Init ----
+maybeSwitchDay();
+setInterval(() => { maybeSwitchDay(); saveStats(); }, 10000);
+window.addEventListener('beforeunload', () => {
+  finalizePresenceBlock('page_unload');
+  if (slouchStartedAt) {
+    logPostureEvent(slouchType, slouchStartedAt, Date.now());
+    slouchStartedAt = null;
+  }
+  localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
+  saveStats();
+});
+
+testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
+
+function renderMuteBtn() {
+  muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
+  muteBtn.classList.toggle('is-on', voiceNudgesEnabled);
+}
+renderMuteBtn();
+muteBtn.addEventListener('click', () => {
+  voiceNudgesEnabled = !voiceNudgesEnabled;
+  renderMuteBtn();
+});
+bgAudioBtn.addEventListener('click', () => {
+  if (bgAudioEnabled) stopBgSilentAudio();
+  else startBgSilentAudio();
+});
+
+function paintSliderTrack(slider) {
+  const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+  slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
+}
+[toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
+
+toleranceSlider.addEventListener('input', () => {
+  toleranceVal.textContent = toleranceSlider.value;
+  paintSliderTrack(toleranceSlider);
+});
+compressionToleranceSlider.addEventListener('input', () => {
+  compressionToleranceVal.textContent = compressionToleranceSlider.value;
+  paintSliderTrack(compressionToleranceSlider);
+});
+leanToleranceSlider.addEventListener('input', () => {
+  leanToleranceVal.textContent = leanToleranceSlider.value;
+  paintSliderTrack(leanToleranceSlider);
+});
+sustainSlider.addEventListener('input', () => {
+  sustainVal.textContent = `${sustainSlider.value}s`;
+  paintSliderTrack(sustainSlider);
+});
+breakSlider.addEventListener('input', () => {
+  breakVal.textContent = `${breakSlider.value} min`;
+  paintSliderTrack(breakSlider);
+  renderBreakGauge();
+});
+stillnessSlider.addEventListener('input', () => {
+  stillnessVal.textContent = `${stillnessSlider.value} min`;
+  paintSliderTrack(stillnessSlider);
+});
