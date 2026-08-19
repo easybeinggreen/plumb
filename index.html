@@ -135,7 +135,16 @@
   .live-metrics i { font-style: normal; opacity: 0.6; }
 
   /* compact layout used only when the card is popped into the PiP window */
-  #statusCard.pip-mode { padding: 12px 10px 10px; gap: 5px; }
+ #statusCard.pip-mode {
+  padding: 12px 10px 10px;
+  gap: 5px;
+  width: 170px;
+  max-width: 90vw;
+  min-width: 170px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  word-break: break-word;
+}
   #statusCard.pip-mode .glyph-wrap { width: min(96px, 42vw); height: min(96px, 42vh); }
   #statusCard.pip-mode .status-value { font-size: 16px; }
   #statusCard.pip-mode .status-caption { font-size: 11px; margin-top: 2px; }
