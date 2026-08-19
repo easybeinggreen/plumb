@@ -457,13 +457,20 @@ function endBreak() {
 
 let hiddenAt = null;
 document.addEventListener('visibilitychange', () => {
-  // If tracking PiP is active, ignore main tab visibility.
-  if (trackingPipWindow && !trackingPipWindow.closed) return;
-
   if (document.hidden) {
     hiddenAt = Date.now();
     return;
   }
+
+  // If PiP is active, ignore main tab visibility.
+  if (trackingPipWindow && !trackingPipWindow.closed) return;
+
+  // If PiP disappeared unexpectedly while we thought we were running, clean up now.
+  if (running && (!trackingPipWindow || trackingPipWindow.closed)) {
+    stopCamera();
+    return;
+  }
+
   if (!hiddenAt || !running) { hiddenAt = null; return; }
   const hiddenStart = hiddenAt;
   const hiddenMs = Date.now() - hiddenStart;
@@ -761,6 +768,7 @@ async function openTrackingPip() {
   trackingPipWindow.document.body.style.alignItems = 'center';
   trackingPipWindow.document.body.style.justifyContent = 'center';
   trackingPipWindow.document.body.style.height = '100vh';
+  trackingPipWindow.document.body.style.padding = '8px';
 
   statusCard.classList.add('pip-mode');
   trackingPipWindow.document.body.appendChild(statusCard);
@@ -835,7 +843,14 @@ function closeTrackingPip() {
 }
 
 function nextFrame() {
-  rafId = trackingPipWindow ? trackingPipWindow.requestAnimationFrame(loop) : requestAnimationFrame(loop);
+  if (trackingPipWindow && trackingPipWindow.closed) {
+    stopCamera();
+    return;
+  }
+
+  rafId = trackingPipWindow
+    ? trackingPipWindow.requestAnimationFrame(loop)
+    : requestAnimationFrame(loop);
 }
 
 async function startCamera() {
@@ -853,9 +868,15 @@ async function startCamera() {
     overlay.height = video.videoHeight;
     await video.play();
     populateCameraList();
-    placeholder.style.display = 'none';
 
     const pipOpened = await openTrackingPip();
+
+    if (pipOpened) {
+      placeholder.style.display = 'flex';
+      placeholder.textContent = 'tracking in popup — leave it open';
+    } else {
+      placeholder.style.display = 'none';
+    }
 
     running = true;
     cameraToggleBtn.textContent = 'stop camera';
@@ -892,26 +913,48 @@ async function startCamera() {
 }
 
 function stopCamera() {
+  const wasRunning = running;
+
   running = false;
-  if (rafId) cancelAnimationFrame(rafId);
-  finalizePresenceBlock('camera_stopped');
-  if (slouchStartedAt) { logPostureEvent(slouchType, slouchStartedAt, Date.now()); slouchStartedAt = null; slouchAccumulatedMs = 0; }
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+
+  if (wasRunning) {
+    finalizePresenceBlock('camera_stopped');
+  }
+
+  if (slouchStartedAt) {
+    logPostureEvent(slouchType, slouchStartedAt, Date.now());
+    slouchStartedAt = null;
+    slouchAccumulatedMs = 0;
+  }
+
   stillnessRef = null;
   lastMovementAt = null;
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
-  if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
+
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+  }
+
   placeholder.style.display = 'flex';
   placeholder.textContent = 'camera is off — press start camera to begin';
+
   cameraToggleBtn.textContent = 'start camera';
   cameraToggleBtn.classList.add('start-camera');
   cameraToggleBtn.classList.remove('stop-camera');
   cameraToggleBtn.disabled = false;
+
   calibrateBtn.disabled = true;
   breakToggleBtn.disabled = true;
   calibrateBtn.textContent = 'recalibrate posture';
   calibrateBtn.classList.remove('is-confirmed');
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
+
   if (breakActive) endBreak();
   stopBgSilentAudio();
   saveStats();
@@ -1453,6 +1496,11 @@ calibrateBtn.addEventListener('click', () => {
 
 // ---- Main loop ----
 function loop() {
+  if (trackingPipWindow && trackingPipWindow.closed) {
+    stopCamera();
+    return;
+  }
+
   if (!running) return;
   const now = performance.now();
   const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
