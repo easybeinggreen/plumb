@@ -886,8 +886,9 @@ async function startCamera() {
     calibrateBtn.disabled = false;
     breakToggleBtn.disabled = false;
     lastFrameTime = performance.now();
-    await mergeRemoteStats();
-    logRetrospectiveBreak();
+await mergeRemoteStats();
+maybeSwitchDay();
+logStartupGap();
     setPresenceStart(null);
     absenceStartedAt = null;
     breakActive = false;
@@ -1055,22 +1056,45 @@ function maybeSwitchDay() {
   }
 }
 
-function logRetrospectiveBreak() {
+function logStartupGap() {
   const lastEnd = localStorage.getItem(LAST_SESSION_END_KEY);
   if (!lastEnd) return;
+
   const gapStart = new Date(lastEnd).getTime();
   const gapEnd = Date.now();
-  const classification = classifyGap(gapStart, gapEnd);
-  if (classification === 'micro') return;
-  if (classification === 'break') {
-    logBreakEvent(gapStart, gapEnd, 'retrospective');
-    addBreakMinutesToday((gapEnd - gapStart) / 1000);
-    incrementBreaksTaken();
-    addAlertToFeed('break', `Retrospective break logged (${Math.round((gapEnd - gapStart) / 60000)} min)`);
-  } else if (classification === 'away') {
-    logAwayEvent(gapStart, gapEnd);
-    addAlertToFeed('away', `Away for ${Math.round((gapEnd - gapStart) / 3600)}h`);
+  const gapSec = Math.round((gapEnd - gapStart) / 1000);
+
+  // Invalid or ancient timestamps are ignored.
+  if (!Number.isFinite(gapSec) || gapSec <= 0) {
+    localStorage.removeItem(LAST_SESSION_END_KEY);
+    return;
   }
+
+  // Only handle gaps from the same local calendar day.
+  if (dateForTimestamp(gapStart) !== today()) {
+    localStorage.removeItem(LAST_SESSION_END_KEY);
+    return;
+  }
+
+  // Up to 60 seconds: ignore, just reset.
+  if (gapSec < 60) {
+    localStorage.removeItem(LAST_SESSION_END_KEY);
+    return;
+  }
+
+  // 1–60 minutes: treat as a real break, even if the laptop slept.
+  if (gapSec <= 60 * 60) {
+    logBreakEvent(gapStart, gapEnd, 'retrospective');
+    addBreakMinutesToday(gapSec);
+    incrementBreaksTaken();
+    addAlertToFeed('break', `Break logged (${Math.round(gapSec / 60)} min)`);
+  } else {
+    // Longer than 60 minutes same day: honest not-tracking gap.
+    logNotTrackingEvent(gapStart, gapEnd);
+    addAlertToFeed('not_tracking', `Not tracking for ${Math.round(gapSec / 3600)}h ${Math.round((gapSec % 3600) / 60)}m`);
+  }
+
+  localStorage.removeItem(LAST_SESSION_END_KEY);
 }
 
 function markMinutes(event, states, state) {
@@ -1710,7 +1734,13 @@ function loop() {
 
 // ---- Init ----
 maybeSwitchDay();
-setInterval(() => { maybeSwitchDay(); saveStats(); }, 10000);
+setInterval(() => {
+  if (running) {
+    localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
+  }
+  maybeSwitchDay();
+  saveStats();
+}, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');
   if (slouchStartedAt) {
