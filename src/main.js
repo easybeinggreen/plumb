@@ -1339,7 +1339,6 @@ async function showReport(range) {
   panelAi.classList.remove('active');
 
   const events = await fetchEventsForRange(start, end);
-  const logs = await fetchDailyLogs(start, end);
 
   const dateMap = {};
   let ds0 = start;
@@ -1357,8 +1356,13 @@ async function showReport(range) {
     else if (e.type === 'lateral_right') dateMap[ds].right += dur;
     else if (e.type === 'compression') dateMap[ds].slump += dur;
     else if (e.type === 'lean_in') dateMap[ds].lean += dur;
+    // 'presence' events cover every continuous tracked block (across however many
+    // devices were used that day) and sum correctly since each is its own inserted
+    // row. This replaces the old posture_logs.session_seconds read, which was a
+    // single per-day value that got silently overwritten by whichever device
+    // synced last, undercounting any day where more than one device was used.
+    else if (e.type === 'presence') dateMap[ds].sessionSeconds += dur;
   });
-  logs.forEach(log => { if (dateMap[log.date]) dateMap[log.date].sessionSeconds = log.session_seconds || 0; });
 
   const dates = Object.keys(dateMap).sort();
   const labels = dates.map(ds => new Date(ds + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
@@ -1771,30 +1775,162 @@ function paintSliderTrack(slider) {
   const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
   slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
 }
+
+const TUNING_KEY = 'plumb:tuning';
+function loadTuning() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TUNING_KEY) || 'null');
+    if (!saved) return;
+    if (saved.tolerance !== undefined) toleranceSlider.value = saved.tolerance;
+    if (saved.compression !== undefined) compressionToleranceSlider.value = saved.compression;
+    if (saved.lean !== undefined) leanToleranceSlider.value = saved.lean;
+    if (saved.sustain !== undefined) sustainSlider.value = saved.sustain;
+    if (saved.breakInterval !== undefined) breakSlider.value = saved.breakInterval;
+    if (saved.stillness !== undefined) stillnessSlider.value = saved.stillness;
+  } catch (e) { console.warn(e); }
+}
+function saveTuning() {
+  localStorage.setItem(TUNING_KEY, JSON.stringify({
+    tolerance: toleranceSlider.value,
+    compression: compressionToleranceSlider.value,
+    lean: leanToleranceSlider.value,
+    sustain: sustainSlider.value,
+    breakInterval: breakSlider.value,
+    stillness: stillnessSlider.value
+  }));
+}
+loadTuning();
+toleranceVal.textContent = toleranceSlider.value;
+compressionToleranceVal.textContent = compressionToleranceSlider.value;
+leanToleranceVal.textContent = leanToleranceSlider.value;
+sustainVal.textContent = `${sustainSlider.value}s`;
+breakVal.textContent = `${breakSlider.value} min`;
+stillnessVal.textContent = `${stillnessSlider.value} min`;
+
 [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
 toleranceSlider.addEventListener('input', () => {
   toleranceVal.textContent = toleranceSlider.value;
   paintSliderTrack(toleranceSlider);
+  saveTuning();
 });
 compressionToleranceSlider.addEventListener('input', () => {
   compressionToleranceVal.textContent = compressionToleranceSlider.value;
   paintSliderTrack(compressionToleranceSlider);
+  saveTuning();
 });
 leanToleranceSlider.addEventListener('input', () => {
   leanToleranceVal.textContent = leanToleranceSlider.value;
   paintSliderTrack(leanToleranceSlider);
+  saveTuning();
 });
 sustainSlider.addEventListener('input', () => {
   sustainVal.textContent = `${sustainSlider.value}s`;
   paintSliderTrack(sustainSlider);
+  saveTuning();
 });
 breakSlider.addEventListener('input', () => {
   breakVal.textContent = `${breakSlider.value} min`;
   paintSliderTrack(breakSlider);
   renderBreakGauge();
+  saveTuning();
 });
 stillnessSlider.addEventListener('input', () => {
   stillnessVal.textContent = `${stillnessSlider.value} min`;
   paintSliderTrack(stillnessSlider);
+  saveTuning();
+});
+
+// ---- research-rationale popovers ----
+// Sourcing and phrasing kept intentionally honest about how strong the evidence
+// actually is (see plumb-research-rationale.md) rather than overclaiming certainty.
+const RESEARCH_INFO = {
+  tolerance: {
+    title: 'side-to-side tolerance',
+    short: "There's no single \u201ccorrect\u201d spinal angle \u2014 what matters is how long you hold any one position, not exactly what that position is.",
+    long: "This is measured against your own calibrated baseline, not a universal ideal. A recurring finding in sitting-posture research is that rigid, prolonged positions cause strain \u2014 not any particular angle in isolation \u2014 which is why Plumb calibrates to you rather than scoring against a textbook shape.",
+    source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
+  },
+  compression: {
+    title: 'slump tolerance',
+    short: "Same principle as side-to-side: no single ideal angle, measured against your own baseline.",
+    long: "Neck/shoulder compression (slumping) is tracked relative to how you sat when you calibrated, not a fixed universal target \u2014 consistent with research suggesting movement and variability matter more than any one \u201ccorrect\u201d posture.",
+    source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
+  },
+  lean: {
+    title: 'lean-in tolerance',
+    short: "Same principle again \u2014 measured against your own calibrated baseline, not a fixed ideal distance from the screen.",
+    long: "Leaning in is tracked as drift away from your own baseline position, in line with research suggesting sustained fixed positions (of any kind) are the more consistent concern, rather than any single distance being inherently wrong.",
+    source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
+  },
+  sustain: {
+    title: 'sustained before nudge',
+    short: "Spinal tissue can start to temporarily deform (\u201ccreep\u201d) when held in one flexed position \u2014 studies put that starting somewhere between about 5 and 20+ minutes, depending on severity.",
+    long: "This 45s default is a practical trigger for \u201cyou've probably drifted, worth adjusting\u201d \u2014 it isn't a literal claim that tissue creep begins at 45 seconds. The creep research itself operates on a scale of minutes, not tens of seconds; the nudge timing is deliberately conservative so you get a chance to self-correct well before that longer timescale matters.",
+    source: 'Source: McGill & Brown 1992; Shin et al. 2009; Korakakis et al. 2017 (proprioception change at 10 min). Ranges vary by study.'
+  },
+  breakInterval: {
+    title: 'break reminder interval',
+    short: "The evidence for moving often is more solid than the evidence for any exact number of minutes.",
+    long: "A 2025 Cochrane review found only low-quality evidence that extra breaks reduce discomfort, and no clear evidence that more-frequent beats less-frequent. What's more consistently supported is short active movement \u2014 roughly 2\u20133 minutes every 20\u201330 minutes \u2014 not just pausing still. 25 minutes is a reasonable, practical choice within that range, not a scientifically precise number.",
+    source: 'Source: Cochrane, \u201cWork-break interventions...\u201d (2019); Chong et al., active microbreaks review (2022); Stanford EHS guidance.'
+  },
+  stillness: {
+    title: 'stillness reminder',
+    short: "Same evidence base as the break reminder \u2014 frequent movement, even briefly, is the well-supported part.",
+    long: "This nudge exists to catch long stretches of not moving at all, even in a fine posture \u2014 holding any one shape rigidly for a long time is itself the thing the research flags, separate from whether that shape looks slouched.",
+    source: 'Source: Cochrane, \u201cWork-break interventions...\u201d (2019); Chong et al., active microbreaks review (2022).'
+  },
+  hydrationTarget: {
+    title: 'daily hydration target',
+    short: '2 litres sits at the lower end of what major health bodies cite \u2014 a reasonable default, but not a precise target everyone should hit exactly.',
+    long: "EFSA's adequate-intake figures are 2.0 L/day for women and 2.5 L/day for men (total water, including food \u2014 food typically supplies 20\u201330% of that). The IOM's figures are higher: 2.7 L/day women, 3.7 L/day men. The famous \u201c8 glasses a day\u201d rule doesn't trace back to a specific trial \u2014 it's a simplification of older guidance that included food-derived water. Thirst and urine colour are generally more reliable day-to-day signals than any fixed number.",
+    source: 'Source: EFSA, \u201cDietary reference values for water\u201d (2010); Institute of Medicine (2004).'
+  }
+};
+
+const infoPopover = document.getElementById('infoPopover');
+const infoPopoverTitle = document.getElementById('infoPopoverTitle');
+const infoPopoverShort = document.getElementById('infoPopoverShort');
+const infoPopoverLong = document.getElementById('infoPopoverLong');
+const infoPopoverSource = document.getElementById('infoPopoverSource');
+const infoPopoverClose = document.getElementById('infoPopoverClose');
+
+function openInfoPopover(iconEl) {
+  const data = RESEARCH_INFO[iconEl.dataset.info];
+  if (!data) return;
+  infoPopoverTitle.textContent = data.title;
+  infoPopoverShort.textContent = data.short;
+  infoPopoverLong.textContent = data.long;
+  infoPopoverSource.textContent = data.source;
+  infoPopover.classList.add('open');
+
+  // Position near the icon, keeping the popover on-screen.
+  const rect = iconEl.getBoundingClientRect();
+  const popW = 320;
+  let left = rect.left;
+  if (left + popW > window.innerWidth - 12) left = window.innerWidth - popW - 12;
+  if (left < 12) left = 12;
+  infoPopover.style.left = left + 'px';
+  infoPopover.style.top = (rect.bottom + 8) + 'px';
+}
+function closeInfoPopover() {
+  infoPopover.classList.remove('open');
+}
+document.querySelectorAll('.info-icon').forEach(icon => {
+  icon.addEventListener('click', e => {
+    e.stopPropagation();
+    const alreadyOpenForThis = infoPopover.classList.contains('open') && infoPopoverTitle.textContent === (RESEARCH_INFO[icon.dataset.info] || {}).title;
+    closeInfoPopover();
+    if (!alreadyOpenForThis) openInfoPopover(icon);
+  });
+});
+infoPopoverClose.addEventListener('click', closeInfoPopover);
+document.addEventListener('click', e => {
+  if (infoPopover.classList.contains('open') && !infoPopover.contains(e.target) && !e.target.classList.contains('info-icon')) {
+    closeInfoPopover();
+  }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeInfoPopover();
 });
