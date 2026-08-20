@@ -1339,7 +1339,6 @@ async function showReport(range) {
   panelAi.classList.remove('active');
 
   const events = await fetchEventsForRange(start, end);
-  const logs = await fetchDailyLogs(start, end);
 
   const dateMap = {};
   let ds0 = start;
@@ -1357,8 +1356,13 @@ async function showReport(range) {
     else if (e.type === 'lateral_right') dateMap[ds].right += dur;
     else if (e.type === 'compression') dateMap[ds].slump += dur;
     else if (e.type === 'lean_in') dateMap[ds].lean += dur;
+    // 'presence' events cover every continuous tracked block (across however many
+    // devices were used that day) and sum correctly since each is its own inserted
+    // row. This replaces the old posture_logs.session_seconds read, which was a
+    // single per-day value that got silently overwritten by whichever device
+    // synced last, undercounting any day where more than one device was used.
+    else if (e.type === 'presence') dateMap[ds].sessionSeconds += dur;
   });
-  logs.forEach(log => { if (dateMap[log.date]) dateMap[log.date].sessionSeconds = log.session_seconds || 0; });
 
   const dates = Object.keys(dateMap).sort();
   const labels = dates.map(ds => new Date(ds + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
@@ -1771,30 +1775,68 @@ function paintSliderTrack(slider) {
   const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
   slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
 }
+
+const TUNING_KEY = 'plumb:tuning';
+function loadTuning() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TUNING_KEY) || 'null');
+    if (!saved) return;
+    if (saved.tolerance !== undefined) toleranceSlider.value = saved.tolerance;
+    if (saved.compression !== undefined) compressionToleranceSlider.value = saved.compression;
+    if (saved.lean !== undefined) leanToleranceSlider.value = saved.lean;
+    if (saved.sustain !== undefined) sustainSlider.value = saved.sustain;
+    if (saved.breakInterval !== undefined) breakSlider.value = saved.breakInterval;
+    if (saved.stillness !== undefined) stillnessSlider.value = saved.stillness;
+  } catch (e) { console.warn(e); }
+}
+function saveTuning() {
+  localStorage.setItem(TUNING_KEY, JSON.stringify({
+    tolerance: toleranceSlider.value,
+    compression: compressionToleranceSlider.value,
+    lean: leanToleranceSlider.value,
+    sustain: sustainSlider.value,
+    breakInterval: breakSlider.value,
+    stillness: stillnessSlider.value
+  }));
+}
+loadTuning();
+toleranceVal.textContent = toleranceSlider.value;
+compressionToleranceVal.textContent = compressionToleranceSlider.value;
+leanToleranceVal.textContent = leanToleranceSlider.value;
+sustainVal.textContent = `${sustainSlider.value}s`;
+breakVal.textContent = `${breakSlider.value} min`;
+stillnessVal.textContent = `${stillnessSlider.value} min`;
+
 [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
 toleranceSlider.addEventListener('input', () => {
   toleranceVal.textContent = toleranceSlider.value;
   paintSliderTrack(toleranceSlider);
+  saveTuning();
 });
 compressionToleranceSlider.addEventListener('input', () => {
   compressionToleranceVal.textContent = compressionToleranceSlider.value;
   paintSliderTrack(compressionToleranceSlider);
+  saveTuning();
 });
 leanToleranceSlider.addEventListener('input', () => {
   leanToleranceVal.textContent = leanToleranceSlider.value;
   paintSliderTrack(leanToleranceSlider);
+  saveTuning();
 });
 sustainSlider.addEventListener('input', () => {
   sustainVal.textContent = `${sustainSlider.value}s`;
   paintSliderTrack(sustainSlider);
+  saveTuning();
 });
 breakSlider.addEventListener('input', () => {
   breakVal.textContent = `${breakSlider.value} min`;
   paintSliderTrack(breakSlider);
   renderBreakGauge();
+  saveTuning();
 });
 stillnessSlider.addEventListener('input', () => {
   stillnessVal.textContent = `${stillnessSlider.value} min`;
   paintSliderTrack(stillnessSlider);
+  saveTuning();
 });
