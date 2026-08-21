@@ -75,6 +75,76 @@ You already pushed the v1 files. For this version:
     can be used to write junk rows, but not to read your data. Low stakes for
     a personal tracker, but worth knowing.
 
+    **Also run this** for `posture_events` (the granular event log behind the
+    report's today-timeline and week/month charts — the app already depends
+    on this table, this was previously missing from setup instructions):
+
+    ```sql
+    create table if not exists posture_events (
+      id bigserial primary key,
+      date text not null,
+      start_time timestamptz,
+      end_time timestamptz,
+      type text,
+      duration_seconds integer default 0,
+      ended_by text,
+      kind text,
+      pre_break_sitting_seconds integer default 0,
+      lateness_seconds integer default 0,
+      created_at timestamptz not null default now()
+    );
+
+    alter table posture_events enable row level security;
+    grant select, insert, update on posture_events to anon, authenticated;
+
+    create policy "anon can read and write events"
+      on posture_events for all
+      to anon
+      using (true)
+      with check (true);
+    ```
+
+    Unlike `posture_logs` above, this one *does* allow `anon` to read —
+    the report modal fetches directly from the browser, so it has to. In
+    practice this means RLS on this whole setup is more "keeps out casual
+    tampering" than "actually private," same honest caveat as below —
+    worth revisiting properly (see Notes).
+
+    **And these two**, added for settings/hydration cross-device sync:
+
+    ```sql
+    create table if not exists app_settings (
+      id integer primary key default 1,
+      tolerance numeric, compression numeric, lean numeric,
+      sustain integer, break_interval integer, stillness integer,
+      hydration_target_ml integer, glass_ml integer, mug_ml integer,
+      can_ml integer, bottle_ml integer,
+      updated_at timestamptz not null default now()
+    );
+    alter table app_settings enable row level security;
+    grant select, insert, update on app_settings to anon, authenticated;
+    create policy "anon can read and write settings"
+      on app_settings for all to anon using (true) with check (true);
+
+    create table if not exists hydration_events (
+      id bigserial primary key,
+      date text not null,
+      logged_at timestamptz not null default now(),
+      volume_ml integer not null,
+      drink_type text
+    );
+    alter table hydration_events enable row level security;
+    grant select, insert, update, delete on hydration_events to anon, authenticated;
+    create policy "anon can read, write, and undo hydration logs"
+      on hydration_events for all to anon using (true) with check (true);
+    ```
+
+    `app_settings` is a single shared row (`id = 1`) — there's no per-user
+    concept yet, so whichever device changes a setting last wins everywhere,
+    which is the correct behavior for a single-person, multi-device setup.
+    `hydration_events` needs `delete` granted specifically so the "undo"
+    button can retract the most recent log.
+
 3. In your project's Settings → API, copy three values: the **Project URL**,
    the **anon public key**, and the **service_role key** (keep this last one
    secret — it bypasses the restrictions above entirely).
