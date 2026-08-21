@@ -249,7 +249,8 @@ async function flushEvents() {
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         Prefer: 'return=minimal'
       },
-      body: JSON.stringify(toSend)
+      body: JSON.stringify(toSend),
+      keepalive: true
     });
 
     if (!res.ok) {
@@ -263,6 +264,52 @@ async function flushEvents() {
 }
 
 function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
+
+// ---- cross-device reconciliation for the live "today" gauges ----
+// Local increments (creditBreakTargetFromSitting, incrementBreaksTaken, logHydration)
+// keep this device responsive instantly and work offline. This periodically pulls the
+// authoritative merged totals from Supabase -- across whichever devices synced today --
+// and overwrites local state with it, the same way the report modal already computes
+// "today" from raw events rather than trusting any single device's running counters.
+async function reconcileTodayFromCloud() {
+  if (!SYNC_CONFIGURED) return;
+  const d = today();
+  try {
+    const [eventsRes, hydrationRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=eq.${d}&select=type,duration_seconds`, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+      }),
+      fetch(`${SUPABASE_URL}/rest/v1/hydration_events?date=eq.${d}&select=volume_ml`, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+      })
+    ]);
+    if (eventsRes.ok) {
+      const events = await eventsRes.json();
+      let taken = 0, breakSeconds = 0, presenceSeconds = 0;
+      events.forEach(e => {
+        const dur = e.duration_seconds || 0;
+        if (e.type === 'break') { taken++; breakSeconds += dur; }
+        else if (e.type === 'presence') presenceSeconds += dur;
+      });
+      const intervalSec = Number(breakSlider.value) * 60;
+      const target = intervalSec > 0 ? Math.floor(presenceSeconds / intervalSec) : 0;
+      breaksTakenToday = taken;
+      breakTargetToday = target;
+      breakMinutesToday = Math.round(breakSeconds / 60);
+      localStorage.setItem(BREAK_TAKEN_KEY_PREFIX + d, String(breaksTakenToday));
+      localStorage.setItem(BREAK_TARGET_KEY_PREFIX + d, String(breakTargetToday));
+      localStorage.setItem(BREAK_MINUTES_KEY_PREFIX + d, String(breakMinutesToday));
+      renderBreakGauge();
+    }
+    if (hydrationRes.ok) {
+      const rows = await hydrationRes.json();
+      const total = rows.reduce((sum, r) => sum + (r.volume_ml || 0), 0);
+      hydrationConsumedMl = total;
+      localStorage.setItem(HYDRATION_LOG_PREFIX + d, String(hydrationConsumedMl));
+      renderHydration();
+    }
+  } catch (err) { console.warn('reconcileTodayFromCloud:', err); }
+}
 
 function addAlertToFeed(type, message) {
   const now = new Date();
@@ -595,21 +642,43 @@ function renderHydration() {
   hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
 }
 
-function logHydration(ml) {
+let lastHydrationEventId = null;
+async function logHydration(ml, drinkType) {
   hydrationConsumedMl += ml;
   hydrationLastClickMl = ml;
   localStorage.setItem(HYDRATION_LOG_PREFIX + today(), String(hydrationConsumedMl));
   renderHydration();
+  lastHydrationEventId = null;
+  if (!SYNC_CONFIGURED) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/hydration_events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'return=representation' },
+      body: JSON.stringify([{ date: today(), volume_ml: ml, drink_type: drinkType || null }])
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const rows = await res.json();
+    if (rows[0]) lastHydrationEventId = rows[0].id;
+  } catch (err) { console.warn('logHydration sync:', err); }
 }
 
-function undoHydration() {
+async function undoHydration() {
   if (!hydrationLastClickMl) return;
   hydrationConsumedMl = Math.max(0, hydrationConsumedMl - hydrationLastClickMl);
   hydrationLastClickMl = 0;
   localStorage.setItem(HYDRATION_LOG_PREFIX + today(), String(hydrationConsumedMl));
   renderHydration();
+  if (SYNC_CONFIGURED && lastHydrationEventId != null) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/hydration_events?id=eq.${lastHydrationEventId}`, {
+        method: 'DELETE',
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+      });
+    } catch (err) { console.warn('undoHydration sync:', err); }
+    lastHydrationEventId = null;
+  }
 }
-Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key])));
+Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key], key)));
 hydrationUndoBtn.addEventListener('click', undoHydration);
 
 hydrationTargetInput.value = hydrationTargetMl;
@@ -617,6 +686,7 @@ hydrationTargetInput.addEventListener('change', () => {
   hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 2000);
   localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl));
   renderHydration();
+  scheduleSettingsPush();
 });
 Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
   input.value = hydrationSizes[key];
@@ -624,6 +694,7 @@ Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
     hydrationSizes[key] = Math.max(10, Number(input.value) || hydrationSizes[key]);
     localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
     hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`;
+    scheduleSettingsPush();
   });
 });
 renderHydration();
@@ -1738,12 +1809,15 @@ function loop() {
 
 // ---- Init ----
 maybeSwitchDay();
+fetchAndApplyAppSettings();
+reconcileTodayFromCloud();
 setInterval(() => {
   if (running) {
     localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   }
   maybeSwitchDay();
   saveStats();
+  reconcileTodayFromCloud();
 }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');
@@ -1789,6 +1863,7 @@ function loadTuning() {
     if (saved.stillness !== undefined) stillnessSlider.value = saved.stillness;
   } catch (e) { console.warn(e); }
 }
+let pushSettingsTimer = null;
 function saveTuning() {
   localStorage.setItem(TUNING_KEY, JSON.stringify({
     tolerance: toleranceSlider.value,
@@ -1798,7 +1873,83 @@ function saveTuning() {
     breakInterval: breakSlider.value,
     stillness: stillnessSlider.value
   }));
+  scheduleSettingsPush();
 }
+
+// ---- app_settings sync: one shared row (id=1), latest change wins everywhere.
+// Unlike posture data, settings are a single "current state" -- overwrite-on-sync
+// is the *correct* pattern here, not a bug. Debounced so dragging a slider doesn't
+// fire a request per frame.
+function scheduleSettingsPush() {
+  if (!SYNC_CONFIGURED) return;
+  clearTimeout(pushSettingsTimer);
+  pushSettingsTimer = setTimeout(pushAppSettings, 600);
+}
+async function pushAppSettings() {
+  if (!SYNC_CONFIGURED) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([{
+        id: 1,
+        tolerance: Number(toleranceSlider.value),
+        compression: Number(compressionToleranceSlider.value),
+        lean: Number(leanToleranceSlider.value),
+        sustain: Number(sustainSlider.value),
+        break_interval: Number(breakSlider.value),
+        stillness: Number(stillnessSlider.value),
+        hydration_target_ml: hydrationTargetMl,
+        glass_ml: hydrationSizes.glass,
+        mug_ml: hydrationSizes.mug,
+        can_ml: hydrationSizes.can,
+        bottle_ml: hydrationSizes.bottle,
+        updated_at: new Date().toISOString()
+      }])
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  } catch (err) { console.warn('pushAppSettings:', err); }
+}
+async function fetchAndApplyAppSettings() {
+  if (!SYNC_CONFIGURED) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?id=eq.1&select=*`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const rows = await res.json();
+    const s = rows[0];
+    if (!s) return; // no remote row yet -- keep local defaults, first push will create it
+    if (s.tolerance != null) toleranceSlider.value = s.tolerance;
+    if (s.compression != null) compressionToleranceSlider.value = s.compression;
+    if (s.lean != null) leanToleranceSlider.value = s.lean;
+    if (s.sustain != null) sustainSlider.value = s.sustain;
+    if (s.break_interval != null) breakSlider.value = s.break_interval;
+    if (s.stillness != null) stillnessSlider.value = s.stillness;
+    if (s.hydration_target_ml != null) { hydrationTargetMl = s.hydration_target_ml; localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl)); }
+    if (s.glass_ml != null) hydrationSizes.glass = s.glass_ml;
+    if (s.mug_ml != null) hydrationSizes.mug = s.mug_ml;
+    if (s.can_ml != null) hydrationSizes.can = s.can_ml;
+    if (s.bottle_ml != null) hydrationSizes.bottle = s.bottle_ml;
+    localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
+    localStorage.setItem(TUNING_KEY, JSON.stringify({
+      tolerance: toleranceSlider.value, compression: compressionToleranceSlider.value, lean: leanToleranceSlider.value,
+      sustain: sustainSlider.value, breakInterval: breakSlider.value, stillness: stillnessSlider.value
+    }));
+    // Repaint everything that reads these values so a remote-newer setting shows immediately.
+    toleranceVal.textContent = toleranceSlider.value;
+    compressionToleranceVal.textContent = compressionToleranceSlider.value;
+    leanToleranceVal.textContent = leanToleranceSlider.value;
+    sustainVal.textContent = `${sustainSlider.value}s`;
+    breakVal.textContent = `${breakSlider.value} min`;
+    stillnessVal.textContent = `${stillnessSlider.value} min`;
+    hydrationTargetInput.value = hydrationTargetMl;
+    Object.entries(hydrationSizeInputs).forEach(([key, input]) => { input.value = hydrationSizes[key]; hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`; });
+    [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
+    renderHydration();
+  } catch (err) { console.warn('fetchAndApplyAppSettings:', err); }
+}
+
 loadTuning();
 toleranceVal.textContent = toleranceSlider.value;
 compressionToleranceVal.textContent = compressionToleranceSlider.value;
