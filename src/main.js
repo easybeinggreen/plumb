@@ -6,6 +6,20 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SYNC_CONFIGURED = SUPABASE_URL.startsWith('http') && !!SUPABASE_ANON_KEY;
 
+// ---- User identity ----
+// Not real auth -- just a per-device label so two people using the same
+// browser (or the same Supabase project) don't see or overwrite each other's
+// data. Nothing here is a password or a security boundary; see README.
+// The picker overlay defaults to visible in the HTML itself (avoids a flash
+// of the real app before JS can hide it). If a name is already stored, hide
+// it immediately; otherwise wire it up and leave it blocking the page.
+let currentUserId = localStorage.getItem('plumb:userId') || '';
+if (currentUserId) {
+  document.getElementById('userModalOverlay').classList.remove('open');
+} else {
+  showUserPicker();
+}
+
 // ---- DOM references (all at top) ----
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
@@ -132,16 +146,18 @@ let lastFinalizedSittingSeconds = 0;
 const BREAK_MIN_SECONDS = 60;
 const BREAK_MAX_SECONDS = 60 * 60;
 
-const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
-const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
-const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
-const PRESENCE_START_KEY = 'plumb:presenceStart';
-const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
+// Per-user prefix -- so two names on the same device/browser never see each
+// other's cached numbers. Voice and camera choice deliberately stay
+// unprefixed below: those are device properties, not person properties.
+const BREAK_TARGET_KEY_PREFIX = `plumb:${currentUserId}:breakTarget:`;
+const BREAK_TAKEN_KEY_PREFIX = `plumb:${currentUserId}:breakTaken:`;
+const BREAK_MINUTES_KEY_PREFIX = `plumb:${currentUserId}:breakMinutes:`;
+const PRESENCE_START_KEY = `plumb:${currentUserId}:presenceStart`;
+const LAST_SESSION_END_KEY = `plumb:${currentUserId}:lastSessionEnd`;
 
-const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
-const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
-const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
-const LOG_KEY = (d) => `plumb:${d}`;
+const HYDRATION_TARGET_KEY = `plumb:${currentUserId}:hydrationTargetMl`;
+const HYDRATION_SIZES_KEY = `plumb:${currentUserId}:hydrationSizesMl`;
+const HYDRATION_LOG_PREFIX = `plumb:${currentUserId}:hydrationMl:`;
 
 function dateForTimestamp(ms) {
   const d = new Date(ms);
@@ -179,25 +195,6 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-function loadTodayStats() {
-  const raw = localStorage.getItem(LOG_KEY(today()));
-  if (raw) {
-    try {
-      const s = JSON.parse(raw);
-      if (s.date !== today()) throw new Error('stale');
-      return s;
-    } catch (e) {}
-  }
-  return { date: today(), sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
-}
-
-let stats = loadTodayStats();
-
-function saveStatsLocal() {
-  stats.breaksTaken = breaksTakenToday;
-  localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
-}
-
 function setSyncStatus(mode, text) {
   syncDot.classList.remove('ok', 'err');
   if (mode) syncDot.classList.add(mode);
@@ -210,24 +207,12 @@ async function mergeRemoteStats() {
   await reconcileTodayFromCloud();
 }
 
-async function syncToSupabase() {
-  if (!SYNC_CONFIGURED) return;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify([{ date: stats.date, session_seconds: Math.round(stats.sessionSeconds), slouch_seconds: Math.round(stats.slouchSeconds), posture_nudges: stats.postureNudges, break_nudges: stats.breakNudges, breaks_taken: breaksTakenToday, updated_at: new Date().toISOString() }]),
-      keepalive: true
-    });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    setSyncStatus('ok', `Cloud sync: last synced ${new Date().toLocaleTimeString()}`);
-  } catch (err) { console.warn('syncToSupabase:', err); setSyncStatus('err', err.message); }
-}
 
 async function flushEvents() {
   if (!SYNC_CONFIGURED || eventBuffer.length === 0) return;
 
   const toSend = eventBuffer.map(ev => ({
+    user_id: currentUserId,
     date: ev.date || null,
     start_time: ev.start_time || null,
     end_time: ev.end_time || null,
@@ -258,14 +243,17 @@ async function flushEvents() {
     if (!res.ok) {
       console.error('Event upload:', res.status, await res.text());
       eventBuffer.push(...toSend);
+      setSyncStatus('err', `Cloud sync: ${res.status}`);
+    } else {
+      setSyncStatus('ok', `Cloud sync: last synced ${new Date().toLocaleTimeString()}`);
     }
   } catch (err) {
     console.error('Event upload:', err);
     eventBuffer.push(...toSend);
+    setSyncStatus('err', err.message);
   }
 }
 
-function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
 
 // ---- cross-device reconciliation for the live "today" gauges ----
 // Local increments (creditBreakTargetFromSitting, incrementBreaksTaken, logHydration)
@@ -278,21 +266,20 @@ async function reconcileTodayFromCloud() {
   const d = today();
   try {
     const [eventsRes, hydrationRes] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=eq.${d}&select=type,duration_seconds`, {
+      fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=eq.${d}&user_id=eq.${encodeURIComponent(currentUserId)}&select=type,duration_seconds`, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
       }),
-      fetch(`${SUPABASE_URL}/rest/v1/hydration_events?date=eq.${d}&select=volume_ml`, {
+      fetch(`${SUPABASE_URL}/rest/v1/hydration_events?date=eq.${d}&user_id=eq.${encodeURIComponent(currentUserId)}&select=volume_ml`, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
       })
     ]);
     if (eventsRes.ok) {
       const events = await eventsRes.json();
-      let taken = 0, breakSeconds = 0, presenceSeconds = 0, slouchSeconds = 0;
+      let taken = 0, breakSeconds = 0, presenceSeconds = 0;
       events.forEach(e => {
         const dur = e.duration_seconds || 0;
         if (e.type === 'break') { taken++; breakSeconds += dur; }
         else if (e.type === 'presence') presenceSeconds += dur;
-        else if (['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) slouchSeconds += dur;
       });
       const intervalSec = Number(breakSlider.value) * 60;
       const target = intervalSec > 0 ? Math.floor(presenceSeconds / intervalSec) : 0;
@@ -303,19 +290,6 @@ async function reconcileTodayFromCloud() {
       localStorage.setItem(BREAK_TARGET_KEY_PREFIX + d, String(breakTargetToday));
       localStorage.setItem(BREAK_MINUTES_KEY_PREFIX + d, String(breakMinutesToday));
       renderBreakGauge();
-
-      // stats.sessionSeconds/slouchSeconds feed posture_logs. `events` here is
-      // every device's *finalized* chunks for today -- it can't include the
-      // block currently in progress on this device (that only becomes an
-      // event once it ends). So: remote totals + this device's own still-open
-      // chunk, computed locally. That's the fix for the same-day multi-device
-      // overwrite bug -- previously each device just trusted its own running
-      // total and clobbered the other's on every sync.
-      const openPresenceSec = presenceStartedAt ? (Date.now() - presenceStartedAt) / 1000 : 0;
-      const openSlouchSec = slouchStartedAt ? (Date.now() - slouchStartedAt) / 1000 : 0;
-      stats.sessionSeconds = presenceSeconds + openPresenceSec;
-      stats.slouchSeconds = slouchSeconds + openSlouchSec;
-      saveStatsLocal();
     }
     if (hydrationRes.ok) {
       const rows = await hydrationRes.json();
@@ -676,7 +650,7 @@ async function logHydration(ml, drinkType) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/hydration_events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'return=representation' },
-      body: JSON.stringify([{ date: today(), volume_ml: ml, drink_type: drinkType || null }])
+      body: JSON.stringify([{ user_id: currentUserId, date: today(), volume_ml: ml, drink_type: drinkType || null }])
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const rows = await res.json();
@@ -1148,7 +1122,7 @@ function stopCamera() {
 
   if (breakActive) endBreak();
   stopBgSilentAudio();
-  saveStats();
+  flushEvents();
 
   closeTrackingPip();
 }
@@ -1178,7 +1152,54 @@ cameraSelect.addEventListener('change', () => {
   if (running) { stopCamera(); startCamera(); }
 });
 
-gearBtn.addEventListener('click', () => settingsModalOverlay.classList.add('open'));
+gearBtn.addEventListener('click', () => {
+  const label = document.getElementById('currentUserLabel');
+  if (label) label.textContent = currentUserId;
+  settingsModalOverlay.classList.add('open');
+});
+
+document.getElementById('switchUserBtn').addEventListener('click', () => {
+  localStorage.removeItem('plumb:userId');
+  location.reload();
+});
+
+// Not real auth -- see the comment at the top of the file. A name is just
+// stashed in localStorage; requestWindow() etc. never see it. Reloads after
+// submit so every key/query built from currentUserId picks it up cleanly,
+// rather than threading a "no user yet" state through the whole file.
+function showUserPicker() {
+  const overlay = document.getElementById('userModalOverlay');
+  const input = document.getElementById('userNameInput');
+  const knownList = document.getElementById('userKnownList');
+  const continueBtn = document.getElementById('userContinueBtn');
+
+  const known = JSON.parse(localStorage.getItem('plumb:knownUsers') || '[]');
+  knownList.hidden = known.length === 0;
+  knownList.innerHTML = '';
+  known.forEach(name => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-compact';
+    btn.textContent = name;
+    btn.addEventListener('click', () => submit(name));
+    knownList.appendChild(btn);
+  });
+
+  function submit(name) {
+    name = name.trim();
+    if (!name) { input.focus(); return; }
+    const knownSet = new Set(known);
+    knownSet.add(name);
+    localStorage.setItem('plumb:knownUsers', JSON.stringify([...knownSet]));
+    localStorage.setItem('plumb:userId', name);
+    location.reload();
+  }
+
+  continueBtn.addEventListener('click', () => submit(input.value));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(input.value); });
+  overlay.classList.add('open');
+  input.focus();
+}
 settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
 function setStatus(mode, text, caption) {
@@ -1228,11 +1249,12 @@ function updateLiveMetrics(lateral, compression, lean, calibrated) {
   lmLean.classList.toggle('over', lean > leanTol);
 }
 
+let lastCheckedDate = today();
 function maybeSwitchDay() {
   const cur = today();
-  if (stats.date !== cur) {
-    saveStats();
-    stats = { date: cur, sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
+  if (lastCheckedDate !== cur) {
+    lastCheckedDate = cur;
+    flushEvents();
     breaksTakenToday = 0;
     breakTargetToday = 0;
     breakMinutesToday = 0;
@@ -1514,7 +1536,7 @@ function renderTodayTimeline(events) {
 async function fetchEventsForRange(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=gte.${start}&date=lte.${end}&order=date.asc,start_time.asc`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=gte.${start}&date=lte.${end}&user_id=eq.${encodeURIComponent(currentUserId)}&order=date.asc,start_time.asc`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
     if (!res.ok) throw new Error('fetch');
@@ -1522,16 +1544,6 @@ async function fetchEventsForRange(start, end) {
   } catch (e) { console.warn(e); return []; }
 }
 
-async function fetchDailyLogs(start, end) {
-  if (!SYNC_CONFIGURED) return [];
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs?date=gte.${start}&date=lte.${end}&order=date.asc`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (!res.ok) throw new Error('fetch');
-    return await res.json();
-  } catch (e) { console.warn(e); return []; }
-}
 
 async function showReport(range) {
   let start, end;
@@ -1812,8 +1824,6 @@ function loop() {
       return;
     }
 
-    stats.sessionSeconds += dt;
-
     const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
     const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
     const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
@@ -1867,7 +1877,6 @@ function loop() {
       }
 
       if (isSlouching) {
-        stats.slouchSeconds += dt;
         if (!slouchStartedAt) {
           slouchStartedAt = Date.now();
           slouchType = currentType;
@@ -1888,7 +1897,6 @@ function loop() {
           else { phrase = LEAN_PHRASES[leanIdx % LEAN_PHRASES.length]; leanIdx++; }
           speak(phrase);
           addAlertToFeed(currentType, phrase);
-          stats.postureNudges++;
           lastPostureNudgeAt = Date.now();
         }
       } else {
@@ -1905,7 +1913,6 @@ function loop() {
         breakIdx++;
         speak(p);
         addAlertToFeed('break_prompt', p);
-        stats.breakNudges++;
         lastBreakNudgeAt = Date.now();
       }
     }
@@ -1948,7 +1955,7 @@ setInterval(() => {
     localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   }
   maybeSwitchDay();
-  saveStats();
+  flushEvents();
   reconcileTodayFromCloud();
 }, 10000);
 window.addEventListener('beforeunload', () => {
@@ -1958,7 +1965,7 @@ window.addEventListener('beforeunload', () => {
     slouchStartedAt = null;
   }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
-  saveStats();
+  flushEvents();
 });
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
@@ -1982,7 +1989,7 @@ function paintSliderTrack(slider) {
   slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
 }
 
-const TUNING_KEY = 'plumb:tuning';
+const TUNING_KEY = `plumb:${currentUserId}:tuning`;
 function loadTuning() {
   try {
     const saved = JSON.parse(localStorage.getItem(TUNING_KEY) || 'null');
@@ -2024,7 +2031,7 @@ async function pushAppSettings() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify([{
-        id: 1,
+        user_id: currentUserId,
         tolerance: Number(toleranceSlider.value),
         compression: Number(compressionToleranceSlider.value),
         lean: Number(leanToleranceSlider.value),
@@ -2045,7 +2052,7 @@ async function pushAppSettings() {
 async function fetchAndApplyAppSettings() {
   if (!SYNC_CONFIGURED) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?id=eq.1&select=*`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?user_id=eq.${encodeURIComponent(currentUserId)}&select=*`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);

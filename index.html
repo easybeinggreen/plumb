@@ -415,6 +415,8 @@
     <button class="modal-close" id="settingsModalClose">&times;</button>
     <h2 class="modal-title">settings</h2>
 
+    <div class="hydration-size-row"><label>signed in as <b id="currentUserLabel" style="color:var(--ink);"></b></label><button id="switchUserBtn" class="btn-compact" type="button">switch user</button></div>
+
     <h3 class="settings-section-title">posture</h3>
     <div class="slider-row">
       <label><span class="label-left">side-to-side tolerance <button class="info-icon" type="button" data-info="tolerance" aria-label="why this default">i</button></span> <span class="v" id="toleranceVal">0.20</span></label>
@@ -462,6 +464,19 @@
       <label>background nudges</label>
       <button id="bgAudioBtn" class="switch" aria-pressed="false" title="keep nudges running when this tab is hidden"></button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay open" id="userModalOverlay">
+  <div class="modal" style="max-width: 360px;">
+    <h2 class="modal-title">who's using this?</h2>
+    <p style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;">
+      just a name so your stats don't get mixed up with anyone else's on this device — not a password, not private.
+    </p>
+    <div id="userKnownList" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;" hidden></div>
+    <input type="text" id="userNameInput" placeholder="your name" autocomplete="off"
+      style="width: 100%; box-sizing: border-box; font-family: var(--sans); font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); margin-bottom: 12px;" />
+    <button id="userContinueBtn" class="btn" style="width: 100%; background: var(--ink); color: var(--panel); border-color: var(--ink);">continue</button>
   </div>
 </div>
 
