@@ -6,11 +6,27 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const SYNC_CONFIGURED = SUPABASE_URL.startsWith('http') && !!SUPABASE_ANON_KEY;
 
+// ---- User identity ----
+// Not real auth -- just a per-device label so two people using the same
+// browser (or the same Supabase project) don't see or overwrite each other's
+// data. Nothing here is a password or a security boundary; see README.
+// The picker overlay defaults to visible in the HTML itself (avoids a flash
+// of the real app before JS can hide it). If a name is already stored, hide
+// it immediately; otherwise wire it up and leave it blocking the page.
+let currentUserId = localStorage.getItem('plumb:userId') || '';
+if (currentUserId) {
+  document.getElementById('userModalOverlay').classList.remove('open');
+} else {
+  showUserPicker();
+}
+
 // ---- DOM references (all at top) ----
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
 const placeholder = document.getElementById('placeholder');
+const alignBadge = document.getElementById('alignBadge');
+const calibrateFlash = document.getElementById('calibrateFlash');
 
 const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
@@ -96,6 +112,7 @@ let aiChart = null;
 // ---- State ----
 let landmarker = null;
 let running = false;
+let cameraStarting = false; // true only during the pre-PiP alignment countdown
 let rafId = null;
 let voiceNudgesEnabled = true;
 let bgAudioEnabled = false;
@@ -129,16 +146,18 @@ let lastFinalizedSittingSeconds = 0;
 const BREAK_MIN_SECONDS = 60;
 const BREAK_MAX_SECONDS = 60 * 60;
 
-const BREAK_TARGET_KEY_PREFIX = 'plumb:breakTarget:';
-const BREAK_TAKEN_KEY_PREFIX = 'plumb:breakTaken:';
-const BREAK_MINUTES_KEY_PREFIX = 'plumb:breakMinutes:';
-const PRESENCE_START_KEY = 'plumb:presenceStart';
-const LAST_SESSION_END_KEY = 'plumb:lastSessionEnd';
+// Per-user prefix -- so two names on the same device/browser never see each
+// other's cached numbers. Voice and camera choice deliberately stay
+// unprefixed below: those are device properties, not person properties.
+const BREAK_TARGET_KEY_PREFIX = `plumb:${currentUserId}:breakTarget:`;
+const BREAK_TAKEN_KEY_PREFIX = `plumb:${currentUserId}:breakTaken:`;
+const BREAK_MINUTES_KEY_PREFIX = `plumb:${currentUserId}:breakMinutes:`;
+const PRESENCE_START_KEY = `plumb:${currentUserId}:presenceStart`;
+const LAST_SESSION_END_KEY = `plumb:${currentUserId}:lastSessionEnd`;
 
-const HYDRATION_TARGET_KEY = 'plumb:hydrationTargetMl';
-const HYDRATION_SIZES_KEY = 'plumb:hydrationSizesMl';
-const HYDRATION_LOG_PREFIX = 'plumb:hydrationMl:';
-const LOG_KEY = (d) => `plumb:${d}`;
+const HYDRATION_TARGET_KEY = `plumb:${currentUserId}:hydrationTargetMl`;
+const HYDRATION_SIZES_KEY = `plumb:${currentUserId}:hydrationSizesMl`;
+const HYDRATION_LOG_PREFIX = `plumb:${currentUserId}:hydrationMl:`;
 
 function dateForTimestamp(ms) {
   const d = new Date(ms);
@@ -176,25 +195,6 @@ const PIPER_WASM_PATHS = {
   piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm'
 };
 
-function loadTodayStats() {
-  const raw = localStorage.getItem(LOG_KEY(today()));
-  if (raw) {
-    try {
-      const s = JSON.parse(raw);
-      if (s.date !== today()) throw new Error('stale');
-      return s;
-    } catch (e) {}
-  }
-  return { date: today(), sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
-}
-
-let stats = loadTodayStats();
-
-function saveStatsLocal() {
-  stats.breaksTaken = breaksTakenToday;
-  localStorage.setItem(LOG_KEY(stats.date), JSON.stringify(stats));
-}
-
 function setSyncStatus(mode, text) {
   syncDot.classList.remove('ok', 'err');
   if (mode) syncDot.classList.add(mode);
@@ -204,28 +204,15 @@ if (!SYNC_CONFIGURED) setSyncStatus('', 'Cloud sync: not configured');
 else setSyncStatus('', 'Cloud sync: ready');
 
 async function mergeRemoteStats() {
-  // Placeholder – daily aggregates will be computed from events later.
-  return;
+  await reconcileTodayFromCloud();
 }
 
-async function syncToSupabase() {
-  if (!SYNC_CONFIGURED) return;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify([{ date: stats.date, session_seconds: Math.round(stats.sessionSeconds), slouch_seconds: Math.round(stats.slouchSeconds), posture_nudges: stats.postureNudges, break_nudges: stats.breakNudges, breaks_taken: breaksTakenToday, updated_at: new Date().toISOString() }]),
-      keepalive: true
-    });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    setSyncStatus('ok', `Cloud sync: last synced ${new Date().toLocaleTimeString()}`);
-  } catch (err) { console.warn('syncToSupabase:', err); setSyncStatus('err', err.message); }
-}
 
 async function flushEvents() {
   if (!SYNC_CONFIGURED || eventBuffer.length === 0) return;
 
   const toSend = eventBuffer.map(ev => ({
+    user_id: currentUserId,
     date: ev.date || null,
     start_time: ev.start_time || null,
     end_time: ev.end_time || null,
@@ -256,14 +243,17 @@ async function flushEvents() {
     if (!res.ok) {
       console.error('Event upload:', res.status, await res.text());
       eventBuffer.push(...toSend);
+      setSyncStatus('err', `Cloud sync: ${res.status}`);
+    } else {
+      setSyncStatus('ok', `Cloud sync: last synced ${new Date().toLocaleTimeString()}`);
     }
   } catch (err) {
     console.error('Event upload:', err);
     eventBuffer.push(...toSend);
+    setSyncStatus('err', err.message);
   }
 }
 
-function saveStats() { saveStatsLocal(); syncToSupabase(); flushEvents(); }
 
 // ---- cross-device reconciliation for the live "today" gauges ----
 // Local increments (creditBreakTargetFromSitting, incrementBreaksTaken, logHydration)
@@ -276,10 +266,10 @@ async function reconcileTodayFromCloud() {
   const d = today();
   try {
     const [eventsRes, hydrationRes] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=eq.${d}&select=type,duration_seconds`, {
+      fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=eq.${d}&user_id=eq.${encodeURIComponent(currentUserId)}&select=type,duration_seconds`, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
       }),
-      fetch(`${SUPABASE_URL}/rest/v1/hydration_events?date=eq.${d}&select=volume_ml`, {
+      fetch(`${SUPABASE_URL}/rest/v1/hydration_events?date=eq.${d}&user_id=eq.${encodeURIComponent(currentUserId)}&select=volume_ml`, {
         headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
       })
     ]);
@@ -611,11 +601,17 @@ function populateVoiceList() {
   }
   const hasStoredChoice = !!localStorage.getItem('plumb:voice');
   const voicesStillLoading = window.speechSynthesis && window.speechSynthesis.getVoices().length === 0;
-  if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
+  const optionExists = (val) => [...voiceSelect.options].some(o => o.value === val);
+  // currentVal only counts as "already resolved" if it matches currentVoiceId --
+  // i.e. we deliberately picked it in an earlier pass. Otherwise it's just the
+  // browser's incidental first-<option> auto-select (always a Piper voice,
+  // since that group renders before browser voices are even loaded), which
+  // must never be allowed to pre-empt the real default below.
+  if (currentVal && currentVal === currentVoiceId && optionExists(currentVal)) {
     voiceSelect.value = currentVal;
-  } else if (hasStoredChoice && currentVoiceId && [...voiceSelect.options].some(o => o.value === currentVoiceId)) {
+  } else if (hasStoredChoice && currentVoiceId && optionExists(currentVoiceId)) {
     voiceSelect.value = currentVoiceId;
-  } else if (!hasStoredChoice && [...voiceSelect.options].some(o => o.value === DEFAULT_VOICE_ID)) {
+  } else if (!hasStoredChoice && optionExists(DEFAULT_VOICE_ID)) {
     currentVoiceId = DEFAULT_VOICE_ID;
     voiceSelect.value = currentVoiceId;
     localStorage.setItem('plumb:voice', currentVoiceId);
@@ -654,7 +650,7 @@ async function logHydration(ml, drinkType) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/hydration_events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'return=representation' },
-      body: JSON.stringify([{ date: today(), volume_ml: ml, drink_type: drinkType || null }])
+      body: JSON.stringify([{ user_id: currentUserId, date: today(), volume_ml: ml, drink_type: drinkType || null }])
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const rows = await res.json();
@@ -701,12 +697,24 @@ renderHydration();
 
 function renderBreakGauge(liveContinuousMin = 0) {
   const intervalMin = Number(breakSlider.value);
-  const liveExtra = Math.floor(liveContinuousMin / intervalMin);
-  const target = breakTargetToday + liveExtra;
-  const pct = target > 0 ? Math.max(0, Math.min(100, (breaksTakenToday / target) * 100)) : 0;
-  breakFill.style.height = pct + '%';
-  breakTakenEl.textContent = breaksTakenToday;
-  breakTargetEl.textContent = target;
+  if (breakActive) {
+    breakFill.style.height = '0%';
+    breakTakenEl.textContent = 'on a break';
+    breakTargetEl.textContent = '';
+  } else {
+    const pct = intervalMin > 0 ? Math.max(0, Math.min(100, (liveContinuousMin / intervalMin) * 100)) : 0;
+    breakFill.style.height = pct + '%';
+    const remainingMin = Math.max(0, intervalMin - liveContinuousMin);
+    if (remainingMin <= 0) {
+      breakTakenEl.textContent = 'break due';
+      breakTargetEl.textContent = '';
+    } else {
+      const mm = Math.floor(remainingMin);
+      const ss = Math.round((remainingMin - mm) * 60);
+      breakTakenEl.textContent = `${mm}:${String(ss).padStart(2, '0')}`;
+      breakTargetEl.textContent = 'to next break';
+    }
+  }
   breakMinutesEl.textContent = breakMinutesToday;
 }
 renderBreakGauge();
@@ -775,6 +783,14 @@ const STILLNESS_PHRASES = ["You've held the same shape a while — shift positio
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
+function drawPoseDots(points) {
+  ctx.fillStyle = 'rgba(44,110,142,0.9)';
+  points.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+}
 function shoulderWidthOf(lSh, rSh) { return Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001; }
 function neckCompressionRatio(earMid, shMid, lSh, rSh) {
   const gap = Math.max(shMid.y - earMid.y, 0.0001);
@@ -810,7 +826,13 @@ let originalStatusNextSibling = null;
 let originalVideoParent = null;
 let originalVideoNextSibling = null;
 
-async function openTrackingPip() {
+// Split in two because documentPictureInPicture.requestWindow() requires a
+// live user gesture -- it must fire right on the "start camera" click, before
+// the alignment countdown eats that permission window. Moving the actual
+// video/statusCard elements into the (already-open) PiP window is plain DOM
+// work and has no such deadline, so that part happens later, once the
+// countdown finishes -- giving one automatic pop-out with no second click.
+async function requestPipWindow() {
   if (!('documentPictureInPicture' in window)) return false;
 
   try {
@@ -820,11 +842,6 @@ async function openTrackingPip() {
     trackingPipWindow = null;
     return false;
   }
-
-  originalStatusParent = statusCard.parentElement;
-  originalStatusNextSibling = statusCard.nextSibling;
-  originalVideoParent = video.parentElement;
-  originalVideoNextSibling = video.nextSibling;
 
   trackingPipWindow.document.title = 'plumb';
   trackingPipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
@@ -840,6 +857,32 @@ async function openTrackingPip() {
   trackingPipWindow.document.body.style.justifyContent = 'center';
   trackingPipWindow.document.body.style.height = '100vh';
   trackingPipWindow.document.body.style.padding = '8px';
+  trackingPipWindow.document.body.style.color = 'var(--ink-soft)';
+  trackingPipWindow.document.body.style.fontFamily = 'Nunito, sans-serif';
+  trackingPipWindow.document.body.style.fontSize = '13px';
+  trackingPipWindow.document.body.style.textAlign = 'center';
+  trackingPipWindow.document.body.textContent = 'getting ready…';
+
+  trackingPipWindow.addEventListener('pagehide', () => {
+    if (running) {
+      stopCamera();
+    } else {
+      closeTrackingPip();
+    }
+  }, { once: true });
+
+  return true;
+}
+
+function movePipContent() {
+  if (!trackingPipWindow || trackingPipWindow.closed) return false;
+
+  trackingPipWindow.document.body.textContent = '';
+
+  originalStatusParent = statusCard.parentElement;
+  originalStatusNextSibling = statusCard.nextSibling;
+  originalVideoParent = video.parentElement;
+  originalVideoNextSibling = video.nextSibling;
 
   statusCard.classList.add('pip-mode');
   trackingPipWindow.document.body.appendChild(statusCard);
@@ -858,14 +901,6 @@ async function openTrackingPip() {
   overlay.style.opacity = '0';
   trackingPipWindow.document.body.appendChild(video);
   trackingPipWindow.document.body.appendChild(overlay);
-
-  trackingPipWindow.addEventListener('pagehide', () => {
-    if (running) {
-      stopCamera();
-    } else {
-      closeTrackingPip();
-    }
-  }, { once: true });
 
   return true;
 }
@@ -924,7 +959,23 @@ function nextFrame() {
     : requestAnimationFrame(loop);
 }
 
+// Live pose dots during the alignment countdown, so there's actually
+// something to align by -- detection only, no presence/slouch/stats side
+// effects (those don't start until `running` is true after the countdown).
+let alignPreviewActive = false;
+function alignPreviewFrame() {
+  if (!alignPreviewActive) return;
+  const result = landmarker.detectForVideo(video, performance.now());
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    drawPoseDots([lm[7], lm[8], lm[11], lm[12]]);
+  }
+  requestAnimationFrame(alignPreviewFrame);
+}
+
 async function startCamera() {
+  cameraStarting = true;
   cameraToggleBtn.textContent = 'loading…';
   cameraToggleBtn.disabled = true;
   try {
@@ -940,8 +991,48 @@ async function startCamera() {
     await video.play();
     populateCameraList();
 
-    const pipOpened = await openTrackingPip();
+    cameraToggleBtn.textContent = 'stop camera';
+    cameraToggleBtn.classList.remove('start-camera');
+    cameraToggleBtn.classList.add('stop-camera');
+    cameraToggleBtn.disabled = false;
 
+    // Request the PiP window right now, on this click's still-live user
+    // gesture -- requestWindow() refuses to open without one, and that
+    // permission doesn't survive the countdown below. The window opens (near-)
+    // empty; the actual video only moves into it once the countdown ends.
+    const pipRequested = await requestPipWindow();
+
+    // Give a look at full-size, un-shrunk, un-dimmed video before it moves
+    // into the small PiP window -- otherwise framing/alignment problems are
+    // invisible until you're already tracking in a 160x120 popup. Live pose
+    // dots run so there's something to actually align by.
+    placeholder.style.display = 'none';
+    alignBadge.hidden = false;
+    alignPreviewActive = true;
+    requestAnimationFrame(alignPreviewFrame);
+
+    // Calibration only needs the landmarker and a live frame -- both already
+    // true here -- so let it happen as soon as you're in frame, not gated
+    // behind the alignment countdown. If you already calibrated by the time
+    // the countdown ends, none of this touches that state.
+    calibrateBtn.disabled = false;
+    if (baselineLateral === null) {
+      calibrateBtn.textContent = 'calibrate posture';
+      calibrateBtn.classList.add('needs-calibration');
+      calibrateBtn.classList.remove('is-confirmed');
+      calibrateFlash.hidden = false;
+    }
+
+    const ALIGN_SECONDS = 10;
+    for (let s = ALIGN_SECONDS; s > 0; s--) {
+      alignBadge.textContent = `tracking starts in ${s}s`;
+      await new Promise(r => setTimeout(r, 1000));
+      if (!video.srcObject) { cameraStarting = false; alignPreviewActive = false; alignBadge.hidden = true; return; } // stopped during the alignment window
+    }
+    alignPreviewActive = false;
+    alignBadge.hidden = true;
+
+    const pipOpened = pipRequested && movePipContent();
     if (pipOpened) {
       placeholder.style.display = 'flex';
       placeholder.textContent = 'tracking in popup — leave it open';
@@ -950,11 +1041,7 @@ async function startCamera() {
     }
 
     running = true;
-    cameraToggleBtn.textContent = 'stop camera';
-    cameraToggleBtn.classList.remove('start-camera');
-    cameraToggleBtn.classList.add('stop-camera');
-    cameraToggleBtn.disabled = false;
-    calibrateBtn.disabled = false;
+    cameraStarting = false;
     breakToggleBtn.disabled = false;
     lastFrameTime = performance.now();
 await mergeRemoteStats();
@@ -975,6 +1062,7 @@ logStartupGap();
 
     nextFrame();
   } catch (err) {
+    cameraStarting = false;
     placeholder.textContent = `camera error: ${err.message}`;
     cameraToggleBtn.textContent = 'start camera';
     cameraToggleBtn.classList.add('start-camera');
@@ -1022,14 +1110,19 @@ function stopCamera() {
 
   calibrateBtn.disabled = true;
   breakToggleBtn.disabled = true;
-  calibrateBtn.textContent = 'recalibrate posture';
-  calibrateBtn.classList.remove('is-confirmed');
+  // A calibrated baseline persists across a stop/restart in this tab (no
+  // need to redo it every time you toggle the camera), so reflect that in
+  // the button instead of blanking it back to an unstyled "not done" look.
+  calibrateBtn.textContent = baselineLateral === null ? 'calibrate posture' : 'recalibrate posture';
+  calibrateBtn.classList.toggle('is-confirmed', baselineLateral !== null);
+  calibrateBtn.classList.remove('needs-calibration');
+  calibrateFlash.hidden = true;
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 
   if (breakActive) endBreak();
   stopBgSilentAudio();
-  saveStats();
+  flushEvents();
 
   closeTrackingPip();
 }
@@ -1059,7 +1152,54 @@ cameraSelect.addEventListener('change', () => {
   if (running) { stopCamera(); startCamera(); }
 });
 
-gearBtn.addEventListener('click', () => settingsModalOverlay.classList.add('open'));
+gearBtn.addEventListener('click', () => {
+  const label = document.getElementById('currentUserLabel');
+  if (label) label.textContent = currentUserId;
+  settingsModalOverlay.classList.add('open');
+});
+
+document.getElementById('switchUserBtn').addEventListener('click', () => {
+  localStorage.removeItem('plumb:userId');
+  location.reload();
+});
+
+// Not real auth -- see the comment at the top of the file. A name is just
+// stashed in localStorage; requestWindow() etc. never see it. Reloads after
+// submit so every key/query built from currentUserId picks it up cleanly,
+// rather than threading a "no user yet" state through the whole file.
+function showUserPicker() {
+  const overlay = document.getElementById('userModalOverlay');
+  const input = document.getElementById('userNameInput');
+  const knownList = document.getElementById('userKnownList');
+  const continueBtn = document.getElementById('userContinueBtn');
+
+  const known = JSON.parse(localStorage.getItem('plumb:knownUsers') || '[]');
+  knownList.hidden = known.length === 0;
+  knownList.innerHTML = '';
+  known.forEach(name => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-compact';
+    btn.textContent = name;
+    btn.addEventListener('click', () => submit(name));
+    knownList.appendChild(btn);
+  });
+
+  function submit(name) {
+    name = name.trim();
+    if (!name) { input.focus(); return; }
+    const knownSet = new Set(known);
+    knownSet.add(name);
+    localStorage.setItem('plumb:knownUsers', JSON.stringify([...knownSet]));
+    localStorage.setItem('plumb:userId', name);
+    location.reload();
+  }
+
+  continueBtn.addEventListener('click', () => submit(input.value));
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(input.value); });
+  overlay.classList.add('open');
+  input.focus();
+}
 settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
 function setStatus(mode, text, caption) {
@@ -1109,11 +1249,12 @@ function updateLiveMetrics(lateral, compression, lean, calibrated) {
   lmLean.classList.toggle('over', lean > leanTol);
 }
 
+let lastCheckedDate = today();
 function maybeSwitchDay() {
   const cur = today();
-  if (stats.date !== cur) {
-    saveStats();
-    stats = { date: cur, sessionSeconds: 0, slouchSeconds: 0, postureNudges: 0, breakNudges: 0, breaksTaken: 0 };
+  if (lastCheckedDate !== cur) {
+    lastCheckedDate = cur;
+    flushEvents();
     breaksTakenToday = 0;
     breakTargetToday = 0;
     breakMinutesToday = 0;
@@ -1226,6 +1367,22 @@ function renderTodayTimeline(events) {
     else if (e.type === 'away') markMinutes(e, states, 'away');
     else if (e.type === 'not_tracking') markMinutes(e, states, 'not_tracking');
   });
+
+  // Camera blips under BREAK_MIN_SECONDS aren't logged as their own event (to
+  // avoid noise), which leaves a real gap in event coverage for that moment.
+  // Bridge short not_tracking runs sandwiched between two tracked segments so
+  // a half-second flicker doesn't paint a stray "not tracking" sliver.
+  const BRIDGE_MAX_MIN = 2;
+  const bridgeable = (s) => s === 'good' || s === 'slouch';
+  for (let i = 0; i < 1440; i++) {
+    if (states[i] !== 'not_tracking') continue;
+    let j = i;
+    while (j < 1440 && states[j] === 'not_tracking') j++;
+    if (j - i <= BRIDGE_MAX_MIN && bridgeable(states[i - 1]) && bridgeable(states[j])) {
+      for (let k = i; k < j; k++) states[k] = 'good';
+    }
+    i = j - 1;
+  }
 
   const segments = [];
   let cur = states[0];
@@ -1379,7 +1536,7 @@ function renderTodayTimeline(events) {
 async function fetchEventsForRange(start, end) {
   if (!SYNC_CONFIGURED) return [];
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=gte.${start}&date=lte.${end}&order=date.asc,start_time.asc`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_events?date=gte.${start}&date=lte.${end}&user_id=eq.${encodeURIComponent(currentUserId)}&order=date.asc,start_time.asc`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
     if (!res.ok) throw new Error('fetch');
@@ -1387,16 +1544,6 @@ async function fetchEventsForRange(start, end) {
   } catch (e) { console.warn(e); return []; }
 }
 
-async function fetchDailyLogs(start, end) {
-  if (!SYNC_CONFIGURED) return [];
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_logs?date=gte.${start}&date=lte.${end}&order=date.asc`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (!res.ok) throw new Error('fetch');
-    return await res.json();
-  } catch (e) { console.warn(e); return []; }
-}
 
 async function showReport(range) {
   let start, end;
@@ -1520,7 +1667,7 @@ async function renderAiSummary() {
     aiStatGrid.innerHTML = `
       <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes || 0) / 60)}h</div><div class="label">tracked time</div></div>
       <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">time slouching</div></div>
-      <div class="metric"><div class="value">${s.totalMoveNudges || 0}</div><div class="label">move nudges</div></div>
+      <div class="metric"><div class="value">${s.totalBreaksTaken || 0}</div><div class="label">breaks taken</div></div>
     `;
     const days = s.days || [];
     if (aiChart) aiChart.destroy();
@@ -1563,7 +1710,7 @@ modalTabs.addEventListener('click', e => {
 
 // ---- Critical listeners ----
 cameraToggleBtn.addEventListener('click', () => {
-  if (running) stopCamera();
+  if (running || cameraStarting) stopCamera();
   else startCamera();
 });
 
@@ -1589,7 +1736,9 @@ calibrateBtn.addEventListener('click', () => {
     addAlertToFeed('calibration', 'Posture calibrated');
     logCalibrationEvent();
     calibrateBtn.textContent = 'recalibrate posture';
+    calibrateBtn.classList.remove('needs-calibration');
     calibrateBtn.classList.add('is-confirmed');
+    calibrateFlash.hidden = true;
   }
 });
 
@@ -1612,12 +1761,7 @@ function loop() {
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
-    ctx.fillStyle = 'rgba(44,110,142,0.9)';
-    [leftEar, rightEar, leftSh, rightSh].forEach(p => {
-      ctx.beginPath();
-      ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
-      ctx.fill();
-    });
+    drawPoseDots([leftEar, rightEar, leftSh, rightSh]);
 
     const earMid = midpoint(leftEar, rightEar);
     const shMid = midpoint(leftSh, rightSh);
@@ -1680,8 +1824,6 @@ function loop() {
       return;
     }
 
-    stats.sessionSeconds += dt;
-
     const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
     const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
     const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
@@ -1735,7 +1877,6 @@ function loop() {
       }
 
       if (isSlouching) {
-        stats.slouchSeconds += dt;
         if (!slouchStartedAt) {
           slouchStartedAt = Date.now();
           slouchType = currentType;
@@ -1756,7 +1897,6 @@ function loop() {
           else { phrase = LEAN_PHRASES[leanIdx % LEAN_PHRASES.length]; leanIdx++; }
           speak(phrase);
           addAlertToFeed(currentType, phrase);
-          stats.postureNudges++;
           lastPostureNudgeAt = Date.now();
         }
       } else {
@@ -1773,7 +1913,6 @@ function loop() {
         breakIdx++;
         speak(p);
         addAlertToFeed('break_prompt', p);
-        stats.breakNudges++;
         lastBreakNudgeAt = Date.now();
       }
     }
@@ -1816,7 +1955,7 @@ setInterval(() => {
     localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
   }
   maybeSwitchDay();
-  saveStats();
+  flushEvents();
   reconcileTodayFromCloud();
 }, 10000);
 window.addEventListener('beforeunload', () => {
@@ -1826,7 +1965,7 @@ window.addEventListener('beforeunload', () => {
     slouchStartedAt = null;
   }
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
-  saveStats();
+  flushEvents();
 });
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
@@ -1850,7 +1989,7 @@ function paintSliderTrack(slider) {
   slider.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--ink-faint-2) ${pct}%)`;
 }
 
-const TUNING_KEY = 'plumb:tuning';
+const TUNING_KEY = `plumb:${currentUserId}:tuning`;
 function loadTuning() {
   try {
     const saved = JSON.parse(localStorage.getItem(TUNING_KEY) || 'null');
@@ -1892,7 +2031,7 @@ async function pushAppSettings() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify([{
-        id: 1,
+        user_id: currentUserId,
         tolerance: Number(toleranceSlider.value),
         compression: Number(compressionToleranceSlider.value),
         lean: Number(leanToleranceSlider.value),
@@ -1913,7 +2052,7 @@ async function pushAppSettings() {
 async function fetchAndApplyAppSettings() {
   if (!SYNC_CONFIGURED) return;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?id=eq.1&select=*`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?user_id=eq.${encodeURIComponent(currentUserId)}&select=*`, {
       headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
