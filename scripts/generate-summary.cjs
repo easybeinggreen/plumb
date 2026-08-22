@@ -8,6 +8,8 @@ const path = require('path');
 const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'data', 'summary.json');
 const MODEL = 'claude-haiku-4-5-20251001';
 
+const SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in'];
+
 async function fetchRows() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_KEY;
@@ -16,7 +18,11 @@ async function fetchRows() {
     return null;
   }
 
-  const res = await fetch(`${url}/rest/v1/posture_logs?select=*&order=date.asc&limit=100`, {
+  // posture_events, not posture_logs: each device's chunks land as their own
+  // row here, so summing per day is correct across however many devices were
+  // used that day. posture_logs is one row per day, last sync wins, and
+  // silently undercounts any multi-device day.
+  const res = await fetch(`${url}/rest/v1/posture_events?select=date,type,duration_seconds&order=date.asc`, {
     headers: { apikey: key, Authorization: `Bearer ${key}` }
   });
 
@@ -26,26 +32,31 @@ async function fetchRows() {
   }
 
   const data = await res.json();
-  console.log(`Fetched ${data.length} rows from posture_logs`);
+  console.log(`Fetched ${data.length} rows from posture_events`);
   return data;
 }
 
-function aggregate(rows) {
-  const recent = rows.slice(-14);
-  const toMinutes = (s) => Math.round((s || 0) / 60);
+function aggregate(events) {
+  const byDate = {};
+  events.forEach((e) => {
+    if (!byDate[e.date]) byDate[e.date] = { sessionSeconds: 0, slouchSeconds: 0, breakSeconds: 0, breaksTaken: 0 };
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'presence') byDate[e.date].sessionSeconds += dur;
+    else if (SLOUCH_TYPES.includes(e.type)) byDate[e.date].slouchSeconds += dur;
+    else if (e.type === 'break') { byDate[e.date].breakSeconds += dur; byDate[e.date].breaksTaken++; }
+  });
 
-  const days = recent.map((r) => ({
-    date: r.date,
-    sessionMinutes: toMinutes(r.session_seconds),
-    slouchMinutes: toMinutes(r.slouch_seconds),
-    postureNudges: r.posture_nudges || 0,
-    breakNudges: r.break_nudges || 0,
-    breaksTaken: r.breaks_taken || 0
+  const toMinutes = (s) => Math.round((s || 0) / 60);
+  const days = Object.keys(byDate).sort().slice(-14).map((date) => ({
+    date,
+    sessionMinutes: toMinutes(byDate[date].sessionSeconds),
+    slouchMinutes: toMinutes(byDate[date].slouchSeconds),
+    breakMinutes: toMinutes(byDate[date].breakSeconds),
+    breaksTaken: byDate[date].breaksTaken
   }));
 
   const totalSession = days.reduce((s, d) => s + d.sessionMinutes, 0);
   const totalSlouch = days.reduce((s, d) => s + d.slouchMinutes, 0);
-  const totalBreakNudges = days.reduce((s, d) => s + d.breakNudges, 0);
   const totalBreaksTaken = days.reduce((s, d) => s + d.breaksTaken, 0);
 
   return {
@@ -53,7 +64,6 @@ function aggregate(rows) {
     totalSessionMinutes: totalSession,
     totalSlouchMinutes: totalSlouch,
     slouchRatePct: totalSession ? Math.round((totalSlouch / totalSession) * 100) : 0,
-    totalBreakNudges,
     totalBreaksTaken,
     days
   };

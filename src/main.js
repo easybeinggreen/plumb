@@ -11,6 +11,8 @@ const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
 const placeholder = document.getElementById('placeholder');
+const alignBadge = document.getElementById('alignBadge');
+const calibrateFlash = document.getElementById('calibrateFlash');
 
 const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
@@ -96,6 +98,7 @@ let aiChart = null;
 // ---- State ----
 let landmarker = null;
 let running = false;
+let cameraStarting = false; // true only during the pre-PiP alignment countdown
 let rafId = null;
 let voiceNudgesEnabled = true;
 let bgAudioEnabled = false;
@@ -204,8 +207,7 @@ if (!SYNC_CONFIGURED) setSyncStatus('', 'Cloud sync: not configured');
 else setSyncStatus('', 'Cloud sync: ready');
 
 async function mergeRemoteStats() {
-  // Placeholder – daily aggregates will be computed from events later.
-  return;
+  await reconcileTodayFromCloud();
 }
 
 async function syncToSupabase() {
@@ -285,11 +287,12 @@ async function reconcileTodayFromCloud() {
     ]);
     if (eventsRes.ok) {
       const events = await eventsRes.json();
-      let taken = 0, breakSeconds = 0, presenceSeconds = 0;
+      let taken = 0, breakSeconds = 0, presenceSeconds = 0, slouchSeconds = 0;
       events.forEach(e => {
         const dur = e.duration_seconds || 0;
         if (e.type === 'break') { taken++; breakSeconds += dur; }
         else if (e.type === 'presence') presenceSeconds += dur;
+        else if (['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) slouchSeconds += dur;
       });
       const intervalSec = Number(breakSlider.value) * 60;
       const target = intervalSec > 0 ? Math.floor(presenceSeconds / intervalSec) : 0;
@@ -300,6 +303,19 @@ async function reconcileTodayFromCloud() {
       localStorage.setItem(BREAK_TARGET_KEY_PREFIX + d, String(breakTargetToday));
       localStorage.setItem(BREAK_MINUTES_KEY_PREFIX + d, String(breakMinutesToday));
       renderBreakGauge();
+
+      // stats.sessionSeconds/slouchSeconds feed posture_logs. `events` here is
+      // every device's *finalized* chunks for today -- it can't include the
+      // block currently in progress on this device (that only becomes an
+      // event once it ends). So: remote totals + this device's own still-open
+      // chunk, computed locally. That's the fix for the same-day multi-device
+      // overwrite bug -- previously each device just trusted its own running
+      // total and clobbered the other's on every sync.
+      const openPresenceSec = presenceStartedAt ? (Date.now() - presenceStartedAt) / 1000 : 0;
+      const openSlouchSec = slouchStartedAt ? (Date.now() - slouchStartedAt) / 1000 : 0;
+      stats.sessionSeconds = presenceSeconds + openPresenceSec;
+      stats.slouchSeconds = slouchSeconds + openSlouchSec;
+      saveStatsLocal();
     }
     if (hydrationRes.ok) {
       const rows = await hydrationRes.json();
@@ -611,11 +627,17 @@ function populateVoiceList() {
   }
   const hasStoredChoice = !!localStorage.getItem('plumb:voice');
   const voicesStillLoading = window.speechSynthesis && window.speechSynthesis.getVoices().length === 0;
-  if (currentVal && [...voiceSelect.options].some(o => o.value === currentVal)) {
+  const optionExists = (val) => [...voiceSelect.options].some(o => o.value === val);
+  // currentVal only counts as "already resolved" if it matches currentVoiceId --
+  // i.e. we deliberately picked it in an earlier pass. Otherwise it's just the
+  // browser's incidental first-<option> auto-select (always a Piper voice,
+  // since that group renders before browser voices are even loaded), which
+  // must never be allowed to pre-empt the real default below.
+  if (currentVal && currentVal === currentVoiceId && optionExists(currentVal)) {
     voiceSelect.value = currentVal;
-  } else if (hasStoredChoice && currentVoiceId && [...voiceSelect.options].some(o => o.value === currentVoiceId)) {
+  } else if (hasStoredChoice && currentVoiceId && optionExists(currentVoiceId)) {
     voiceSelect.value = currentVoiceId;
-  } else if (!hasStoredChoice && [...voiceSelect.options].some(o => o.value === DEFAULT_VOICE_ID)) {
+  } else if (!hasStoredChoice && optionExists(DEFAULT_VOICE_ID)) {
     currentVoiceId = DEFAULT_VOICE_ID;
     voiceSelect.value = currentVoiceId;
     localStorage.setItem('plumb:voice', currentVoiceId);
@@ -701,12 +723,24 @@ renderHydration();
 
 function renderBreakGauge(liveContinuousMin = 0) {
   const intervalMin = Number(breakSlider.value);
-  const liveExtra = Math.floor(liveContinuousMin / intervalMin);
-  const target = breakTargetToday + liveExtra;
-  const pct = target > 0 ? Math.max(0, Math.min(100, (breaksTakenToday / target) * 100)) : 0;
-  breakFill.style.height = pct + '%';
-  breakTakenEl.textContent = breaksTakenToday;
-  breakTargetEl.textContent = target;
+  if (breakActive) {
+    breakFill.style.height = '0%';
+    breakTakenEl.textContent = 'on a break';
+    breakTargetEl.textContent = '';
+  } else {
+    const pct = intervalMin > 0 ? Math.max(0, Math.min(100, (liveContinuousMin / intervalMin) * 100)) : 0;
+    breakFill.style.height = pct + '%';
+    const remainingMin = Math.max(0, intervalMin - liveContinuousMin);
+    if (remainingMin <= 0) {
+      breakTakenEl.textContent = 'break due';
+      breakTargetEl.textContent = '';
+    } else {
+      const mm = Math.floor(remainingMin);
+      const ss = Math.round((remainingMin - mm) * 60);
+      breakTakenEl.textContent = `${mm}:${String(ss).padStart(2, '0')}`;
+      breakTargetEl.textContent = 'to next break';
+    }
+  }
   breakMinutesEl.textContent = breakMinutesToday;
 }
 renderBreakGauge();
@@ -775,6 +809,14 @@ const STILLNESS_PHRASES = ["You've held the same shape a while — shift positio
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
+function drawPoseDots(points) {
+  ctx.fillStyle = 'rgba(44,110,142,0.9)';
+  points.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+}
 function shoulderWidthOf(lSh, rSh) { return Math.hypot(lSh.x - rSh.x, lSh.y - rSh.y) || 0.0001; }
 function neckCompressionRatio(earMid, shMid, lSh, rSh) {
   const gap = Math.max(shMid.y - earMid.y, 0.0001);
@@ -810,7 +852,13 @@ let originalStatusNextSibling = null;
 let originalVideoParent = null;
 let originalVideoNextSibling = null;
 
-async function openTrackingPip() {
+// Split in two because documentPictureInPicture.requestWindow() requires a
+// live user gesture -- it must fire right on the "start camera" click, before
+// the alignment countdown eats that permission window. Moving the actual
+// video/statusCard elements into the (already-open) PiP window is plain DOM
+// work and has no such deadline, so that part happens later, once the
+// countdown finishes -- giving one automatic pop-out with no second click.
+async function requestPipWindow() {
   if (!('documentPictureInPicture' in window)) return false;
 
   try {
@@ -820,11 +868,6 @@ async function openTrackingPip() {
     trackingPipWindow = null;
     return false;
   }
-
-  originalStatusParent = statusCard.parentElement;
-  originalStatusNextSibling = statusCard.nextSibling;
-  originalVideoParent = video.parentElement;
-  originalVideoNextSibling = video.nextSibling;
 
   trackingPipWindow.document.title = 'plumb';
   trackingPipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
@@ -840,6 +883,32 @@ async function openTrackingPip() {
   trackingPipWindow.document.body.style.justifyContent = 'center';
   trackingPipWindow.document.body.style.height = '100vh';
   trackingPipWindow.document.body.style.padding = '8px';
+  trackingPipWindow.document.body.style.color = 'var(--ink-soft)';
+  trackingPipWindow.document.body.style.fontFamily = 'Nunito, sans-serif';
+  trackingPipWindow.document.body.style.fontSize = '13px';
+  trackingPipWindow.document.body.style.textAlign = 'center';
+  trackingPipWindow.document.body.textContent = 'getting ready…';
+
+  trackingPipWindow.addEventListener('pagehide', () => {
+    if (running) {
+      stopCamera();
+    } else {
+      closeTrackingPip();
+    }
+  }, { once: true });
+
+  return true;
+}
+
+function movePipContent() {
+  if (!trackingPipWindow || trackingPipWindow.closed) return false;
+
+  trackingPipWindow.document.body.textContent = '';
+
+  originalStatusParent = statusCard.parentElement;
+  originalStatusNextSibling = statusCard.nextSibling;
+  originalVideoParent = video.parentElement;
+  originalVideoNextSibling = video.nextSibling;
 
   statusCard.classList.add('pip-mode');
   trackingPipWindow.document.body.appendChild(statusCard);
@@ -858,14 +927,6 @@ async function openTrackingPip() {
   overlay.style.opacity = '0';
   trackingPipWindow.document.body.appendChild(video);
   trackingPipWindow.document.body.appendChild(overlay);
-
-  trackingPipWindow.addEventListener('pagehide', () => {
-    if (running) {
-      stopCamera();
-    } else {
-      closeTrackingPip();
-    }
-  }, { once: true });
 
   return true;
 }
@@ -924,7 +985,23 @@ function nextFrame() {
     : requestAnimationFrame(loop);
 }
 
+// Live pose dots during the alignment countdown, so there's actually
+// something to align by -- detection only, no presence/slouch/stats side
+// effects (those don't start until `running` is true after the countdown).
+let alignPreviewActive = false;
+function alignPreviewFrame() {
+  if (!alignPreviewActive) return;
+  const result = landmarker.detectForVideo(video, performance.now());
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (result.landmarks && result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    drawPoseDots([lm[7], lm[8], lm[11], lm[12]]);
+  }
+  requestAnimationFrame(alignPreviewFrame);
+}
+
 async function startCamera() {
+  cameraStarting = true;
   cameraToggleBtn.textContent = 'loading…';
   cameraToggleBtn.disabled = true;
   try {
@@ -940,8 +1017,48 @@ async function startCamera() {
     await video.play();
     populateCameraList();
 
-    const pipOpened = await openTrackingPip();
+    cameraToggleBtn.textContent = 'stop camera';
+    cameraToggleBtn.classList.remove('start-camera');
+    cameraToggleBtn.classList.add('stop-camera');
+    cameraToggleBtn.disabled = false;
 
+    // Request the PiP window right now, on this click's still-live user
+    // gesture -- requestWindow() refuses to open without one, and that
+    // permission doesn't survive the countdown below. The window opens (near-)
+    // empty; the actual video only moves into it once the countdown ends.
+    const pipRequested = await requestPipWindow();
+
+    // Give a look at full-size, un-shrunk, un-dimmed video before it moves
+    // into the small PiP window -- otherwise framing/alignment problems are
+    // invisible until you're already tracking in a 160x120 popup. Live pose
+    // dots run so there's something to actually align by.
+    placeholder.style.display = 'none';
+    alignBadge.hidden = false;
+    alignPreviewActive = true;
+    requestAnimationFrame(alignPreviewFrame);
+
+    // Calibration only needs the landmarker and a live frame -- both already
+    // true here -- so let it happen as soon as you're in frame, not gated
+    // behind the alignment countdown. If you already calibrated by the time
+    // the countdown ends, none of this touches that state.
+    calibrateBtn.disabled = false;
+    if (baselineLateral === null) {
+      calibrateBtn.textContent = 'calibrate posture';
+      calibrateBtn.classList.add('needs-calibration');
+      calibrateBtn.classList.remove('is-confirmed');
+      calibrateFlash.hidden = false;
+    }
+
+    const ALIGN_SECONDS = 10;
+    for (let s = ALIGN_SECONDS; s > 0; s--) {
+      alignBadge.textContent = `tracking starts in ${s}s`;
+      await new Promise(r => setTimeout(r, 1000));
+      if (!video.srcObject) { cameraStarting = false; alignPreviewActive = false; alignBadge.hidden = true; return; } // stopped during the alignment window
+    }
+    alignPreviewActive = false;
+    alignBadge.hidden = true;
+
+    const pipOpened = pipRequested && movePipContent();
     if (pipOpened) {
       placeholder.style.display = 'flex';
       placeholder.textContent = 'tracking in popup — leave it open';
@@ -950,11 +1067,7 @@ async function startCamera() {
     }
 
     running = true;
-    cameraToggleBtn.textContent = 'stop camera';
-    cameraToggleBtn.classList.remove('start-camera');
-    cameraToggleBtn.classList.add('stop-camera');
-    cameraToggleBtn.disabled = false;
-    calibrateBtn.disabled = false;
+    cameraStarting = false;
     breakToggleBtn.disabled = false;
     lastFrameTime = performance.now();
 await mergeRemoteStats();
@@ -975,6 +1088,7 @@ logStartupGap();
 
     nextFrame();
   } catch (err) {
+    cameraStarting = false;
     placeholder.textContent = `camera error: ${err.message}`;
     cameraToggleBtn.textContent = 'start camera';
     cameraToggleBtn.classList.add('start-camera');
@@ -1022,8 +1136,13 @@ function stopCamera() {
 
   calibrateBtn.disabled = true;
   breakToggleBtn.disabled = true;
-  calibrateBtn.textContent = 'recalibrate posture';
-  calibrateBtn.classList.remove('is-confirmed');
+  // A calibrated baseline persists across a stop/restart in this tab (no
+  // need to redo it every time you toggle the camera), so reflect that in
+  // the button instead of blanking it back to an unstyled "not done" look.
+  calibrateBtn.textContent = baselineLateral === null ? 'calibrate posture' : 'recalibrate posture';
+  calibrateBtn.classList.toggle('is-confirmed', baselineLateral !== null);
+  calibrateBtn.classList.remove('needs-calibration');
+  calibrateFlash.hidden = true;
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 
@@ -1226,6 +1345,22 @@ function renderTodayTimeline(events) {
     else if (e.type === 'away') markMinutes(e, states, 'away');
     else if (e.type === 'not_tracking') markMinutes(e, states, 'not_tracking');
   });
+
+  // Camera blips under BREAK_MIN_SECONDS aren't logged as their own event (to
+  // avoid noise), which leaves a real gap in event coverage for that moment.
+  // Bridge short not_tracking runs sandwiched between two tracked segments so
+  // a half-second flicker doesn't paint a stray "not tracking" sliver.
+  const BRIDGE_MAX_MIN = 2;
+  const bridgeable = (s) => s === 'good' || s === 'slouch';
+  for (let i = 0; i < 1440; i++) {
+    if (states[i] !== 'not_tracking') continue;
+    let j = i;
+    while (j < 1440 && states[j] === 'not_tracking') j++;
+    if (j - i <= BRIDGE_MAX_MIN && bridgeable(states[i - 1]) && bridgeable(states[j])) {
+      for (let k = i; k < j; k++) states[k] = 'good';
+    }
+    i = j - 1;
+  }
 
   const segments = [];
   let cur = states[0];
@@ -1520,7 +1655,7 @@ async function renderAiSummary() {
     aiStatGrid.innerHTML = `
       <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes || 0) / 60)}h</div><div class="label">tracked time</div></div>
       <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">time slouching</div></div>
-      <div class="metric"><div class="value">${s.totalMoveNudges || 0}</div><div class="label">move nudges</div></div>
+      <div class="metric"><div class="value">${s.totalBreaksTaken || 0}</div><div class="label">breaks taken</div></div>
     `;
     const days = s.days || [];
     if (aiChart) aiChart.destroy();
@@ -1563,7 +1698,7 @@ modalTabs.addEventListener('click', e => {
 
 // ---- Critical listeners ----
 cameraToggleBtn.addEventListener('click', () => {
-  if (running) stopCamera();
+  if (running || cameraStarting) stopCamera();
   else startCamera();
 });
 
@@ -1589,7 +1724,9 @@ calibrateBtn.addEventListener('click', () => {
     addAlertToFeed('calibration', 'Posture calibrated');
     logCalibrationEvent();
     calibrateBtn.textContent = 'recalibrate posture';
+    calibrateBtn.classList.remove('needs-calibration');
     calibrateBtn.classList.add('is-confirmed');
+    calibrateFlash.hidden = true;
   }
 });
 
@@ -1612,12 +1749,7 @@ function loop() {
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
-    ctx.fillStyle = 'rgba(44,110,142,0.9)';
-    [leftEar, rightEar, leftSh, rightSh].forEach(p => {
-      ctx.beginPath();
-      ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
-      ctx.fill();
-    });
+    drawPoseDots([leftEar, rightEar, leftSh, rightSh]);
 
     const earMid = midpoint(leftEar, rightEar);
     const shMid = midpoint(leftSh, rightSh);
