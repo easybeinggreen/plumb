@@ -1600,7 +1600,13 @@ async function showReport(range) {
     totalAway += day.away;
   });
   const overall = totalBreak + totalSession;
-  const slouchPct = overall ? Math.min(100, Math.round(totalSlouch / overall * 100)) : 0;
+  // Denominator is session time only, not session+break -- taking a break
+  // is neutral, not a quiet way to inflate this number. "monitored" above
+  // still counts break time; it's a different question (how much of your
+  // day is accounted for at all) from this one (how much of your sitting
+  // time was good). Matches generate-summary.cjs's slouchRatePct, which
+  // already used session-only.
+  const slouchPct = totalSession ? Math.min(100, Math.round(totalSlouch / totalSession * 100)) : 0;
   const avgBreak = totalBreaks ? Math.round(totalBreak / totalBreaks / 60) : 0;
   reportSummary.innerHTML = `
     <div class="metric"><div class="value">${Math.round(overall / 60)}m</div><div class="label">monitored</div></div>
