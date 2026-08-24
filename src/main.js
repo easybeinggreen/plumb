@@ -27,6 +27,11 @@ const ctx = overlay.getContext('2d');
 const placeholder = document.getElementById('placeholder');
 const alignBadge = document.getElementById('alignBadge');
 const calibrateFlash = document.getElementById('calibrateFlash');
+const trackingSummary = document.getElementById('trackingSummary');
+const tsHeroNum = document.getElementById('tsHeroNum');
+const tsMiniTimeline = document.getElementById('tsMiniTimeline');
+const tsStats = document.getElementById('tsStats');
+const tsTrendRows = document.getElementById('tsTrendRows');
 
 const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
@@ -45,6 +50,7 @@ const statusValue = document.getElementById('statusValue');
 const statusCaption = document.getElementById('statusCaption');
 
 const dzDot = document.getElementById('dzDot');
+const dzRing = document.getElementById('dzRing');
 const dzTolerance = document.getElementById('dzTolerance');
 const lmLateral = document.getElementById('lmLateral');
 const lmSlump = document.getElementById('lmSlump');
@@ -101,7 +107,8 @@ const hydrationButtons = {
   bottle: document.getElementById('hydrationBottleBtn')
 };
 
-const breakFill = document.getElementById('breakFill');
+const breakRingFill = document.getElementById('breakRingFill');
+const BREAK_RING_CIRCUMFERENCE = 2 * Math.PI * 42;
 const breakTakenEl = document.getElementById('breakTaken');
 const breakTargetEl = document.getElementById('breakTarget');
 const breakMinutesEl = document.getElementById('breakMinutes');
@@ -616,7 +623,12 @@ function populateVoiceList() {
     voiceSelect.value = currentVoiceId;
     localStorage.setItem('plumb:voice', currentVoiceId);
   } else if (hasStoredChoice || !voicesStillLoading) {
-    currentVoiceId = PIPER_VOICES[0].id;
+    // Falls here when the browser's own female voice genuinely isn't
+    // available on this system -- PIPER_VOICES[0] is Alan (male), so
+    // defaulting to it silently handed out a male voice by accident.
+    // Prefer the first female-labeled Piper voice instead.
+    const fallbackVoice = PIPER_VOICES.find(v => /female/i.test(v.name)) || PIPER_VOICES[0];
+    currentVoiceId = fallbackVoice.id;
     voiceSelect.value = currentVoiceId;
     localStorage.setItem('plumb:voice', currentVoiceId);
   }
@@ -698,17 +710,20 @@ renderHydration();
 function renderBreakGauge(liveContinuousMin = 0) {
   const intervalMin = Number(breakSlider.value);
   if (breakActive) {
-    breakFill.style.height = '0%';
+    breakRingFill.style.strokeDashoffset = BREAK_RING_CIRCUMFERENCE + 'px';
+    breakRingFill.classList.remove('due');
     breakTakenEl.textContent = 'on a break';
     breakTargetEl.textContent = '';
   } else {
     const pct = intervalMin > 0 ? Math.max(0, Math.min(100, (liveContinuousMin / intervalMin) * 100)) : 0;
-    breakFill.style.height = pct + '%';
+    breakRingFill.style.strokeDashoffset = (BREAK_RING_CIRCUMFERENCE * (1 - pct / 100)) + 'px';
     const remainingMin = Math.max(0, intervalMin - liveContinuousMin);
     if (remainingMin <= 0) {
+      breakRingFill.classList.add('due');
       breakTakenEl.textContent = 'break due';
       breakTargetEl.textContent = '';
     } else {
+      breakRingFill.classList.remove('due');
       const mm = Math.floor(remainingMin);
       const ss = Math.round((remainingMin - mm) * 60);
       breakTakenEl.textContent = `${mm}:${String(ss).padStart(2, '0')}`;
@@ -774,12 +789,12 @@ async function speak(text) {
   }
 }
 
-const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it."];
-const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust."];
-const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture."];
-const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen."];
-const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it."];
-const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment."];
+const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it.", "Drifting left — ease back to centre.", "A little left lean — straighten up.", "Left side's dropped — bring it back."];
+const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust.", "Drifting right — ease back to centre.", "A little right lean — straighten up.", "Right side's dropped — bring it back."];
+const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture.", "Sinking a bit — lift through the chest.", "Spine's rounding — sit a touch taller.", "Shoulders back and down — reset."];
+const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen.", "A bit close to the screen — ease back.", "Crept toward the monitor — give it room.", "Pull back a little from the screen."];
+const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it.", "Good time for a stretch — up you get.", "Your body could use a change of scenery.", "Stand, shake it out, then carry on."];
+const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
@@ -1034,10 +1049,12 @@ async function startCamera() {
 
     const pipOpened = pipRequested && movePipContent();
     if (pipOpened) {
-      placeholder.style.display = 'flex';
-      placeholder.textContent = 'tracking in popup — leave it open';
+      placeholder.style.display = 'none';
+      trackingSummary.hidden = false;
+      renderTrackingSummary();
     } else {
       placeholder.style.display = 'none';
+      trackingSummary.hidden = true;
     }
 
     running = true;
@@ -1102,6 +1119,7 @@ function stopCamera() {
 
   placeholder.style.display = 'flex';
   placeholder.textContent = 'camera is off — press start camera to begin';
+  trackingSummary.hidden = true;
 
   cameraToggleBtn.textContent = 'start camera';
   cameraToggleBtn.classList.add('start-camera');
@@ -1210,7 +1228,6 @@ function setStatus(mode, text, caption) {
 }
 
 const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
-const RAW_CURVE_K = 12;
 const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 18, LEAN_CURVE_K = 8;
 
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
@@ -1219,13 +1236,24 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   dzTolerance.style.rx = ellipseRx + 'px';
   dzTolerance.style.ry = ellipseRy + 'px';
 
-  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -Math.tanh(lateral * RAW_CURVE_K) * DOT_MAX_PX));
-  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, Math.tanh(compression * RAW_CURVE_K) * DOT_MAX_PX));
+  // Dot position is proportional to how much of your tolerance you've used
+  // up, scaled against the loop's own rendered radius on each axis -- so
+  // "touching the edge" always means "at the real slouch threshold",
+  // instead of the dot racing out to the edge on a curve that had nothing
+  // to do with the tolerance value.
+  const latRatio = latTol > 0 ? lateral / latTol : 0;
+  const compRatio = compTol > 0 ? compression / compTol : 0;
+  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -latRatio * ellipseRx));
+  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, compRatio * ellipseRy));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
+  dzRing.style.cx = (DOT_CENTER + px) + 'px';
+  dzRing.style.cy = (DOT_CENTER + py) + 'px';
 
   const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K);
-  dzDot.style.r = (DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA) + 'px';
+  const dotR = DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA;
+  dzDot.style.r = dotR + 'px';
+  dzRing.style.r = (dotR + 5) + 'px';
 }
 
 function updateLiveMetrics(lateral, compression, lean, calibrated) {
@@ -1544,6 +1572,63 @@ async function fetchEventsForRange(start, end) {
   } catch (e) { console.warn(e); return []; }
 }
 
+const TS_SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in'];
+
+// The ambient "how's today going" panel that replaces the dead video space
+// once PiP has taken the live feed. Deliberately not a report: sitting-well%
+// is session time only (breaks/away/not-tracking excluded from both sides,
+// same as the report's own slouchPct now), and the trend rows are just the
+// last two days for context -- no click-through, no deeper stats.
+async function renderTrackingSummary() {
+  if (!SYNC_CONFIGURED) return;
+  const days = [today(), addDaysToDateStr(today(), -1), addDaysToDateStr(today(), -2)];
+  const events = await fetchEventsForRange(days[2], days[0]);
+
+  const perDay = {};
+  days.forEach(d => { perDay[d] = { session: 0, slouch: 0, breakSec: 0, breaks: 0 }; });
+  events.forEach(e => {
+    const day = perDay[e.date];
+    if (!day) return;
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'presence') day.session += dur;
+    else if (TS_SLOUCH_TYPES.includes(e.type)) day.slouch += dur;
+    else if (e.type === 'break') { day.breakSec += dur; day.breaks++; }
+  });
+
+  const sittingWellPct = (d) => d.session > 0 ? Math.max(0, Math.min(100, Math.round((d.session - d.slouch) / d.session * 100))) : null;
+
+  const todayData = perDay[days[0]];
+  const todayPct = sittingWellPct(todayData);
+  tsHeroNum.textContent = todayPct === null ? '—' : todayPct + '%';
+
+  const dayStartMs = new Date(days[0] + 'T00:00:00').getTime();
+  const dayElapsedSec = Math.max(1, (Date.now() - dayStartMs) / 1000);
+  const goodSec = Math.max(0, todayData.session - todayData.slouch);
+  const accountedSec = todayData.session + todayData.breakSec;
+  const untrackedSec = Math.max(0, dayElapsedSec - accountedSec);
+  const segments = [
+    { sec: goodSec, color: 'var(--ink)' },
+    { sec: todayData.slouch, color: 'var(--terracotta)' },
+    { sec: todayData.breakSec, color: 'var(--chart-neutral)' },
+    { sec: untrackedSec, color: '#F0EDE6' }
+  ];
+  const totalSec = segments.reduce((sum, s) => sum + s.sec, 0) || 1;
+  tsMiniTimeline.innerHTML = segments
+    .map(s => `<span style="width:${(s.sec / totalSec * 100).toFixed(2)}%; background:${s.color};"></span>`)
+    .join('');
+
+  const monitoredMin = Math.round(accountedSec / 60);
+  const monitoredLabel = monitoredMin >= 60 ? `${Math.floor(monitoredMin / 60)}h ${monitoredMin % 60}m` : `${monitoredMin}m`;
+  tsStats.textContent = `${monitoredLabel} monitored · ${todayData.breaks} break${todayData.breaks === 1 ? '' : 's'} taken`;
+
+  tsTrendRows.innerHTML = [1, 2].map(i => {
+    const d = perDay[days[i]];
+    const pct = sittingWellPct(d);
+    const label = i === 1 ? 'yesterday' : new Date(days[i] + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+    const goodPct = pct === null ? 0 : pct;
+    return `<div class="trend-row"><span class="trend-day">${label}</span><div class="trend-bar"><span style="width:${goodPct}%; background:var(--ink-faint-2);"></span><span style="width:${100 - goodPct}%; background:var(--chart-neutral);"></span></div><span class="trend-pct">${pct === null ? '—' : pct + '%'}</span></div>`;
+  }).join('');
+}
 
 async function showReport(range) {
   let start, end;
@@ -1963,6 +2048,7 @@ setInterval(() => {
   maybeSwitchDay();
   flushEvents();
   reconcileTodayFromCloud();
+  if (!trackingSummary.hidden) renderTrackingSummary();
 }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');
