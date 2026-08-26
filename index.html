@@ -74,16 +74,9 @@
   .ts-hero { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
   .ts-hero-num { font-size: 38px; font-weight: 600; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
   .ts-hero-lbl { font-size: 12.5px; color: var(--ink-soft); }
-  .ts-mini-timeline { display: flex; height: 22px; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
-  .ts-mini-timeline span { height: 100%; }
-  .ts-stats { font-size: 11.5px; font-weight: 300; color: var(--ink-soft); margin-bottom: 20px; }
-  .ts-trend-label { font-size: 10.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 10px; margin-top: auto; }
-  .ts-trend-rows { display: flex; flex-direction: column; gap: 6px; }
-  .ts-trend-rows .trend-row { display: flex; align-items: center; gap: 10px; }
-  .ts-trend-rows .trend-day { font-size: 11px; color: var(--ink-soft); width: 56px; flex-shrink: 0; }
-  .ts-trend-rows .trend-bar { flex: 1; display: flex; height: 7px; border-radius: 4px; overflow: hidden; }
-  .ts-trend-rows .trend-bar span { height: 100%; }
-  .ts-trend-rows .trend-pct { font-size: 11px; font-weight: 500; color: var(--ink-soft); width: 30px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .ts-timeline-wrap { width: 100%; margin-bottom: 4px; }
+  .ts-timeline-wrap canvas { display: block; }
+  .ts-stats { font-size: 11.5px; font-weight: 300; color: var(--ink-soft); }
   .calibrate-flash {
     position: absolute; left: 0; right: 0; bottom: 14px; z-index: 5; text-align: center; pointer-events: none;
     color: #fff; font-weight: 700; font-size: 15px; letter-spacing: .01em;
@@ -229,18 +222,18 @@
 
   /* Break gauge: a countdown isn't a fill level, so it's a ring, not a
      repurposed water tube. */
-  .break-ring-wrap { position: relative; width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; }
-  .break-ring-track { fill: none; stroke: var(--ink-faint-2); stroke-width: 7; }
+  .break-ring-wrap { position: relative; width: 130px; height: 130px; display: flex; align-items: center; justify-content: center; }
+  .break-ring-track { fill: none; stroke: var(--ink-faint-2); stroke-width: 8; }
   .break-ring-fill {
-    fill: none; stroke: var(--accent); stroke-width: 7; stroke-linecap: round;
-    stroke-dasharray: 263.9; stroke-dashoffset: 263.9;
-    transform: rotate(-90deg); transform-origin: 50px 50px;
+    fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round;
+    stroke-dasharray: 339.3; stroke-dashoffset: 339.3;
+    transform: rotate(-90deg); transform-origin: 65px 65px;
     transition: stroke-dashoffset .6s cubic-bezier(.34,1.4,.4,1), stroke .3s ease;
   }
   .break-ring-fill.due { stroke: var(--terracotta); }
-  .break-ring-center { position: absolute; display: flex; flex-direction: column; align-items: center; }
-  .break-ring-center b { font-family: var(--mono); font-weight: 600; font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; }
-  .break-ring-center span { font-size: 9px; color: var(--ink-soft); margin-top: 2px; }
+  .break-ring-center { position: absolute; display: flex; flex-direction: column; align-items: center; padding: 0 8px; }
+  .break-ring-center b { font-weight: 700; font-size: 21px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; text-align: center; }
+  .break-ring-center span { font-size: 10px; font-weight: 500; color: var(--ink-soft); margin-top: 3px; text-align: center; }
 
   .hydration-readout { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); text-align: center; }
   .hydration-readout b { color: var(--ink); font-size: 14px; font-weight: 600; }
@@ -366,10 +359,8 @@
             <div class="ts-hero-num" id="tsHeroNum">—</div>
             <div class="ts-hero-lbl">sitting well today</div>
           </div>
-          <div class="ts-mini-timeline" id="tsMiniTimeline"></div>
+          <div class="ts-timeline-wrap"><canvas id="tsTimelineChart"></canvas></div>
           <div class="ts-stats" id="tsStats">— monitored</div>
-          <div class="ts-trend-label">last couple of days</div>
-          <div class="ts-trend-rows" id="tsTrendRows"></div>
         </div>
       </div>
 
@@ -448,9 +439,9 @@
           </div>
           <div class="gauge-col">
             <div class="break-ring-wrap">
-              <svg width="100" height="100" viewBox="0 0 100 100">
-                <circle class="break-ring-track" cx="50" cy="50" r="42"/>
-                <circle class="break-ring-fill" id="breakRingFill" cx="50" cy="50" r="42"/>
+              <svg width="130" height="130" viewBox="0 0 130 130">
+                <circle class="break-ring-track" cx="65" cy="65" r="54"/>
+                <circle class="break-ring-fill" id="breakRingFill" cx="65" cy="65" r="54"/>
               </svg>
               <div class="break-ring-center">
                 <b id="breakTaken">--:--</b>

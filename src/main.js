@@ -29,9 +29,8 @@ const alignBadge = document.getElementById('alignBadge');
 const calibrateFlash = document.getElementById('calibrateFlash');
 const trackingSummary = document.getElementById('trackingSummary');
 const tsHeroNum = document.getElementById('tsHeroNum');
-const tsMiniTimeline = document.getElementById('tsMiniTimeline');
+const tsTimelineChart = document.getElementById('tsTimelineChart');
 const tsStats = document.getElementById('tsStats');
-const tsTrendRows = document.getElementById('tsTrendRows');
 
 const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
@@ -108,7 +107,7 @@ const hydrationButtons = {
 };
 
 const breakRingFill = document.getElementById('breakRingFill');
-const BREAK_RING_CIRCUMFERENCE = 2 * Math.PI * 42;
+const BREAK_RING_CIRCUMFERENCE = 2 * Math.PI * 54;
 const breakTakenEl = document.getElementById('breakTaken');
 const breakTargetEl = document.getElementById('breakTarget');
 const breakMinutesEl = document.getElementById('breakMinutes');
@@ -862,7 +861,7 @@ async function requestPipWindow() {
   trackingPipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
   const fontLink = document.createElement('link');
   fontLink.rel = 'stylesheet';
-  fontLink.href = 'https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap';
+  fontLink.href = 'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Karla:wght@300;400;500;600;700&display=swap';
   trackingPipWindow.document.head.appendChild(fontLink);
 
   trackingPipWindow.document.body.style.margin = '0';
@@ -873,7 +872,7 @@ async function requestPipWindow() {
   trackingPipWindow.document.body.style.height = '100vh';
   trackingPipWindow.document.body.style.padding = '8px';
   trackingPipWindow.document.body.style.color = 'var(--ink-soft)';
-  trackingPipWindow.document.body.style.fontFamily = 'Nunito, sans-serif';
+  trackingPipWindow.document.body.style.fontFamily = 'Karla, sans-serif';
   trackingPipWindow.document.body.style.fontSize = '13px';
   trackingPipWindow.document.body.style.textAlign = 'center';
   trackingPipWindow.document.body.textContent = 'getting ready…';
@@ -1353,8 +1352,7 @@ function markMinutes(event, states, state) {
   }
 }
 
-function renderTodayTimeline(events) {
-  const canvas = todayTimelineCanvas;
+function renderTodayTimeline(events, canvas) {
   const container = canvas.parentElement;
   const containerWidth = container.getBoundingClientRect().width || container.clientWidth || 600;
   const width = Math.max(containerWidth, 300);
@@ -1451,7 +1449,7 @@ function renderTodayTimeline(events) {
   });
 
   ctx2.fillStyle = '#4B615E';
-  ctx2.font = '10px Nunito, sans-serif';
+  ctx2.font = '10px Karla, sans-serif';
 
   for (let h = 0; h <= 24; h += 1) {
     const x = (h / 24) * width;
@@ -1485,7 +1483,7 @@ function renderTodayTimeline(events) {
     ctx2.stroke();
 
     ctx2.fillStyle = '#14403B';
-    ctx2.font = 'bold 9px Nunito, sans-serif';
+    ctx2.font = 'bold 9px Karla, sans-serif';
     ctx2.fillText('now', x + 3, 9);
   }
 
@@ -1498,7 +1496,7 @@ function renderTodayTimeline(events) {
   ];
 
   let legendX = 0;
-  ctx2.font = '10px Nunito, sans-serif';
+  ctx2.font = '10px Karla, sans-serif';
 
   legendItems.forEach(item => {
     const swatchSize = 8;
@@ -1575,59 +1573,45 @@ async function fetchEventsForRange(start, end) {
 const TS_SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in'];
 
 // The ambient "how's today going" panel that replaces the dead video space
-// once PiP has taken the live feed. Deliberately not a report: sitting-well%
-// is session time only (breaks/away/not-tracking excluded from both sides,
-// same as the report's own slouchPct now), and the trend rows are just the
-// last two days for context -- no click-through, no deeper stats.
+// once PiP has taken the live feed. Reuses the real report timeline (hour
+// markers, "now" line, actual minute-by-minute segments) rather than a
+// flattened summary -- when something happened matters, not just how much.
+// Deliberately still not the full report: no click-through, no week/month,
+// just today at a glance. Session-only sitting-well%, matching showReport's
+// fixed formula.
 async function renderTrackingSummary() {
   if (!SYNC_CONFIGURED) return;
-  const days = [today(), addDaysToDateStr(today(), -1), addDaysToDateStr(today(), -2)];
-  const events = await fetchEventsForRange(days[2], days[0]);
+  const d = today();
+  const events = await fetchEventsForRange(d, d);
 
-  const perDay = {};
-  days.forEach(d => { perDay[d] = { session: 0, slouch: 0, breakSec: 0, breaks: 0 }; });
+  // `events` only has *finalized* chunks -- a presence block (and any
+  // slouch sub-segment inside it) only becomes a row once it ends. Without
+  // this, the panel reads as frozen for as long as you've been continuously
+  // tracked, which is exactly backwards for an ambient "how's it going" view.
+  const now = Date.now();
+  if (presenceStartedAt) {
+    events.push({ date: d, type: 'presence', start_time: new Date(presenceStartedAt).toISOString(), end_time: new Date(now).toISOString(), duration_seconds: Math.round((now - presenceStartedAt) / 1000) });
+  }
+  if (slouchStartedAt) {
+    events.push({ date: d, type: slouchType, start_time: new Date(slouchStartedAt).toISOString(), end_time: new Date(now).toISOString(), duration_seconds: Math.round((now - slouchStartedAt) / 1000) });
+  }
+
+  let session = 0, slouch = 0, breakSec = 0, breaks = 0;
   events.forEach(e => {
-    const day = perDay[e.date];
-    if (!day) return;
     const dur = e.duration_seconds || 0;
-    if (e.type === 'presence') day.session += dur;
-    else if (TS_SLOUCH_TYPES.includes(e.type)) day.slouch += dur;
-    else if (e.type === 'break') { day.breakSec += dur; day.breaks++; }
+    if (e.type === 'presence') session += dur;
+    else if (TS_SLOUCH_TYPES.includes(e.type)) slouch += dur;
+    else if (e.type === 'break') { breakSec += dur; breaks++; }
   });
 
-  const sittingWellPct = (d) => d.session > 0 ? Math.max(0, Math.min(100, Math.round((d.session - d.slouch) / d.session * 100))) : null;
+  const pct = session > 0 ? Math.max(0, Math.min(100, Math.round((session - slouch) / session * 100))) : null;
+  tsHeroNum.textContent = pct === null ? '—' : pct + '%';
 
-  const todayData = perDay[days[0]];
-  const todayPct = sittingWellPct(todayData);
-  tsHeroNum.textContent = todayPct === null ? '—' : todayPct + '%';
-
-  const dayStartMs = new Date(days[0] + 'T00:00:00').getTime();
-  const dayElapsedSec = Math.max(1, (Date.now() - dayStartMs) / 1000);
-  const goodSec = Math.max(0, todayData.session - todayData.slouch);
-  const accountedSec = todayData.session + todayData.breakSec;
-  const untrackedSec = Math.max(0, dayElapsedSec - accountedSec);
-  const segments = [
-    { sec: goodSec, color: 'var(--ink)' },
-    { sec: todayData.slouch, color: 'var(--terracotta)' },
-    { sec: todayData.breakSec, color: 'var(--chart-neutral)' },
-    { sec: untrackedSec, color: '#F0EDE6' }
-  ];
-  const totalSec = segments.reduce((sum, s) => sum + s.sec, 0) || 1;
-  tsMiniTimeline.innerHTML = segments
-    .map(s => `<span style="width:${(s.sec / totalSec * 100).toFixed(2)}%; background:${s.color};"></span>`)
-    .join('');
-
-  const monitoredMin = Math.round(accountedSec / 60);
+  const monitoredMin = Math.round((session + breakSec) / 60);
   const monitoredLabel = monitoredMin >= 60 ? `${Math.floor(monitoredMin / 60)}h ${monitoredMin % 60}m` : `${monitoredMin}m`;
-  tsStats.textContent = `${monitoredLabel} monitored · ${todayData.breaks} break${todayData.breaks === 1 ? '' : 's'} taken`;
+  tsStats.textContent = `${monitoredLabel} monitored · ${breaks} break${breaks === 1 ? '' : 's'} taken`;
 
-  tsTrendRows.innerHTML = [1, 2].map(i => {
-    const d = perDay[days[i]];
-    const pct = sittingWellPct(d);
-    const label = i === 1 ? 'yesterday' : new Date(days[i] + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' });
-    const goodPct = pct === null ? 0 : pct;
-    return `<div class="trend-row"><span class="trend-day">${label}</span><div class="trend-bar"><span style="width:${goodPct}%; background:var(--ink-faint-2);"></span><span style="width:${100 - goodPct}%; background:var(--chart-neutral);"></span></div><span class="trend-pct">${pct === null ? '—' : pct + '%'}</span></div>`;
-  }).join('');
+  renderTodayTimeline(events, tsTimelineChart);
 }
 
 async function showReport(range) {
@@ -1706,7 +1690,7 @@ async function showReport(range) {
 
   if (range === 'today') {
     todayTimelineCanvas.style.display = 'block';
-    renderTodayTimeline(events);
+    renderTodayTimeline(events, todayTimelineCanvas);
   } else {
     slouchChartCtx.canvas.style.display = 'block';
     if (currentChart) currentChart.destroy();
@@ -1731,7 +1715,7 @@ async function showReport(range) {
           y: { stacked: true, title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } }
         },
         plugins: {
-          legend: { labels: { font: { family: 'Nunito', weight: '700', size: 11 }, boxWidth: 12, padding: 12 } },
+          legend: { labels: { font: { family: 'Karla', weight: '600', size: 11 }, boxWidth: 12, padding: 12 } },
           tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
         }
       }
