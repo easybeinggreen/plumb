@@ -5,7 +5,8 @@ It exists so that a new developer, or a fresh AI session with no memory of prior
 conversations, can pick this project up cold and understand what it's for, what's
 actually true about its current state, what decisions were made and why, and
 what's still open. Update it when you make a decision worth remembering, not
-after every commit.
+after every commit. Written for a reader who may have no chat history at all —
+if you're that reader, this file plus git log/PRs should be enough.
 
 ## What this is
 
@@ -17,89 +18,143 @@ have been still/sitting too long. Syncs stats to Supabase every ~10s. Deploys
 to GitHub Pages via GitHub Actions on every push to `main`. Single-maintainer,
 prototype-quality, not a medical device, not a commercial product.
 
+Positioning, if it comes up: not "achieve perfect posture" — more like an
+ambient companion/coach that quietly keeps you from sitting badly for *too
+long*. The name "plumb" (a plumb line/bob hangs there passively showing true
+vertical while you work) fits that better than the current tagline
+("aligned for life") does — tagline was discussed and deliberately left
+alone for now, not forgotten.
+
 ## Stack
 
-- **Frontend**: Vite + vanilla JS (no framework), single `src/main.js` (~2000
-  lines) driving a single `index.html`. `@mediapipe/tasks-vision` for pose
-  detection, `@mintplex-labs/piper-tts-web` for offline neural voice.
+- **Frontend**: Vite + vanilla JS (no framework), single `src/main.js`
+  (~2100 lines) driving a single `index.html`. `@mediapipe/tasks-vision` for
+  pose detection, `@mintplex-labs/piper-tts-web` for offline neural voice.
 - **Backend**: Supabase (Postgres + PostgREST), accessed directly from the
   browser via `fetch` — no server code except the GitHub Action script.
-- **Hosting**: GitHub Pages, built by `.github/workflows/deploy.yml`.
+  Project ref `keacpowuykzcnwwdbjkd` (URL `https://keacpowuykzcnwwdbjkd.supabase.co`),
+  org/project named "Plumb". Uses the newer `sb_publishable_...` key format
+  (what used to be called the "anon" key) — safe to expose, same as before.
+- **Hosting**: GitHub Pages, built by `.github/workflows/deploy.yml`, live at
+  `easybeinggreen.github.io/plumb/`.
 - **AI summary** (currently dormant, see below): `scripts/generate-summary.cjs`
-  runs in the Monday-morning scheduled Action, reads Supabase, calls the
-  Anthropic API, writes `public/data/summary.json`.
+  runs in the Monday-morning scheduled Action, reads `posture_events` from
+  Supabase, calls the Anthropic API, writes `public/data/summary.json`.
 
-## Current status (as of 2026-08-22)
+## Git / deployment state (as of 2026-08-26)
 
-**Confirmed working**, tested live in Chrome:
-- Camera start → 10s alignment countdown with live pose-dot preview → PiP
-  auto-opens with no second click
-- Calibration usable immediately (not gated behind the countdown)
-- Break gauge (live countdown to next break)
-- Voice defaults correctly to a browser voice (see "voice selection" below)
-- Per-user name picker: first-run flow, localStorage persistence, settings
-  modal shows who's signed in + switch-user
+Work happens on branch `fix/sync-and-alignment-flow`, merged into `main` via
+PRs (branch protection requires this — direct pushes to `main` are blocked).
+GitHub Pages deploys automatically on every push to `main`. History so far:
+PR #1–#4 = cross-device sync fixes, per-user login, slouch% formula fix.
+PR #5–#6 = the visual redesign (see below). **PR #7 is open, not yet
+merged**, containing the slouch-state-leak fix and voice fixes described
+below — check its state before assuming those fixes are live.
 
-**Implemented and code-reviewed, but not yet proven over real hours/days of
-use** — this is the honest caveat, not false modesty:
-- Cross-device session/slouch reconciliation (`mergeRemoteStats` /
-  `reconcileTodayFromCloud`)
-- Day-timeline gap-bridging for camera blips
-- Per-user data isolation end-to-end (schema migration applied and verified
-  by inspection, but not exercised by two real people trialing it yet)
+One real gotcha that already happened once: a PR can get merged from an
+*older* snapshot of the branch if more commits get pushed to it between
+opening the PR and clicking merge (GitHub merges whatever the branch's head
+was *at merge time*, not necessarily what you last looked at). This silently
+orphaned a whole commit once (PR #5 merged, but the very next commit on the
+branch never made it into `main` until a separate PR #6 caught it days
+later). If something seems "not up to date" after a merge, don't assume
+user error — check `git merge-base --is-ancestor <branch> origin/main`
+before concluding the working tree is stale.
 
-**Deliberately dormant / paused on purpose** (not broken, just not switched
-on — see "Decisions" below for why):
-- AI weekly summary — `ANTHROPIC_API_KEY` is set as a GitHub secret but the
-  script has never actually reached the Anthropic call (verified via Action
-  logs) because the Supabase read failed on a permissions issue. Zero tokens
-  spent so far. Left off intentionally until there's a stretch of trustworthy
-  multi-day, multi-user data to summarize.
+## Current status
 
-**Explicitly out of scope for now** (user's own call, not a technical limit):
-- Real authentication (see "not real auth" below)
-- Full UI/UX redesign — next planned piece of work
-- Hydration icon resize/repositioning — small polish item, bundled into the
-  UI pass
+**The visual redesign is implemented and live**, not just mocked up:
+- Wordmark in Space Grotesk, Karla everywhere else, weight scale rebalanced
+  lighter throughout
+- Posture glyph: dot position is genuinely proportional to tolerance on each
+  axis now — touching the loop edge means "at the real slouch threshold"
+  (this used to be a real, confirmed bug — see git history if curious, it's
+  fixed now, not just diagnosed)
+- Mild→sustained escalation has a real visual jump (pulsing ring, loop
+  tint), not two near-identical browns
+- Break gauge is an SVG ring with live countdown, not a repurposed
+  liquid-fill tube
+- The video panel shows a live "how's today going" summary once PiP takes
+  the camera feed, reusing the exact same timeline-rendering code as the
+  report modal (hour markers, "now" line, real segments) — not a
+  flattened/simplified version
+- Per-user name picker is live: first-run flow, localStorage persistence,
+  settings modal shows who's signed in + switch-user
 
-## Known issues / open questions
+**Still visually unstyled / not part of the redesign yet**: the settings
+modal and the report modal's week/month view (still Chart.js vertical bars,
+not the horizontal small-multiples layout that was discussed and agreed as
+the better design — never implemented, not even mocked up further than the
+one exploration artifact). A Claude Design canvas exists from the redesign
+planning with the settled typography direction and the finalized screens
+(popup card, main page idle/active) — ask the user for the link if you need
+to see it; it's a claude.ai artifact URL, not stored in this repo.
 
-1. **Posture glyph (loop + dot) is visually miscalibrated.** The tolerance
-   ellipse's radius is drawn *linearly* from the tolerance slider
-   (`radius = tolerance × 210px`), but the dot's position is drawn from a
-   `tanh`-curved mapping of the actual deviation (`offset = 64 × tanh(deviation
-   × 12)`). `tanh` saturates fast: at the default 0.20 tolerance, the dot
-   visually exits the loop at a deviation of ~0.07 — about a third of the way
-   to the real detection threshold of 0.20. So the loop currently
-   under-represents your real tolerance by roughly 3x. This is a real bug,
-   not user error — confirmed by direct calculation, not just observation.
-   Fix is to make the dot's mapping proportional to the tolerance value
-   instead of a fixed curve. Not yet fixed — queued for the UI/UX pass.
+**Fixed 2026-08-26, from real live-usage bug reports** (see git log on
+`fix/sync-and-alignment-flow` for exact commits):
+- `hydration_events` inserts were silently failing *since the table was
+  created* — granting `INSERT` on a table doesn't grant `USAGE` on the
+  sequence backing its auto-increment `id` column; they're separate grants.
+  Fixed directly on the live Supabase project (not just in a migration
+  file) — verify `grant usage on sequence hydration_events_id_seq to anon,
+  authenticated;` is still in effect if hydration ever silently stops
+  saving again.
+- **Slouch-state leak across presence gaps** — the more serious one. Slouch
+  tracking (`slouchStartedAt`/`slouchAccumulatedMs`) was only flushed when a
+  break started or the camera stopped, not when the camera simply lost
+  sight of the person or the tab went hidden. A slouch flag open at exactly
+  that moment could sit stuck in memory and keep absorbing time from a
+  later, unrelated session instead of closing when that presence actually
+  ended. Confirmed on real data before fixing (not guessed): one
+  `compression` event logged as 15.7 hours on a day with 5.5 hours of total
+  tracked presence — impossible unless it bridged a gap like this.
+  **The general rule this establishes: every code path that ends a presence
+  block must also flush any open slouch block.** If you add a new way for
+  presence to end, check this.
+- Piper (offline) voice had no interruption logic before starting new
+  playback — two nudges close together played on top of each other. Fixed
+  by tracking the current `AudioBufferSourceNode` and stopping it first.
+- Test-voice button silently obeyed the mute toggle (did nothing on click
+  if muted — indistinguishable from broken). Now bypasses mute via a
+  `force` param on `speak()`.
 
-2. **Name identity has no normalization.** `"Paul"`, `"paul"`, and `"Paul "`
-   (trailing space) are three different users as far as the app and database
-   are concerned — no trim, no case-folding. Fine solo; will cause silent
-   data splitting once real people other than you start typing names. Cheap
-   fix (trim + lowercase for comparison, keep original casing for display),
-   not yet done.
-
+**Still open, not yet fixed**:
+1. **"Voice sometimes just stops working" after extended use** — reported
+   by the user, not yet reproduced or diagnosed. The fixes above might be
+   related (stuck state of some kind) but this wasn't confirmed, don't
+   claim it's fixed. If it recurs, the browser console (F12) at the moment
+   it stops is the thing to actually look at — a guess without that
+   evidence is likely to waste time.
+2. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
+   (trailing space) are three different users to the app and database — no
+   trim, no case-folding. Fine solo; will silently split data once other
+   real people type names. Cheap fix, not done.
 3. **`generate-summary.cjs` doesn't filter by user.** Once more than one
-   person's data exists in `posture_events`, the (currently dormant) weekly
-   summary would blend everyone's stats into one narrative. Needs a
-   `user_id` filter (or a per-user summary run) before it's turned on for
-   real, multi-person use.
+   person's data exists in `posture_events`, the (still-dormant) weekly
+   summary would blend everyone's stats into one narrative.
+4. **`posture_logs` table still exists in Supabase, fully unused by the
+   app** (the write path was removed when per-user login was built — it
+   only ever fed the old denormalized daily-total approach, which is why it
+   was retired, see "Decisions" below). Safe to `drop table posture_logs;`
+   whenever; not urgent.
+5. **RLS stays permissive at the database level** on every table
+   (`using (true)`). Per-user separation is enforced entirely client-side.
+   Deliberate tradeoff (see "Decisions"), not an oversight — but it means
+   "login" is a data-partitioning convenience, not a privacy boundary.
+6. **Cross-device session/slouch reconciliation and per-user data
+   isolation** are implemented and code-reviewed but still haven't been
+   proven by actual simultaneous multi-device or multi-person use — only
+   solo, sequential testing so far.
 
-4. **`posture_logs` table still exists but is fully unused** by the app. Kept
-   for now rather than dropped; safe to `drop table posture_logs;` whenever.
-
-5. **RLS stays permissive at the database level.** Every table's row-level
-   security policy is `using (true)` — the anon key (already public, embedded
-   in the deployed site's source) can read/write any row for any user. The
-   per-user separation described below is enforced entirely client-side (the
-   app only ever queries its own `user_id`), not at the database level. This
-   was a deliberate, discussed tradeoff (see "Decisions"), not an oversight —
-   but it means the "login" system is a data-partitioning convenience, not a
-   privacy boundary.
+**Deliberately dormant / paused on purpose** (not broken, user's own call):
+- AI weekly summary. `ANTHROPIC_API_KEY` is set as a GitHub secret, the
+  scheduled Action has run several times, but it has **never once actually
+  reached the Anthropic call** — confirmed by reading the Action's own logs,
+  not assumed. It fails earlier, on the Supabase read (was a permissions
+  error on `posture_logs`; may need re-checking now that `posture_logs` is
+  unused — the script would need pointing at `posture_events` instead
+  regardless, per item 3 above). Zero tokens spent. Left off intentionally
+  until there's trustworthy multi-day, multi-user data worth summarizing.
 
 ## The presence/break/away/not-tracking state model
 
@@ -128,6 +183,11 @@ seeing a person in frame). Classified in `classifyGap()`:
 - App closed and reopened later (`logStartupGap`, same calendar day only):
   <60s ignored, 60s–60min retroactively logged as a `break`, >60min logged as
   `not_tracking`.
+
+**Every one of these presence-ending paths must also flush any open slouch
+block** (see the 2026-08-26 fix above) — this wasn't true until recently and
+was a real, confirmed bug. If you add a new way for presence to end, check
+this invariant holds.
 
 **Known limitation**: `logStartupGap` only knows about the single device it's
 running on (reads one `localStorage` key). If you stop tracking on Device A
@@ -178,6 +238,14 @@ purely local timestamp.
   separate stillness nudge. Sources are cited inline in that object — check
   there before changing a default, rather than guessing.
 
+- **Typography direction settled via a Claude Design canvas**, not chosen
+  unilaterally: Space Grotesk for the wordmark specifically because it (and
+  the geometric-sans category generally) gives `p`/`b` a true mirror and
+  `u`/`m` a related shape — the user was explicit about wanting that
+  letterform symmetry back after rejecting an earlier serif-only round.
+  Karla for everything else, at lighter weights than the old Nunito setup
+  (nothing above 700 anywhere in the stylesheet now).
+
 ## Setup / dev quickstart
 
 See [README.md](README.md) for full Supabase table setup and GitHub secrets.
@@ -194,3 +262,9 @@ degrades gracefully (local-only, no sync) if `.env` is missing or a table
 doesn't have the expected columns yet. Console warnings, not crashes, are the
 expected failure mode throughout this codebase — that pattern is intentional
 and worth preserving in new code.
+
+When debugging a "the data looks wrong" report, prefer querying the live
+Supabase table directly (`curl` with the publishable key works fine for
+read-only checks) over guessing from the code — several real bugs this
+project has had were only found by looking at what was actually stored, not
+by reading the code and reasoning about what it *should* do.
