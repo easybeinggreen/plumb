@@ -194,6 +194,7 @@ let silentAudioEl = null;
 let currentVoiceId = localStorage.getItem('plumb:voice') || '';
 let piperSession = null;
 let piperSessionVoice = null;
+let currentPiperSource = null;
 
 const PIPER_WASM_PATHS = {
   onnxWasm: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/',
@@ -475,8 +476,8 @@ function endBreak() {
       addBreakMinutesToday(dur);
       incrementBreaksTaken();
       let msg = '';
-      if (dur >= 300) msg = 'Great long break — you’re refreshed.';
-      else if (dur >= 60) msg = 'Good break — that was a nice stretch.';
+      if (dur >= 300) { msg = BREAK_RETURN_LONG_PHRASES[breakReturnLongIdx % BREAK_RETURN_LONG_PHRASES.length]; breakReturnLongIdx++; }
+      else if (dur >= 60) { msg = BREAK_RETURN_SHORT_PHRASES[breakReturnShortIdx % BREAK_RETURN_SHORT_PHRASES.length]; breakReturnShortIdx++; }
       if (msg) speak(msg);
       const mins = Math.round(dur / 60);
       addAlertToFeed('break', `Break ended (${mins > 0 ? mins + ' min' : Math.round(dur) + ' sec'})`);
@@ -525,6 +526,11 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
 
+  if (slouchStartedAt) {
+    logPostureEvent(slouchType, slouchStartedAt, Date.now());
+    slouchStartedAt = null;
+    slouchAccumulatedMs = 0;
+  }
   finalizePresenceBlock('tab_hidden');
   logNotTrackingEvent(hiddenStart, Date.now());
 
@@ -756,8 +762,11 @@ async function ensurePiperVoice(voiceId) {
   }
 }
 
-async function speak(text) {
-  if (!voiceNudgesEnabled) return;
+async function speak(text, force = false) {
+  // force=true (the test-voice button) bypasses mute -- deliberately
+  // testing the voice is exactly the case where muted shouldn't apply, and
+  // silently doing nothing on click was indistinguishable from "broken".
+  if (!voiceNudgesEnabled && !force) return;
   await ensureAudioUnlocked();
   const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v => v.name === currentVoiceId);
   if (isBrowserVoice) {
@@ -775,9 +784,17 @@ async function speak(text) {
     if (ok) {
       const wav = await piperSession.predict(text);
       const buffer = await audioCtx.decodeAudioData(await wav.arrayBuffer());
+      // Unlike speechSynthesis (cancelled above), nothing was stopping a
+      // still-playing Piper buffer before starting the next one -- two
+      // nudges close together (e.g. a break-end message landing right as a
+      // posture nudge fires) played on top of each other instead of the
+      // second one replacing the first.
+      if (currentPiperSource) { try { currentPiperSource.stop(); } catch (e) {} }
       const src = audioCtx.createBufferSource();
       src.buffer = buffer;
       src.connect(audioCtx.destination);
+      currentPiperSource = src;
+      src.onended = () => { if (currentPiperSource === src) currentPiperSource = null; };
       src.start(0);
       return;
     }
@@ -794,7 +811,9 @@ const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen sp
 const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen.", "A bit close to the screen — ease back.", "Crept toward the monitor — give it room.", "Pull back a little from the screen."];
 const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it.", "Good time for a stretch — up you get.", "Your body could use a change of scenery.", "Stand, shake it out, then carry on."];
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
-let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0;
+const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Nice long break — welcome back.", "That was a proper break — good stuff.", "Well rested — good to have you back."];
+const BREAK_RETURN_SHORT_PHRASES = ["Good break — that was a nice stretch.", "Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet."];
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
 function drawPoseDots(points) {
@@ -1994,6 +2013,19 @@ function loop() {
   } else {
     if (isPersonPresent && !breakActive) {
       finalizePresenceBlock('person_left');
+      // A slouch block that's still open when the person leaves frame was
+      // never being closed here -- it could sit stuck in memory and keep
+      // absorbing active-frame time from a LATER, unrelated presence block
+      // once they returned, instead of ending when the presence it happened
+      // during actually ended. Confirmed on real data: a single compression
+      // event logged as 15.7 hours long, on a day with 5.5 hours of total
+      // tracked presence -- only possible if it bridged across gaps like
+      // this one instead of closing when the person first stepped away.
+      if (slouchStartedAt) {
+        logPostureEvent(slouchType, slouchStartedAt, Date.now());
+        slouchStartedAt = null;
+        slouchAccumulatedMs = 0;
+      }
       isPersonPresent = false;
       absenceStartedAt = Date.now();
       breakStartedAt = null;
@@ -2044,7 +2076,7 @@ window.addEventListener('beforeunload', () => {
   flushEvents();
 });
 
-testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.'));
+testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.', true));
 
 function renderMuteBtn() {
   muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
