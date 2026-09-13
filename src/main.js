@@ -1017,6 +1017,12 @@ async function startCamera() {
       video: { width: 640, height: 480, ...(cameraSelect.value ? { deviceId: { exact: cameraSelect.value } } : {}) },
       audio: false
     });
+    // Another app taking the camera later ends this track on its own --
+    // catch it here immediately rather than waiting for the tracking loop
+    // to eventually throw on a dead frame.
+    stream.getVideoTracks().forEach(track => {
+      track.addEventListener('ended', () => handleCameraLost('track ended'));
+    });
     video.srcObject = stream;
     await new Promise(r => video.onloadedmetadata = r);
     overlay.width = video.videoWidth;
@@ -1028,6 +1034,21 @@ async function startCamera() {
     cameraToggleBtn.classList.remove('start-camera');
     cameraToggleBtn.classList.add('stop-camera');
     cameraToggleBtn.disabled = false;
+
+    // Calibration only needs the landmarker and a live frame -- both already
+    // true here -- so enable it right away. This used to sit *after* the
+    // `await requestPipWindow()` below, which meant a real (confirmed, not
+    // just a stale-cursor cosmetic thing) window where the video was already
+    // visibly playing and the button looked ready, but a click did nothing
+    // because it was still genuinely disabled. Moving it earlier removes
+    // that dead window instead of just disguising it.
+    calibrateBtn.disabled = false;
+    if (baselineLateral === null) {
+      calibrateBtn.textContent = 'calibrate posture';
+      calibrateBtn.classList.add('needs-calibration');
+      calibrateBtn.classList.remove('is-confirmed');
+      calibrateFlash.hidden = false;
+    }
 
     // Request the PiP window right now, on this click's still-live user
     // gesture -- requestWindow() refuses to open without one, and that
@@ -1043,18 +1064,6 @@ async function startCamera() {
     alignBadge.hidden = false;
     alignPreviewActive = true;
     requestAnimationFrame(alignPreviewFrame);
-
-    // Calibration only needs the landmarker and a live frame -- both already
-    // true here -- so let it happen as soon as you're in frame, not gated
-    // behind the alignment countdown. If you already calibrated by the time
-    // the countdown ends, none of this touches that state.
-    calibrateBtn.disabled = false;
-    if (baselineLateral === null) {
-      calibrateBtn.textContent = 'calibrate posture';
-      calibrateBtn.classList.add('needs-calibration');
-      calibrateBtn.classList.remove('is-confirmed');
-      calibrateFlash.hidden = false;
-    }
 
     const ALIGN_SECONDS = 10;
     for (let s = ALIGN_SECONDS; s > 0; s--) {
@@ -1107,7 +1116,29 @@ logStartupGap();
   }
 }
 
-function stopCamera() {
+let handlingCameraLoss = false;
+
+// The camera feed can disappear without ever going through the "stop
+// camera" button -- most commonly another app (Zoom, Teams, the OS camera
+// app) taking the device, which either ends the MediaStreamTrack outright
+// or leaves the <video> stalled on a stale/zero-size frame that then throws
+// inside the pose model. Neither case was handled before: `running` stayed
+// true, the button still said "stop camera", and whatever presence/slouch
+// block was open at that moment just sat in memory and was never flushed --
+// which is how whole afternoons went missing from the report. This closes
+// things down the same clean way a manual stop does, but leaves a visible
+// trail (console + alert feed + a distinct placeholder message) instead of
+// going dark with no explanation.
+function handleCameraLost(reason) {
+  if (handlingCameraLoss || (!running && !cameraStarting)) return;
+  handlingCameraLoss = true;
+  console.warn('Plumb: camera lost —', reason);
+  addAlertToFeed('camera_lost', `Camera feed lost (${reason}) — tracking stopped`);
+  stopCamera('lost');
+  handlingCameraLoss = false;
+}
+
+function stopCamera(reason = 'manual') {
   const wasRunning = running;
 
   running = false;
@@ -1117,7 +1148,7 @@ function stopCamera() {
   }
 
   if (wasRunning) {
-    finalizePresenceBlock('camera_stopped');
+    finalizePresenceBlock(reason === 'lost' ? 'camera_lost' : 'camera_stopped');
   }
 
   if (slouchStartedAt) {
@@ -1136,7 +1167,9 @@ function stopCamera() {
   }
 
   placeholder.style.display = 'flex';
-  placeholder.textContent = 'camera is off — press start camera to begin';
+  placeholder.textContent = reason === 'lost'
+    ? 'camera feed was interrupted (another app may have taken it) — press start camera to resume'
+    : 'camera is off — press start camera to begin';
   trackingSummary.hidden = true;
 
   cameraToggleBtn.textContent = 'start camera';
@@ -1815,6 +1848,17 @@ breakToggleBtn.addEventListener('click', () => {
 });
 
 calibrateBtn.addEventListener('click', () => {
+  // Belt-and-braces on top of the startCamera reordering above -- if this
+  // somehow still fires before the model/video are actually ready, say so
+  // instead of doing nothing. A click that appears to do nothing, with no
+  // feedback either way, is what made this feel broken rather than slow.
+  // Deliberately NOT gated on `running` -- calibration is meant to work
+  // during the pre-running alignment countdown too (see startCamera), only
+  // on the model/video actually being live.
+  if (!landmarker || !video.srcObject) {
+    addAlertToFeed('calibration', 'Camera not ready yet — try again in a moment');
+    return;
+  }
   const result = landmarker.detectForVideo(video, performance.now());
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
@@ -1833,6 +1877,8 @@ calibrateBtn.addEventListener('click', () => {
     calibrateBtn.classList.remove('needs-calibration');
     calibrateBtn.classList.add('is-confirmed');
     calibrateFlash.hidden = true;
+  } else {
+    addAlertToFeed('calibration', "No person detected — make sure you're in frame, then try again");
   }
 });
 
@@ -1844,6 +1890,17 @@ function loop() {
   }
 
   if (!running) return;
+
+  // Everything below can throw if the video feed goes bad mid-frame (most
+  // commonly: another app took the camera and the track ended or the
+  // element is left on a stale/zero-size frame the pose model can't
+  // process). Before this, an uncaught throw here just killed the
+  // requestAnimationFrame chain outright -- `running` stayed true, the
+  // button still said "stop camera", and whatever presence/slouch block
+  // was open at that moment never got finalized or flushed, silently
+  // losing that stretch of the day. handleCameraLost() closes it down
+  // cleanly instead, the same way a manual stop does.
+  try {
   const now = performance.now();
   const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
@@ -2051,6 +2108,9 @@ function loop() {
   }
 
   nextFrame();
+  } catch (err) {
+    handleCameraLost(err && err.message ? err.message : 'tracking error');
+  }
 }
 
 // ---- Init ----
