@@ -82,6 +82,10 @@ const modalTabs = document.getElementById('modalTabs');
 const reportSummary = document.getElementById('reportSummary');
 const slouchChartCtx = document.getElementById('slouchChart').getContext('2d');
 const todayTimelineCanvas = document.getElementById('todayTimelineChart');
+const dayDrilldown = document.getElementById('dayDrilldown');
+const dayDrilldownTitle = document.getElementById('dayDrilldownTitle');
+const dayDrilldownCanvas = document.getElementById('dayDrilldownChart');
+const dayDrilldownClose = document.getElementById('dayDrilldownClose');
 const panelNumeric = document.getElementById('panelNumeric');
 const panelAi = document.getElementById('panelAi');
 const aiSummaryText = document.getElementById('aiSummaryText');
@@ -1404,7 +1408,7 @@ function markMinutes(event, states, state) {
   }
 }
 
-function renderTodayTimeline(events, canvas) {
+function renderTodayTimeline(events, canvas, referenceDate) {
   const container = canvas.parentElement;
   const containerWidth = container.getBoundingClientRect().width || container.clientWidth || 600;
   const width = Math.max(containerWidth, 300);
@@ -1426,8 +1430,12 @@ function renderTodayTimeline(events, canvas) {
   const hourLabelY = timelineHeight + 14;
 
   const now = new Date();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const nowMinute = Math.floor((now - midnight) / 60000);
+  const refDate = referenceDate || now;
+  const midnight = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+  const isToday = midnight.getTime() === new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  // A past day is fully elapsed -- no "future" greying, no "now" line. Only
+  // today has a real cutoff partway through.
+  const nowMinute = isToday ? Math.floor((now - midnight) / 60000) : 1439;
 
   const states = new Array(1440).fill('not_tracking');
   for (let m = Math.max(0, Math.min(1439, nowMinute + 1)); m < 1440; m++) {
@@ -1524,7 +1532,7 @@ function renderTodayTimeline(events, canvas) {
     }
   }
 
-  if (nowMinute >= 0 && nowMinute <= 1440) {
+  if (isToday && nowMinute >= 0 && nowMinute <= 1440) {
     const x = (nowMinute / 1440) * width;
 
     ctx2.strokeStyle = '#14403B';
@@ -1622,6 +1630,24 @@ async function fetchEventsForRange(start, end) {
   } catch (e) { console.warn(e); return []; }
 }
 
+// Reads the pre-aggregated rollup table instead of raw events -- a handful
+// of (date, type) rows instead of potentially thousands of individual
+// nudges, so week/month reports stay fast and immune to the REST row cap
+// regardless of how much history accumulates. Only covers dates the nightly
+// rollup has already processed (see rollup-summary.cjs); the last couple of
+// days are always fetched from raw events instead, since they haven't been
+// rolled up yet -- see showReport().
+async function fetchDailySummaryForRange(start, end) {
+  if (!SYNC_CONFIGURED) return [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/posture_daily_summary?date=gte.${start}&date=lte.${end}&user_id=eq.${encodeURIComponent(currentUserId)}&order=date.asc`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) throw new Error('fetch');
+    return await res.json();
+  } catch (e) { console.warn(e); return []; }
+}
+
 const TS_SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in'];
 
 // The ambient "how's today going" panel that replaces the dead video space
@@ -1677,30 +1703,57 @@ async function showReport(range) {
   panelNumeric.classList.add('active');
   panelAi.classList.remove('active');
 
-  const events = await fetchEventsForRange(start, end);
-
-  const dateMap = {};
-  let ds0 = start;
-  while (ds0 <= end) {
-    dateMap[ds0] = { break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 };
-    ds0 = addDaysToDateStr(ds0, 1);
-  }
-  events.forEach(e => {
-    const ds = e.date;
-    if (!dateMap[ds]) dateMap[ds] = { break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 };
-    const dur = e.duration_seconds || 0;
-    if (e.type === 'break') { dateMap[ds].break += dur; dateMap[ds].breaks++; }
-    else if (e.type === 'away') dateMap[ds].away += dur;
-    else if (e.type === 'lateral_left') dateMap[ds].left += dur;
-    else if (e.type === 'lateral_right') dateMap[ds].right += dur;
-    else if (e.type === 'compression') dateMap[ds].slump += dur;
-    else if (e.type === 'lean_in') dateMap[ds].lean += dur;
+  const emptyBucket = () => ({ break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 });
+  function addToBucket(bucket, type, dur, count) {
+    if (type === 'break') { bucket.break += dur; bucket.breaks += count; }
+    else if (type === 'away') bucket.away += dur;
+    else if (type === 'lateral_left') bucket.left += dur;
+    else if (type === 'lateral_right') bucket.right += dur;
+    else if (type === 'compression') bucket.slump += dur;
+    else if (type === 'lean_in') bucket.lean += dur;
     // 'presence' events cover every continuous tracked block (across however many
     // devices were used that day) and sum correctly since each is its own inserted
     // row. This replaces the old posture_logs.session_seconds read, which was a
     // single per-day value that got silently overwritten by whichever device
     // synced last, undercounting any day where more than one device was used.
-    else if (e.type === 'presence') dateMap[ds].sessionSeconds += dur;
+    else if (type === 'presence') bucket.sessionSeconds += dur;
+  }
+
+  // Week/month read the pre-summed rollup table for anything the nightly job
+  // has already processed, and raw events only for the last 2 days it
+  // hasn't reached yet (see rollup-summary.cjs's cutoff) -- keeps the report
+  // fast and immune to the REST row cap no matter how much history piles
+  // up, while still being current within a day or two. "today" is untouched:
+  // always raw, since it needs full per-minute granularity for the timeline.
+  let events = [];
+  let summaryRows = [];
+  if (range === 'week' || range === 'month') {
+    const summaryEnd = addDaysToDateStr(curDate, -2);
+    const recentStart = addDaysToDateStr(curDate, -1);
+    [summaryRows, events] = await Promise.all([
+      summaryEnd >= start ? fetchDailySummaryForRange(start, summaryEnd) : Promise.resolve([]),
+      fetchEventsForRange(recentStart, end)
+    ]);
+  } else {
+    events = await fetchEventsForRange(start, end);
+  }
+
+  const dateMap = {};
+  let ds0 = start;
+  while (ds0 <= end) {
+    dateMap[ds0] = emptyBucket();
+    ds0 = addDaysToDateStr(ds0, 1);
+  }
+  summaryRows.forEach(r => {
+    const ds = r.date;
+    if (!dateMap[ds]) dateMap[ds] = emptyBucket();
+    addToBucket(dateMap[ds], r.type, r.total_seconds || 0, r.event_count || 0);
+  });
+  events.forEach(e => {
+    const ds = e.date;
+    if (!dateMap[ds]) dateMap[ds] = emptyBucket();
+    const dur = e.duration_seconds || 0;
+    addToBucket(dateMap[ds], e.type, dur, 1);
   });
 
   const dates = Object.keys(dateMap).sort();
@@ -1739,6 +1792,7 @@ async function showReport(range) {
 
   slouchChartCtx.canvas.style.display = 'none';
   todayTimelineCanvas.style.display = 'none';
+  hideDayDrilldown();
 
   if (range === 'today') {
     todayTimelineCanvas.style.display = 'block';
@@ -1769,10 +1823,36 @@ async function showReport(range) {
         plugins: {
           legend: { labels: { font: { family: 'Karla', weight: '600', size: 11 }, boxWidth: 12, padding: 12 } },
           tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
+        },
+        // Click a day's bar to drill into that day's actual timeline (same
+        // rendering as "today", just for whichever date was clicked) --
+        // aggregates tell you how much, the timeline tells you when.
+        onClick: (evt, elements) => {
+          if (!elements.length) return;
+          showDayDrilldown(dates[elements[0].index]);
+        },
+        onHover: (evt, elements) => {
+          evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
         }
       }
     });
   }
+}
+
+// Always fetches raw events for the single clicked day -- even a "rolled
+// up" day still has its full-resolution row untouched in posture_events
+// (see rollup-summary.cjs), so this works identically whether the day came
+// from the summary table or from recent raw events in the chart above.
+async function showDayDrilldown(dateStr) {
+  dayDrilldownTitle.textContent = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  dayDrilldown.style.display = 'block';
+  dayDrilldown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const dayEvents = await fetchEventsForRange(dateStr, dateStr);
+  renderTodayTimeline(dayEvents, dayDrilldownCanvas, new Date(dateStr + 'T00:00:00'));
+}
+
+function hideDayDrilldown() {
+  dayDrilldown.style.display = 'none';
 }
 
 async function renderAiSummary() {
@@ -1827,6 +1907,7 @@ reportBtn.addEventListener('click', () => {
   showReport(active ? active.dataset.range : 'today');
 });
 modalClose.addEventListener('click', () => modalOverlay.classList.remove('open'));
+dayDrilldownClose.addEventListener('click', hideDayDrilldown);
 modalTabs.addEventListener('click', e => {
   if (e.target.classList.contains('tab')) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
