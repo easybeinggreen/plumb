@@ -254,6 +254,78 @@ slumping, day/week chart looking "mostly fine"):**
   fix (234 rows, current through 2026-09-14) rather than waiting for the
   next 2am Brisbane cron.
 
+**Fixed 2026-09-17, from a root-and-branch audit prompted by the user
+being repeatedly burned by data-integrity issues since the start (their
+words: "tempted me to give up a few times").** Three unrelated bugs, all
+found by querying live data directly rather than reasoning from the code:
+
+1. **Rollup cutoff computed from the GitHub runner's UTC clock instead of
+   Brisbane time.** The cron fires at 2am Brisbane (16:00 UTC the previous
+   day), a UTC calendar date still one day behind Brisbane's — so the
+   cutoff landed a full day short of what the client (on the user's actual
+   Brisbane-local clock) expected, every single night. Fixed in
+   `rollup-summary.cjs`'s `cutoffDate()` by shifting into Brisbane time
+   (+10h, no DST) before doing the date math, instead of using raw UTC
+   `now()`.
+2. **The real root cause of three separate multi-hour bogus slouch
+   events** (87.9h on 2026-08-21, 15.7h on 2026-08-26 — the one this file
+   previously and incorrectly described as fixed, see below — and 14.2h on
+   2026-09-15, found by scanning all of `posture_events` for
+   `duration_seconds > 3600`). The `visibilitychange` handler's
+   return-to-visible branch flushed any open slouch block **and** the
+   presence block using `Date.now()` (the moment visibility returns)
+   instead of `hiddenStart` (the moment it was lost) — so a tab hidden
+   across a long real-world gap (laptop asleep overnight, lid closed over
+   a meal) got the entire gap attributed as continuous slouching *and*
+   continuous presence, on top of the same span being separately logged as
+   `not_tracking` a few lines later. **The 2026-08-26 entry above
+   describing this class of bug as fixed was wrong** — that fix addressed
+   a real but different leak path (camera-based presence gaps in the main
+   loop); this `visibilitychange` path was never touched and kept leaking
+   for another three weeks. Fixed by giving `finalizePresenceBlock()` an
+   optional `endTs` parameter and passing `hiddenStart` through both flush
+   calls. The three known-bad historical rows are still sitting in
+   `posture_events` uncorrected as of this writing — ask the user whether
+   to delete them (there's no way to reconstruct the true value, since
+   `hiddenStart` wasn't preserved in those already-written rows) before
+   trusting any all-time stat that touches those three dates.
+3. **`anon` was never granted `SELECT` on `posture_daily_summary`.** This
+   is arguably the biggest one: every fetch the browser client made to
+   that table returned `401`, silently, for the table's entire existence
+   (created 2026-09-14) — `fetchDailySummaryForRange()`'s `catch` swallows
+   the error and returns `[]`, so it looked exactly like "no data," not
+   "can't read." This means the 2026-09-16 rollup-cron fix above, while
+   real and necessary, **could never have actually fixed what the user was
+   seeing on its own** — the client literally could not read the table
+   regardless of how current its contents were. Only caught because the
+   browser was actually driven end-to-end against the real anon key
+   (`this month` tab, live) rather than verified via direct SQL/
+   service-role queries, which don't exercise this permission at all.
+   Fixed via migration `grant_anon_select_daily_summary` (mirrors the
+   `SELECT` grant `posture_events` already had for the same role).
+   **General rule now established three times over** (`hydration_events`
+   sequence `USAGE`, 2026-08-26; `service_role` on `posture_daily_summary`,
+   2026-09-16; `anon` on `posture_daily_summary`, today): creating a table
+   grants nothing to `anon`/`authenticated`/`service_role` beyond
+   PostgreSQL's default (`TRIGGER`/`TRUNCATE`/`REFERENCES`, none of them
+   useful here). After adding any table, check
+   `information_schema.role_table_grants` for every role that will
+   actually touch it, and — critically — verify reads by driving the real
+   client (browser + anon key) end-to-end, not just by querying Supabase
+   directly with elevated access. Direct SQL/service-role checks cannot
+   catch an `anon`-role permission bug by construction.
+
+Also added: the week tab now renders each day as a row pairing a
+consolidated totals bar with a compact minute-by-minute pattern strip
+(click through to the full timeline), instead of only the aggregate
+stacked bar — see `renderWeekDayRows()`/`computeDaySegments()` in
+`src/main.js`. Week now always fetches raw events for the full 7-day
+range rather than leaning on the rollup table for most of it (cheap at
+that volume); month is unchanged and still needs the rollup split. Explicit
+motivation from the user: getting totals and the real per-minute pattern
+into the same shape, per day, is what eventual AI summarization needs to
+work from.
+
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
@@ -280,6 +352,11 @@ slumping, day/week chart looking "mostly fine"):**
    correctly registered with GitHub, so the 2am Brisbane cron should pick
    it up on its own; confirm in the Actions tab after the first
    unattended run actually fires.
+7. **Three known-corrupted historical rows in `posture_events`** (87.9h
+   compression on 2026-08-21, 15.7h on 2026-08-26, 14.2h on 2026-09-15 —
+   see "Fixed 2026-09-17" above) are still uncorrected as of this writing.
+   Any all-time or multi-week stat that spans those three dates is
+   currently wrong until they're cleaned up or deleted.
 
 **Deliberately dormant / paused on purpose** (not broken, user's own call):
 - AI weekly summary. `ANTHROPIC_API_KEY` is set as a GitHub secret, the
