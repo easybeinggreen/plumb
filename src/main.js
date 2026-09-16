@@ -82,6 +82,8 @@ const modalTabs = document.getElementById('modalTabs');
 const reportSummary = document.getElementById('reportSummary');
 const slouchChartCtx = document.getElementById('slouchChart').getContext('2d');
 const todayTimelineCanvas = document.getElementById('todayTimelineChart');
+const weekDayRows = document.getElementById('weekDayRows');
+const weekDayRowsList = document.getElementById('weekDayRowsList');
 const dayDrilldown = document.getElementById('dayDrilldown');
 const dayDrilldownTitle = document.getElementById('dayDrilldownTitle');
 const dayDrilldownCanvas = document.getElementById('dayDrilldownChart');
@@ -1447,27 +1449,22 @@ function markMinutes(event, states, state) {
   }
 }
 
-function renderTodayTimeline(events, canvas, referenceDate) {
-  const container = canvas.parentElement;
-  const containerWidth = container.getBoundingClientRect().width || container.clientWidth || 600;
-  const width = Math.max(containerWidth, 300);
-  const height = 175;
-  const dpr = window.devicePixelRatio || 1;
+const TIMELINE_COLORS = {
+  good: '#0A2626',
+  slouch: '#C1622E',
+  break: '#C9C2B3',
+  away: '#9FB0B5',
+  not_tracking: '#F0EDE6',
+  future: 'transparent'
+};
 
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  canvas.style.width = width + 'px';
-  canvas.style.height = height + 'px';
-  canvas.style.display = 'block';
-
-  const ctx2 = canvas.getContext('2d');
-  ctx2.scale(dpr, dpr);
-  ctx2.clearRect(0, 0, width, height);
-
-  const timelineHeight = 100;
-  const legendY = timelineHeight + 22;
-  const hourLabelY = timelineHeight + 14;
-
+// Classifies every minute of `referenceDate` into a coarse state (good/
+// slouch/break/away/not_tracking/future) from raw events, then collapses
+// that into contiguous segments. Pulled out of renderTodayTimeline so the
+// same classification feeds both the full single-day timeline and the
+// compact per-day strips in the week view -- one source of truth for "what
+// happened when" that later AI summarization can also consume directly.
+function computeDaySegments(events, referenceDate) {
   const now = new Date();
   const refDate = referenceDate || now;
   const midnight = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
@@ -1521,14 +1518,142 @@ function renderTodayTimeline(events, canvas, referenceDate) {
   }
   segments.push({ state: cur, startMin: start, endMin: 1440 });
 
-  const colors = {
-    good: '#0A2626',
-    slouch: '#C1622E',
-    break: '#C9C2B3',
-    away: '#9FB0B5',
-    not_tracking: '#F0EDE6',
-    future: 'transparent'
-  };
+  return { segments, isToday, nowMinute };
+}
+
+// Compact, unlabeled version of the timeline -- just the colored segments,
+// sized to fill whatever the canvas's CSS layout already gives it. Used for
+// the per-day rows in the week view, where 7 of these sit next to a totals
+// bar so the pattern within a day is visible without clicking in.
+function drawDayStrip(canvas, segments) {
+  const width = Math.max(canvas.getBoundingClientRect().width || canvas.parentElement.clientWidth || 200, 40);
+  const height = 16;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+  const ctx2 = canvas.getContext('2d');
+  ctx2.scale(dpr, dpr);
+  ctx2.clearRect(0, 0, width, height);
+  segments.forEach(seg => {
+    if (seg.state === 'future') return;
+    const x = (seg.startMin / 1440) * width;
+    const w = ((seg.endMin - seg.startMin) / 1440) * width;
+    ctx2.fillStyle = TIMELINE_COLORS[seg.state] || '#ccc';
+    ctx2.fillRect(x, 0, w, height);
+  });
+}
+
+const TOTALS_BAR_COLORS = { good: '#0A2626', left: '#F0DAC7', right: '#E4C1A0', slump: '#C1622E', lean: '#2E7D6B', break: '#C9C2B3' };
+
+// The same six categories as the month view's stacked bar chart, just drawn
+// as one compact horizontal bar per day instead of a Chart.js dataset --
+// pairs with drawDayStrip() in the week view's day rows.
+function drawTotalsBar(canvas, bucket) {
+  const width = Math.max(canvas.getBoundingClientRect().width || canvas.parentElement.clientWidth || 110, 40);
+  const height = 16;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+  const ctx2 = canvas.getContext('2d');
+  ctx2.scale(dpr, dpr);
+  ctx2.clearRect(0, 0, width, height);
+
+  const good = Math.max(0, bucket.sessionSeconds - bucket.left - bucket.right - bucket.slump - bucket.lean);
+  const segs = [
+    ['good', good], ['left', bucket.left], ['right', bucket.right],
+    ['slump', bucket.slump], ['lean', bucket.lean], ['break', bucket.break]
+  ];
+  const total = segs.reduce((sum, [, v]) => sum + v, 0);
+  if (total <= 0) {
+    ctx2.fillStyle = 'rgba(10,38,38,0.06)';
+    ctx2.fillRect(0, 0, width, height);
+    return;
+  }
+  let x = 0;
+  segs.forEach(([key, val]) => {
+    if (val <= 0) return;
+    const w = (val / total) * width;
+    ctx2.fillStyle = TOTALS_BAR_COLORS[key];
+    ctx2.fillRect(x, 0, w, height);
+    x += w;
+  });
+}
+
+// Renders each day in the week view as a row: date label, consolidated
+// totals bar, and the minute-by-minute pattern strip side by side. Unlike
+// month, week always fetches raw events for the full range (see
+// showReport()) -- 7 days is small enough that per-minute detail for every
+// day is cheap, so there's no need to lean on the rollup table here. This
+// is also the shape future AI summarization wants: totals and the
+// underlying pattern together, per day, not just one or the other.
+function renderWeekDayRows(dates, dateMap, eventsByDate) {
+  weekDayRowsList.innerHTML = '';
+  dates.forEach(ds => {
+    const bucket = dateMap[ds];
+    const dayEvents = eventsByDate[ds] || [];
+
+    const row = document.createElement('div');
+    row.className = 'day-row';
+
+    const label = document.createElement('div');
+    label.className = 'day-row-label';
+    label.textContent = new Date(ds + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    row.appendChild(label);
+
+    const totalsCanvas = document.createElement('canvas');
+    totalsCanvas.className = 'day-row-totals';
+    row.appendChild(totalsCanvas);
+
+    const stripCanvas = document.createElement('canvas');
+    stripCanvas.className = 'day-row-strip';
+    stripCanvas.title = 'click for full timeline';
+    stripCanvas.addEventListener('click', () => showDayDrilldown(ds));
+    row.appendChild(stripCanvas);
+
+    const meta = document.createElement('div');
+    meta.className = 'day-row-meta';
+    const trackedMin = Math.round((bucket.sessionSeconds + bucket.break) / 60);
+    const daySlouchSec = bucket.left + bucket.right + bucket.slump + bucket.lean;
+    const daySlouchPct = bucket.sessionSeconds ? Math.round(daySlouchSec / bucket.sessionSeconds * 100) : 0;
+    meta.textContent = trackedMin > 0 ? `${trackedMin}m · ${daySlouchPct}%` : '—';
+    row.appendChild(meta);
+
+    weekDayRowsList.appendChild(row);
+
+    drawTotalsBar(totalsCanvas, bucket);
+    const { segments } = computeDaySegments(dayEvents, new Date(ds + 'T00:00:00'));
+    drawDayStrip(stripCanvas, segments);
+  });
+}
+
+function renderTodayTimeline(events, canvas, referenceDate) {
+  const container = canvas.parentElement;
+  const containerWidth = container.getBoundingClientRect().width || container.clientWidth || 600;
+  const width = Math.max(containerWidth, 300);
+  const height = 175;
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = width + 'px';
+  canvas.style.height = height + 'px';
+  canvas.style.display = 'block';
+
+  const ctx2 = canvas.getContext('2d');
+  ctx2.scale(dpr, dpr);
+  ctx2.clearRect(0, 0, width, height);
+
+  const timelineHeight = 100;
+  const legendY = timelineHeight + 22;
+  const hourLabelY = timelineHeight + 14;
+
+  const { segments, isToday, nowMinute } = computeDaySegments(events, referenceDate);
+
+  const colors = TIMELINE_COLORS;
 
   const labels = {
     good: 'sitting well',
@@ -1764,9 +1889,14 @@ async function showReport(range) {
   // fast and immune to the REST row cap no matter how much history piles
   // up, while still being current within a day or two. "today" is untouched:
   // always raw, since it needs full per-minute granularity for the timeline.
+  // Week is also always raw for every day in range, not just the recent
+  // ones -- only 7 days, so the volume that made month need the rollup in
+  // the first place (thousands of rows) never comes close to mattering
+  // here, and the day rows below need real per-minute detail for the whole
+  // week, not just aggregate totals.
   let events = [];
   let summaryRows = [];
-  if (range === 'week' || range === 'month') {
+  if (range === 'month') {
     const summaryEnd = addDaysToDateStr(curDate, -2);
     const recentStart = addDaysToDateStr(curDate, -1);
     [summaryRows, events] = await Promise.all([
@@ -1831,11 +1961,20 @@ async function showReport(range) {
 
   slouchChartCtx.canvas.style.display = 'none';
   todayTimelineCanvas.style.display = 'none';
+  weekDayRows.style.display = 'none';
   hideDayDrilldown();
 
   if (range === 'today') {
     todayTimelineCanvas.style.display = 'block';
     renderTodayTimeline(events, todayTimelineCanvas);
+  } else if (range === 'week') {
+    weekDayRows.style.display = 'block';
+    const eventsByDate = {};
+    events.forEach(e => {
+      if (!eventsByDate[e.date]) eventsByDate[e.date] = [];
+      eventsByDate[e.date].push(e);
+    });
+    renderWeekDayRows(dates, dateMap, eventsByDate);
   } else {
     slouchChartCtx.canvas.style.display = 'block';
     if (currentChart) currentChart.destroy();
