@@ -10,17 +10,29 @@
 // generate-summary.cjs already uses).
 //
 // The 2-day buffer exists because `date` is bucketed by each device's LOCAL
-// wall-clock day, not UTC -- this script runs on UTC time, so a session
-// logged late at night in a timezone ahead of UTC could still be "today" or
-// "yesterday" locally while looking older from here. Recomputing everything
-// up to the cutoff on every run (rather than tracking what's "new") keeps
-// this self-healing: a late-arriving write, a backdated correction, or a
-// missed run all just get picked up cleanly next time.
+// wall-clock day, not UTC -- a session logged late at night in a timezone
+// ahead of UTC could still be "today" or "yesterday" locally while looking
+// older from here. Recomputing everything up to the cutoff on every run
+// (rather than tracking what's "new") keeps this self-healing: a
+// late-arriving write, a backdated correction, or a missed run all just get
+// picked up cleanly next time.
+//
+// "Today" for that buffer must be computed in Brisbane time, not the
+// runner's ambient UTC clock. The cron deliberately fires at 2am Brisbane
+// (16:00 UTC the previous day), which is a UTC calendar date still one day
+// behind Brisbane's -- computing the cutoff from raw UTC `now` silently
+// landed the whole rollup a full day earlier than the app (running on the
+// user's actual Brisbane-local browser clock) expects, every single night.
+// Confirmed 2026-09-17: two runs on the same UTC day both produced cutoff
+// 2026-09-14 while the client already expected 2026-09-15, leaving that day
+// permanently blank in the week/month chart. AEST has no DST, so a fixed
+// +10h offset is safe year-round.
+const BRISBANE_OFFSET_MS = 10 * 60 * 60 * 1000;
 
 function cutoffDate() {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 2);
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  const brisbaneNow = new Date(Date.now() + BRISBANE_OFFSET_MS);
+  brisbaneNow.setUTCDate(brisbaneNow.getUTCDate() - 2);
+  return brisbaneNow.toISOString().slice(0, 10); // YYYY-MM-DD, Brisbane-local
 }
 
 async function fetchRows(url, key, cutoff) {
