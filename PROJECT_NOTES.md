@@ -368,6 +368,50 @@ work from.
   regardless, per item 3 above). Zero tokens spent. Left off intentionally
   until there's trustworthy multi-day, multi-user data worth summarizing.
 
+## Roadmap (not started, captured 2026-09-17 so they don't get lost)
+
+None of these are built. Listed here in the order the user raised them, not
+priority:
+
+1. **Directional brightness/glare square**, next to the hydration gauge —
+   discussed in detail (brightness + left/right skew, sampled every 30-60s
+   off a downscaled frame, nudges on sustained glare) then explicitly paused
+   ("pause on brightness for a moment") in favor of the data-integrity work.
+   Design already scoped, just not built. Revisit that conversation before
+   starting rather than re-deriving it.
+2. **Connect OpenRouter for basic AI analysis.** Distinct from the
+   already-built-but-dormant `generate-summary.cjs` (which calls the
+   Anthropic API directly). Natural first use case once connected: the
+   "call ready check" idea below, which needs a vision-capable model.
+3. **Google Calendar integration** — correlate posture/slouch patterns
+   against calendar events, specifically interested in whether posture
+   changes during calls. Would need: OAuth to read the user's calendar
+   (read-only), matching event time ranges against `posture_events`, and
+   probably a new view for the correlation itself. Not scoped beyond that.
+4. **Auto-disable voice nudges during video calls** (Zoom/Teams/etc using
+   the camera). Real usability problem, not cosmetic — nudges interrupting
+   a call is actively disruptive. No detection mechanism chosen yet;
+   options worth weighing when this is picked up: `navigator.mediaDevices`
+   can't directly tell you another app has the camera (Plumb already holds
+   it), so likely needs either OS-level signal (not available to a web
+   app) or an indirect proxy — e.g. detecting when the tab/window loses
+   focus to a known call app, or a manual toggle as a fallback if no
+   reliable auto-detection exists.
+5. **ElevenLabs voices**, presumably alongside or replacing the current
+   offline Piper TTS. Tradeoff to weigh when scoping: Piper's whole appeal
+   is offline/private (`@mintplex-labs/piper-tts-web`, no network call per
+   nudge); ElevenLabs would mean a network call and API cost per spoken
+   nudge, or a cached-phrase approach instead.
+6. **"Call ready" self-check button** — hit a button, get told if hair's
+   tidy, teeth are clear, background's not messy, before joining a call.
+   Confirmed doable: capture a single frame from the existing video/canvas
+   (`canvas.toDataURL()` or `toBlob()`), send it to a vision-capable LLM
+   with a prompt asking for exactly those things, show the response. This
+   is the natural first real use of the OpenRouter connection (item 2) --
+   no new capture infrastructure needed, since the frame is already sitting
+   in the same `overlay`/`video` elements everything else in this app reads
+   from.
+
 ## The presence/break/away/not-tracking state model
 
 This is the most conceptually tangled part of the app and worth understanding
