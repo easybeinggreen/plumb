@@ -828,8 +828,8 @@ const BREAK_RETURN_SHORT_PHRASES = ["Good break — that was a nice stretch.", "
 let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
-function drawPoseDots(points) {
-  ctx.fillStyle = 'rgba(44,110,142,0.9)';
+function drawPoseDots(points, color) {
+  ctx.fillStyle = color || 'rgba(44,110,142,0.9)';
   points.forEach(p => {
     ctx.beginPath();
     ctx.arc(p.x * overlay.width, p.y * overlay.height, 4, 0, 2 * Math.PI);
@@ -850,6 +850,37 @@ function leanInRatio(lSh, rSh, baselineSw) {
   if (!baselineSw) return 0;
   const sw = shoulderWidthOf(lSh, rSh);
   return (sw - baselineSw) / baselineSw;
+}
+
+// ---- Experimental face-point signals (eye-line tilt, inter-eye distance,
+// nose offset) -- not wired into calibration, thresholds, nudges, or
+// Supabase yet. Just drawn + printed live so they can be eyeballed against
+// real movement before deciding if/how to turn any of them into a real
+// signal. Landmark indices per BlazePose topology: 0 = nose, 2/5 = left/
+// right eye centers.
+function eyeTiltDegrees(leftEye, rightEye) {
+  return Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * (180 / Math.PI);
+}
+function interEyeDistanceRatio(leftEye, rightEye, lSh, rSh) {
+  const sw = shoulderWidthOf(lSh, rSh);
+  return Math.hypot(leftEye.x - rightEye.x, leftEye.y - rightEye.y) / sw;
+}
+function noseOffset(nose, shMid, lSh, rSh) {
+  const sw = shoulderWidthOf(lSh, rSh);
+  return { x: (nose.x - shMid.x) / sw, y: (nose.y - shMid.y) / sw };
+}
+function drawExperimentalReadout(eyeTilt, eyeDist, noseOff) {
+  ctx.font = '11px Karla, sans-serif';
+  const lines = [
+    `eye tilt: ${eyeTilt.toFixed(1)}°`,
+    `eye dist: ${eyeDist.toFixed(3)}`,
+    `nose off: ${noseOff.x.toFixed(3)}, ${noseOff.y.toFixed(3)}`
+  ];
+  const boxW = 130, lineH = 14, pad = 6;
+  ctx.fillStyle = 'rgba(10,38,38,0.65)';
+  ctx.fillRect(6, 6, boxW, lines.length * lineH + pad * 2 - 4);
+  ctx.fillStyle = '#F0DAC7';
+  lines.forEach((line, i) => ctx.fillText(line, 6 + pad, 6 + pad + lineH * (i + 1) - 4));
 }
 
 async function initModel() {
@@ -2005,6 +2036,16 @@ function loop() {
 
     const earMid = midpoint(leftEar, rightEar);
     const shMid = midpoint(leftSh, rightSh);
+
+    // Experimental only (see comment above the helpers) -- drawn/printed for
+    // now, not fed into calibration, slouch detection, or storage.
+    const leftEye = lm[2], rightEye = lm[5], nose = lm[0];
+    drawPoseDots([leftEye, rightEye, nose], 'rgba(193,98,46,0.85)');
+    drawExperimentalReadout(
+      eyeTiltDegrees(leftEye, rightEye),
+      interEyeDistanceRatio(leftEye, rightEye, leftSh, rightSh),
+      noseOffset(nose, shMid, leftSh, rightSh)
+    );
 
     if (!isPersonPresent) {
       if (breakActive && !manualBreak && breakStartedAt) {
