@@ -215,6 +215,20 @@ function addDaysToDateStr(ds, n) {
   return dateForTimestamp(d.getTime());
 }
 
+// Minutes as "Xm" up to an hour, "Xh Ym" (or "Xh" when the minutes are 0)
+// past that -- used everywhere a duration in minutes is shown in the
+// report, so "1697m" doesn't sit next to "604m" while a nearby number
+// already reads "6h 20m" from a different formatter.
+function formatMinutes(mins) {
+  const rounded = Math.round(mins);
+  if (rounded >= 60) {
+    const h = Math.floor(rounded / 60);
+    const m = rounded % 60;
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  return `${rounded}m`;
+}
+
 let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + today())) || 0;
 let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
 let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
@@ -1625,14 +1639,36 @@ function markMinutes(event, states, state) {
   }
 }
 
-const TIMELINE_COLORS = {
+// One color/label per category, shared by every chart in the report --
+// the totals bar, the minute-by-minute strips, and both legends. Previously
+// the totals bar broke slouching into left/lean/right/slump (4 colors)
+// while the minute strip collapsed all four into one generic orange
+// "slouching" -- same underlying data, two different palettes, which is
+// exactly what read as contradictory sitting side by side. Now both draw
+// from this single map, and the minute strip picks whichever slouch
+// sub-type actually dominated that minute instead of a fixed color.
+const CATEGORY_COLORS = {
   good: '#0A2626',
-  slouch: '#C1622E',
+  left: '#F0DAC7',
+  right: '#E4C1A0',
+  slump: '#C1622E',
+  lean: '#2E7D6B',
   break: '#C9C2B3',
   away: '#9FB0B5',
   not_tracking: '#F0EDE6',
   future: 'transparent'
 };
+const CATEGORY_LABELS = {
+  good: 'good posture',
+  left: 'leaning left',
+  right: 'leaning right',
+  slump: 'slumping',
+  lean: 'leaning in',
+  break: 'break',
+  away: 'away',
+  not_tracking: 'not tracking'
+};
+const SLOUCH_TYPE_KEY = { lateral_left: 'left', lateral_right: 'right', compression: 'slump', lean_in: 'lean' };
 
 // Classifies every minute of `referenceDate` into a base state (good/break/
 // away/not_tracking/future) from raw events, plus -- for "good" minutes --
@@ -1685,12 +1721,17 @@ function computeMinuteData(events, referenceDate) {
     i = j - 1;
   }
 
-  // How many seconds of each minute a slouch-type event actually overlapped,
-  // not just whether it touched the minute -- this is what makes the strip
-  // reflect real density instead of rounding every touch up to a full 60s.
-  const slouchSeconds = new Array(1440).fill(0);
+  // How many seconds of each minute each slouch sub-type actually
+  // overlapped, not just whether it touched the minute -- this is what
+  // makes the strip reflect real density instead of rounding every touch
+  // up to a full 60s, and tracking sub-types separately (rather than one
+  // combined "slouch" bucket) is what lets the strip use the same
+  // left/right/slump/lean colors as the totals bar instead of a single
+  // generic orange for all four.
+  const slouchSecondsByType = { left: new Array(1440).fill(0), right: new Array(1440).fill(0), slump: new Array(1440).fill(0), lean: new Array(1440).fill(0) };
   events.forEach(e => {
-    if (!['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) return;
+    const key = SLOUCH_TYPE_KEY[e.type];
+    if (!key) return;
     const start = new Date(e.start_time);
     const end = new Date(e.end_time);
     if (isNaN(start) || isNaN(end)) return;
@@ -1701,32 +1742,46 @@ function computeMinuteData(events, referenceDate) {
     while (cursor < clippedEnd && m < 1440) {
       const minuteEnd = new Date(midnight.getTime() + (m + 1) * 60000);
       const segEnd = new Date(Math.min(clippedEnd, minuteEnd));
-      if (m >= 0) slouchSeconds[m] += (segEnd - cursor) / 1000;
+      if (m >= 0) slouchSecondsByType[key][m] += (segEnd - cursor) / 1000;
       cursor = segEnd;
       m++;
     }
   });
-  const slouchFrac = slouchSeconds.map(s => Math.min(1, s / 60));
 
-  return { states, slouchFrac, isToday, nowMinute, midnight };
+  const slouchFrac = new Array(1440).fill(0);
+  const slouchType = new Array(1440).fill(null);
+  for (let m = 0; m < 1440; m++) {
+    let total = 0, bestKey = null, bestSec = 0;
+    for (const key of ['left', 'right', 'slump', 'lean']) {
+      const sec = slouchSecondsByType[key][m];
+      total += sec;
+      if (sec > bestSec) { bestSec = sec; bestKey = key; }
+    }
+    slouchFrac[m] = Math.min(1, total / 60);
+    slouchType[m] = bestKey;
+  }
+
+  return { states, slouchFrac, slouchType, isToday, nowMinute, midnight };
 }
 
 // Draws one minute-resolution track: solid color per base state, with a
-// slouch-density overlay (alpha = fraction of that minute spent slouching)
-// on top of "good" minutes instead of a flat on/off paint. Shared by the
+// slouch-density overlay on top of "good" minutes -- alpha = fraction of
+// that minute spent slouching, color = whichever slouch sub-type actually
+// dominated that minute (from CATEGORY_COLORS, same map the totals bar
+// uses), instead of a flat on/off paint in one fixed color. Shared by the
 // full single-day timeline and the compact per-day strips so both render
 // the same underlying data the same way.
-function drawMinuteTrack(ctx2, x0, y0, width, height, states, slouchFrac) {
+function drawMinuteTrack(ctx2, x0, y0, width, height, states, slouchFrac, slouchType) {
   for (let m = 0; m < 1440; m++) {
     const state = states[m];
     if (state === 'future') continue;
     const x = x0 + (m / 1440) * width;
     const w = x0 + ((m + 1) / 1440) * width - x;
-    ctx2.fillStyle = TIMELINE_COLORS[state] || '#ccc';
+    ctx2.fillStyle = CATEGORY_COLORS[state] || '#ccc';
     ctx2.fillRect(x, y0, w, height);
-    if (state === 'good' && slouchFrac[m] > 0) {
+    if (state === 'good' && slouchFrac[m] > 0 && slouchType[m]) {
       ctx2.globalAlpha = slouchFrac[m];
-      ctx2.fillStyle = TIMELINE_COLORS.slouch;
+      ctx2.fillStyle = CATEGORY_COLORS[slouchType[m]];
       ctx2.fillRect(x, y0, w, height);
       ctx2.globalAlpha = 1;
     }
@@ -1748,14 +1803,15 @@ function drawDayStrip(canvas, minuteData) {
   const ctx2 = canvas.getContext('2d');
   ctx2.scale(dpr, dpr);
   ctx2.clearRect(0, 0, width, height);
-  drawMinuteTrack(ctx2, 0, 0, width, height, minuteData.states, minuteData.slouchFrac);
+  drawMinuteTrack(ctx2, 0, 0, width, height, minuteData.states, minuteData.slouchFrac, minuteData.slouchType);
 }
 
-const TOTALS_BAR_COLORS = { good: '#0A2626', left: '#F0DAC7', right: '#E4C1A0', slump: '#C1622E', lean: '#2E7D6B', break: '#C9C2B3' };
-
-// The same six categories as the month view's stacked bar chart, just drawn
-// as one compact horizontal bar per day instead of a Chart.js dataset --
-// pairs with drawDayStrip() in the week view's day rows.
+// The same categories (and CATEGORY_COLORS) as the minute strip next to it
+// and the month view's stacked bar chart, drawn as one compact horizontal
+// bar per day instead of a Chart.js dataset -- pairs with drawDayStrip()
+// in the week view's day rows. Includes "away" now too (previously only
+// the minute strip showed it), so a day with real away-time doesn't look
+// like it's missing time between the two bars.
 function drawTotalsBar(canvas, bucket) {
   const width = Math.max(canvas.getBoundingClientRect().width || canvas.parentElement.clientWidth || 110, 40);
   const height = 16;
@@ -1771,7 +1827,7 @@ function drawTotalsBar(canvas, bucket) {
   const good = Math.max(0, bucket.sessionSeconds - bucket.left - bucket.right - bucket.slump - bucket.lean);
   const segs = [
     ['good', good], ['left', bucket.left], ['right', bucket.right],
-    ['slump', bucket.slump], ['lean', bucket.lean], ['break', bucket.break]
+    ['slump', bucket.slump], ['lean', bucket.lean], ['break', bucket.break], ['away', bucket.away]
   ];
   const total = segs.reduce((sum, [, v]) => sum + v, 0);
   if (total <= 0) {
@@ -1783,7 +1839,7 @@ function drawTotalsBar(canvas, bucket) {
   segs.forEach(([key, val]) => {
     if (val <= 0) return;
     const w = (val / total) * width;
-    ctx2.fillStyle = TOTALS_BAR_COLORS[key];
+    ctx2.fillStyle = CATEGORY_COLORS[key];
     ctx2.fillRect(x, 0, w, height);
     x += w;
   });
@@ -1796,11 +1852,13 @@ function drawTotalsBar(canvas, bucket) {
 // day is cheap, so there's no need to lean on the rollup table here. This
 // is also the shape future AI summarization wants: totals and the
 // underlying pattern together, per day, not just one or the other.
-const TOTALS_BAR_LABELS = { good: 'good posture', left: 'leaning left', right: 'leaning right', slump: 'slumping', lean: 'leaning in', break: 'break' };
-const TIMELINE_LABELS = { good: 'sitting well', slouch: 'slouching (shade = how much)', break: 'break', away: 'away', not_tracking: 'not tracking' };
 
-// Built from the same color constants the bars/strips themselves draw
-// from, so the key can't silently drift out of sync with what's on screen.
+// One flat legend, not two -- the totals bar and the minute strip used to
+// each get their own color set (4-way slouch split vs. one generic orange
+// for all slouching), which is exactly what made them read as two
+// different, contradicting charts sitting side by side. Both now draw from
+// CATEGORY_COLORS, so one legend covers both, built from that same map so
+// it can't silently drift out of sync with what's actually on screen.
 function renderWeekLegend() {
   if (weekDayRowsLegend.childElementCount > 0) return;
   const makeGroup = (title, colors, labels) => {
@@ -1824,8 +1882,7 @@ function renderWeekLegend() {
     });
     return group;
   };
-  weekDayRowsLegend.appendChild(makeGroup('totals', TOTALS_BAR_COLORS, TOTALS_BAR_LABELS));
-  weekDayRowsLegend.appendChild(makeGroup('pattern', TIMELINE_COLORS, TIMELINE_LABELS));
+  weekDayRowsLegend.appendChild(makeGroup('day', CATEGORY_COLORS, CATEGORY_LABELS));
   weekDayRowsLegend.appendChild(makeGroup('hydration', { water: 'var(--water)' }, { water: 'bar = % of daily target' }));
 }
 
@@ -1859,7 +1916,7 @@ function renderWeekDayRows(dates, dateMap, eventsByDate, hydrationByDate) {
     const trackedMin = Math.round((bucket.sessionSeconds + bucket.break) / 60);
     const daySlouchSec = bucket.left + bucket.right + bucket.slump + bucket.lean;
     const daySlouchPct = bucket.sessionSeconds ? Math.round(daySlouchSec / bucket.sessionSeconds * 100) : 0;
-    meta.textContent = trackedMin > 0 ? `${trackedMin}m · ${daySlouchPct}%` : '—';
+    meta.textContent = trackedMin > 0 ? `${formatMinutes(trackedMin)} · ${daySlouchPct}%` : '—';
     row.appendChild(meta);
 
     const hydrationMl = (hydrationByDate && hydrationByDate[ds]) || 0;
@@ -1909,18 +1966,14 @@ function renderTodayTimeline(events, canvas, referenceDate) {
   const legendY = timelineHeight + 22;
   const hourLabelY = timelineHeight + 14;
 
-  const { states, slouchFrac, isToday, nowMinute, midnight } = computeMinuteData(events, referenceDate);
-  const colors = TIMELINE_COLORS;
+  const { states, slouchFrac, slouchType, isToday, nowMinute, midnight } = computeMinuteData(events, referenceDate);
+  // Same colors/labels as the week view's legend (CATEGORY_COLORS/LABELS) --
+  // just with the break/away duration hints this bigger legend has room
+  // for, so this and the week view never disagree about what a color means.
+  const colors = CATEGORY_COLORS;
+  const labels = { ...CATEGORY_LABELS, break: 'break (1–60m)', away: 'away (60m+)' };
 
-  const labels = {
-    good: 'sitting well',
-    slouch: 'slouching',
-    break: 'break (1–60m)',
-    away: 'away (60m+)',
-    not_tracking: 'not tracking'
-  };
-
-  drawMinuteTrack(ctx2, 0, 0, width, timelineHeight, states, slouchFrac);
+  drawMinuteTrack(ctx2, 0, 0, width, timelineHeight, states, slouchFrac, slouchType);
 
   // Contiguous runs of the same base state, for the hover tooltip below --
   // the fill itself no longer needs these (drawMinuteTrack paints
@@ -1977,13 +2030,9 @@ function renderTodayTimeline(events, canvas, referenceDate) {
     ctx2.fillText('now', x + 3, 9);
   }
 
-  const legendItems = [
-    { key: 'good', color: colors.good },
-    { key: 'slouch', color: colors.slouch },
-    { key: 'break', color: colors.break },
-    { key: 'away', color: colors.away },
-    { key: 'not_tracking', color: colors.not_tracking }
-  ];
+  const legendItems = Object.keys(colors)
+    .filter(key => key !== 'future')
+    .map(key => ({ key, color: colors[key] }));
 
   let legendX = 0;
   ctx2.font = '10px Karla, sans-serif';
@@ -2009,15 +2058,6 @@ function renderTodayTimeline(events, canvas, referenceDate) {
   canvas._timelineWidth = width;
   canvas._timelineHeight = timelineHeight;
   canvas._timelineMidnight = midnight;
-
-  function formatDuration(mins) {
-    if (mins >= 60) {
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      return m > 0 ? `${h}h ${m}m` : `${h}h`;
-    }
-    return `${mins}m`;
-  }
 
   canvas.onmousemove = (e) => {
     const rect = canvas.getBoundingClientRect();
@@ -2046,7 +2086,7 @@ function renderTodayTimeline(events, canvas, referenceDate) {
         if (avgPct > 0) extra = ` · ${avgPct}% slouching`;
       }
 
-      canvas.title = `${labels[seg.state]}${extra}\n${startLabel} – ${endLabel}\n${formatDuration(seg.endMin - seg.startMin)}`;
+      canvas.title = `${labels[seg.state]}${extra}\n${startLabel} – ${endLabel}\n${formatMinutes(seg.endMin - seg.startMin)}`;
     } else {
       canvas.title = '';
     }
@@ -2229,6 +2269,7 @@ async function showReport(range) {
   const rightMin = dates.map(ds => Math.round(dateMap[ds].right / 60));
   const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump / 60));
   const leanMin = dates.map(ds => Math.round(dateMap[ds].lean / 60));
+  const awayMin = dates.map(ds => Math.round(dateMap[ds].away / 60));
   const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean) / 60)));
 
   let totalBreak = 0, totalSession = 0, totalSlouch = 0, totalBreaks = 0, totalAway = 0;
@@ -2263,11 +2304,11 @@ async function showReport(range) {
   }
 
   reportSummary.innerHTML = `
-    <div class="metric"><div class="value">${Math.round(overall / 60)}m</div><div class="label">monitored</div></div>
+    <div class="metric"><div class="value">${formatMinutes(overall / 60)}</div><div class="label">monitored</div></div>
     <div class="metric"><div class="value">${slouchPct}%</div><div class="label">time slouching</div></div>
     <div class="metric"><div class="value">${totalBreaks}</div><div class="label">breaks</div></div>
-    <div class="metric"><div class="value">${avgBreak}m</div><div class="label">avg break</div></div>
-    ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway / 3600)}h</div><div class="label">time away</div></div>` : ''}
+    <div class="metric"><div class="value">${formatMinutes(avgBreak)}</div><div class="label">avg break</div></div>
+    ${totalAway > 0 ? `<div class="metric"><div class="value">${formatMinutes(totalAway / 60)}</div><div class="label">time away</div></div>` : ''}
     ${hydrationMetric}
   `;
 
@@ -2296,12 +2337,13 @@ async function showReport(range) {
       data: {
         labels,
         datasets: [
-          { label: 'good posture', data: goodMin, backgroundColor: '#0A2626', stack: 's' },
-          { label: 'leaning left', data: leftMin, backgroundColor: '#F0DAC7', stack: 's' },
-          { label: 'leaning right', data: rightMin, backgroundColor: '#E4C1A0', stack: 's' },
-          { label: 'slumping', data: slumpMin, backgroundColor: '#C1622E', stack: 's' },
-          { label: 'leaning in', data: leanMin, backgroundColor: '#2E7D6B', stack: 's' },
-          { label: 'break', data: breakMin, backgroundColor: '#C9C2B3', stack: 's' }
+          { label: CATEGORY_LABELS.good, data: goodMin, backgroundColor: CATEGORY_COLORS.good, stack: 's' },
+          { label: CATEGORY_LABELS.left, data: leftMin, backgroundColor: CATEGORY_COLORS.left, stack: 's' },
+          { label: CATEGORY_LABELS.right, data: rightMin, backgroundColor: CATEGORY_COLORS.right, stack: 's' },
+          { label: CATEGORY_LABELS.slump, data: slumpMin, backgroundColor: CATEGORY_COLORS.slump, stack: 's' },
+          { label: CATEGORY_LABELS.lean, data: leanMin, backgroundColor: CATEGORY_COLORS.lean, stack: 's' },
+          { label: CATEGORY_LABELS.break, data: breakMin, backgroundColor: CATEGORY_COLORS.break, stack: 's' },
+          { label: CATEGORY_LABELS.away, data: awayMin, backgroundColor: CATEGORY_COLORS.away, stack: 's' }
         ]
       },
       options: {
@@ -2309,11 +2351,11 @@ async function showReport(range) {
         maintainAspectRatio: true,
         scales: {
           x: { stacked: true, grid: { display: false } },
-          y: { stacked: true, title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } }
+          y: { stacked: true, title: { display: true, text: 'time' }, ticks: { callback: (v) => formatMinutes(v) }, grid: { color: 'rgba(10,38,38,0.06)' } }
         },
         plugins: {
           legend: { labels: { font: { family: 'Karla', weight: '600', size: 11 }, boxWidth: 12, padding: 12 } },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw} min` } }
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatMinutes(ctx.raw)}` } }
         },
         // Click a day's bar to drill into that day's actual timeline (same
         // rendering as "today", just for whichever date was clicked) --
@@ -2398,7 +2440,7 @@ async function renderAiSummary() {
     aiMeta.textContent = data.generatedAt ? `generated ${new Date(data.generatedAt).toLocaleString()} · based on ${data.stats.daysLogged} logged days` : '';
     const s = data.stats;
     aiStatGrid.innerHTML = `
-      <div class="metric"><div class="value">${Math.round((s.totalSessionMinutes || 0) / 60)}h</div><div class="label">tracked time</div></div>
+      <div class="metric"><div class="value">${formatMinutes(s.totalSessionMinutes || 0)}</div><div class="label">tracked time</div></div>
       <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">time slouching</div></div>
       <div class="metric"><div class="value">${s.totalBreaksTaken || 0}</div><div class="label">breaks taken</div></div>
     `;
@@ -2408,14 +2450,17 @@ async function renderAiSummary() {
       type: 'bar',
       data: {
         labels: days.map(d => d.date),
-        datasets: [{ label: 'slouch minutes', data: days.map(d => d.slouchMinutes || 0), backgroundColor: '#C1622E', borderRadius: 4 }]
+        datasets: [{ label: 'slouching', data: days.map(d => d.slouchMinutes || 0), backgroundColor: CATEGORY_COLORS.slump, borderRadius: 4 }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: true,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${formatMinutes(ctx.raw)}` } }
+        },
         scales: {
-          y: { title: { display: true, text: 'minutes' }, grid: { color: 'rgba(10,38,38,0.06)' } },
+          y: { title: { display: true, text: 'time' }, ticks: { callback: (v) => formatMinutes(v) }, grid: { color: 'rgba(10,38,38,0.06)' } },
           x: { grid: { display: false } }
         }
       }
