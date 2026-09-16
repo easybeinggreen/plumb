@@ -81,9 +81,11 @@ const modalClose = document.getElementById('modalClose');
 const modalTabs = document.getElementById('modalTabs');
 const reportSummary = document.getElementById('reportSummary');
 const slouchChartCtx = document.getElementById('slouchChart').getContext('2d');
+const hydrationChartCtx = document.getElementById('hydrationChart').getContext('2d');
 const todayTimelineCanvas = document.getElementById('todayTimelineChart');
 const weekDayRows = document.getElementById('weekDayRows');
 const weekDayRowsList = document.getElementById('weekDayRowsList');
+const weekDayRowsLegend = document.getElementById('weekDayRowsLegend');
 const dayDrilldown = document.getElementById('dayDrilldown');
 const dayDrilldownTitle = document.getElementById('dayDrilldownTitle');
 const dayDrilldownCanvas = document.getElementById('dayDrilldownChart');
@@ -119,6 +121,7 @@ const breakTargetEl = document.getElementById('breakTarget');
 const breakMinutesEl = document.getElementById('breakMinutes');
 
 let currentChart = null;
+let hydrationChart = null;
 let aiChart = null;
 
 // ---- State ----
@@ -1048,6 +1051,20 @@ function alignPreviewFrame() {
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
     drawPoseDots([lm[7], lm[8], lm[11], lm[12]]);
+    // This alignment countdown is the ONLY point the raw video is ever
+    // visible -- movePipContent() (see stopCamera/PiP wiring) sets both
+    // `video` and `overlay` to opacity:0 and moves them off-screen once
+    // tracking actually starts, on purpose (PiP shows the abstracted status
+    // card, not your face). The main loop() also draws the eye/nose
+    // overlay, but onto a canvas nobody can ever see by that point -- this
+    // is the only place it's worth drawing at all.
+    const leftEye = lm[2], rightEye = lm[5], nose = lm[0];
+    drawPoseDots([leftEye, rightEye, nose], 'rgba(193,98,46,0.85)');
+    drawExperimentalReadout(
+      eyeTiltDegrees(leftEye, rightEye),
+      interEyeDistanceRatio(leftEye, rightEye, lm[11], lm[12]),
+      noseOffset(nose, midpoint(lm[11], lm[12]), lm[11], lm[12])
+    );
   }
   requestAnimationFrame(alignPreviewFrame);
 }
@@ -1620,7 +1637,41 @@ function drawTotalsBar(canvas, bucket) {
 // day is cheap, so there's no need to lean on the rollup table here. This
 // is also the shape future AI summarization wants: totals and the
 // underlying pattern together, per day, not just one or the other.
-function renderWeekDayRows(dates, dateMap, eventsByDate) {
+const TOTALS_BAR_LABELS = { good: 'good posture', left: 'leaning left', right: 'leaning right', slump: 'slumping', lean: 'leaning in', break: 'break' };
+const TIMELINE_LABELS = { good: 'sitting well', slouch: 'slouching (shade = how much)', break: 'break', away: 'away', not_tracking: 'not tracking' };
+
+// Built from the same color constants the bars/strips themselves draw
+// from, so the key can't silently drift out of sync with what's on screen.
+function renderWeekLegend() {
+  if (weekDayRowsLegend.childElementCount > 0) return;
+  const makeGroup = (title, colors, labels) => {
+    const group = document.createElement('div');
+    group.className = 'legend-group';
+    const label = document.createElement('span');
+    label.className = 'legend-group-label';
+    label.textContent = title;
+    group.appendChild(label);
+    Object.keys(colors).forEach(key => {
+      if (!(key in labels)) return;
+      const item = document.createElement('span');
+      item.className = 'legend-item';
+      const swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      swatch.style.background = colors[key];
+      if (key === 'not_tracking') swatch.style.border = '1px solid var(--ink-faint-2)';
+      item.appendChild(swatch);
+      item.appendChild(document.createTextNode(labels[key]));
+      group.appendChild(item);
+    });
+    return group;
+  };
+  weekDayRowsLegend.appendChild(makeGroup('totals', TOTALS_BAR_COLORS, TOTALS_BAR_LABELS));
+  weekDayRowsLegend.appendChild(makeGroup('pattern', TIMELINE_COLORS, TIMELINE_LABELS));
+  weekDayRowsLegend.appendChild(makeGroup('hydration', { water: 'var(--water)' }, { water: 'bar = % of daily target' }));
+}
+
+function renderWeekDayRows(dates, dateMap, eventsByDate, hydrationByDate) {
+  renderWeekLegend();
   weekDayRowsList.innerHTML = '';
   dates.forEach(ds => {
     const bucket = dateMap[ds];
@@ -1651,6 +1702,24 @@ function renderWeekDayRows(dates, dateMap, eventsByDate) {
     const daySlouchPct = bucket.sessionSeconds ? Math.round(daySlouchSec / bucket.sessionSeconds * 100) : 0;
     meta.textContent = trackedMin > 0 ? `${trackedMin}m · ${daySlouchPct}%` : '—';
     row.appendChild(meta);
+
+    const hydrationMl = (hydrationByDate && hydrationByDate[ds]) || 0;
+    const hydrationCell = document.createElement('div');
+    hydrationCell.className = 'day-row-hydration';
+    hydrationCell.title = `${hydrationMl}ml of ${hydrationTargetMl}ml target`;
+    const hydrationBarBg = document.createElement('div');
+    hydrationBarBg.className = 'day-row-hydration-bar';
+    const hydrationBarFill = document.createElement('div');
+    hydrationBarFill.className = 'day-row-hydration-fill';
+    const hydrationPct = hydrationTargetMl ? Math.min(100, Math.round((hydrationMl / hydrationTargetMl) * 100)) : 0;
+    hydrationBarFill.style.width = `${hydrationPct}%`;
+    hydrationBarBg.appendChild(hydrationBarFill);
+    hydrationCell.appendChild(hydrationBarBg);
+    const hydrationLabel = document.createElement('span');
+    hydrationLabel.className = 'day-row-hydration-label';
+    hydrationLabel.textContent = hydrationMl > 0 ? `${(hydrationMl / 1000).toFixed(1)}L` : '—';
+    hydrationCell.appendChild(hydrationLabel);
+    row.appendChild(hydrationCell);
 
     weekDayRowsList.appendChild(row);
 
@@ -1840,6 +1909,17 @@ async function fetchEventsForRange(start, end) {
   } catch (e) { console.warn(e); return []; }
 }
 
+async function fetchHydrationForRange(start, end) {
+  if (!SYNC_CONFIGURED) return [];
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/hydration_events?date=gte.${start}&date=lte.${end}&user_id=eq.${encodeURIComponent(currentUserId)}&select=date,volume_ml`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) throw new Error('fetch');
+    return await res.json();
+  } catch (e) { console.warn(e); return []; }
+}
+
 // Reads the pre-aggregated rollup table instead of raw events -- a handful
 // of (date, type) rows instead of potentially thousands of individual
 // nudges, so week/month reports stay fast and immune to the REST row cap
@@ -1942,16 +2022,28 @@ async function showReport(range) {
   // week, not just aggregate totals.
   let events = [];
   let summaryRows = [];
+  let hydrationRows = [];
   if (range === 'month') {
     const summaryEnd = addDaysToDateStr(curDate, -2);
     const recentStart = addDaysToDateStr(curDate, -1);
-    [summaryRows, events] = await Promise.all([
+    [summaryRows, events, hydrationRows] = await Promise.all([
       summaryEnd >= start ? fetchDailySummaryForRange(start, summaryEnd) : Promise.resolve([]),
-      fetchEventsForRange(recentStart, end)
+      fetchEventsForRange(recentStart, end),
+      fetchHydrationForRange(start, end)
+    ]);
+  } else if (range === 'week') {
+    [events, hydrationRows] = await Promise.all([
+      fetchEventsForRange(start, end),
+      fetchHydrationForRange(start, end)
     ]);
   } else {
     events = await fetchEventsForRange(start, end);
   }
+
+  const hydrationByDate = {};
+  hydrationRows.forEach(r => {
+    hydrationByDate[r.date] = (hydrationByDate[r.date] || 0) + (r.volume_ml || 0);
+  });
 
   const dateMap = {};
   let ds0 = start;
@@ -1997,15 +2089,31 @@ async function showReport(range) {
   // already used session-only.
   const slouchPct = totalSession ? Math.min(100, Math.round(totalSlouch / totalSession * 100)) : 0;
   const avgBreak = totalBreaks ? Math.round(totalBreak / totalBreaks / 60) : 0;
+
+  // Days with zero logged water are real "didn't drink anything" days, not
+  // missing data (unlike posture, there's no passive capture -- every ml is
+  // a manual button press) -- so they count fully toward the average rather
+  // than being excluded as unmeasured.
+  let hydrationMetric = '';
+  if (range === 'week' || range === 'month') {
+    const dayCount = dates.length;
+    const totalMl = dates.reduce((sum, ds) => sum + (hydrationByDate[ds] || 0), 0);
+    const avgMl = dayCount ? Math.round(totalMl / dayCount) : 0;
+    const avgPctOfTarget = hydrationTargetMl ? Math.round((avgMl / hydrationTargetMl) * 100) : 0;
+    hydrationMetric = `<div class="metric"><div class="value">${(avgMl / 1000).toFixed(1)}L</div><div class="label">avg hydration${avgPctOfTarget ? ` (${avgPctOfTarget}%)` : ''}</div></div>`;
+  }
+
   reportSummary.innerHTML = `
     <div class="metric"><div class="value">${Math.round(overall / 60)}m</div><div class="label">monitored</div></div>
     <div class="metric"><div class="value">${slouchPct}%</div><div class="label">time slouching</div></div>
     <div class="metric"><div class="value">${totalBreaks}</div><div class="label">breaks</div></div>
     <div class="metric"><div class="value">${avgBreak}m</div><div class="label">avg break</div></div>
     ${totalAway > 0 ? `<div class="metric"><div class="value">${Math.round(totalAway / 3600)}h</div><div class="label">time away</div></div>` : ''}
+    ${hydrationMetric}
   `;
 
   slouchChartCtx.canvas.style.display = 'none';
+  hydrationChartCtx.canvas.style.display = 'none';
   todayTimelineCanvas.style.display = 'none';
   weekDayRows.style.display = 'none';
   hideDayDrilldown();
@@ -2020,7 +2128,7 @@ async function showReport(range) {
       if (!eventsByDate[e.date]) eventsByDate[e.date] = [];
       eventsByDate[e.date].push(e);
     });
-    renderWeekDayRows(dates, dateMap, eventsByDate);
+    renderWeekDayRows(dates, dateMap, eventsByDate, hydrationByDate);
   } else {
     slouchChartCtx.canvas.style.display = 'block';
     if (currentChart) currentChart.destroy();
@@ -2060,6 +2168,41 @@ async function showReport(range) {
         }
       }
     });
+
+    // Month is the only view long enough that a day-by-day water trend is
+    // worth its own chart rather than just an average -- week's day rows
+    // already show it inline per day.
+    if (range === 'month') {
+      hydrationChartCtx.canvas.style.display = 'block';
+      if (hydrationChart) hydrationChart.destroy();
+      const hydrationL = dates.map(ds => Math.round((hydrationByDate[ds] || 0) / 100) / 10);
+      const targetL = hydrationTargetMl / 1000;
+      hydrationChart = new Chart(hydrationChartCtx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { label: 'water', data: hydrationL, backgroundColor: '#3E7CA6', borderRadius: 3 },
+            {
+              label: 'target', data: dates.map(() => targetL), type: 'line',
+              borderColor: 'rgba(10,38,38,0.35)', borderDash: [4, 4], pointRadius: 0, borderWidth: 1.5
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          scales: {
+            x: { grid: { display: false } },
+            y: { title: { display: true, text: 'litres' }, grid: { color: 'rgba(10,38,38,0.06)' } }
+          },
+          plugins: {
+            legend: { labels: { font: { family: 'Karla', weight: '600', size: 11 }, boxWidth: 12, padding: 12 } },
+            tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw}L` } }
+          }
+        }
+      });
+    }
   }
 }
 

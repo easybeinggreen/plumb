@@ -317,6 +317,11 @@
   .metric .value { font-size: 19px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
   .metric .label { font-size: 11px; color: var(--ink-soft); margin-top: 3px; font-weight: 600; }
   .chart-container { width: 100%; max-height: 280px; position: relative; }
+  .day-rows-legend { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 4px; margin-bottom: 6px; }
+  .legend-group { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .legend-group-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); margin-right: 2px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-soft); }
+  .legend-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
   .day-rows-caption { font-size: 11px; color: var(--ink-soft); margin-bottom: 10px; }
   .day-rows { display: flex; flex-direction: column; gap: 7px; }
   .day-row { display: flex; align-items: center; gap: 10px; }
@@ -324,6 +329,10 @@
   .day-row-totals { flex: 0 0 110px; height: 16px; border-radius: 3px; display: block; }
   .day-row-strip { flex: 1 1 auto; min-width: 0; height: 16px; border-radius: 3px; display: block; cursor: pointer; }
   .day-row-meta { flex: 0 0 66px; font-size: 11px; color: var(--ink-soft); text-align: right; font-variant-numeric: tabular-nums; }
+  .day-row-hydration { flex: 0 0 50px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .day-row-hydration-bar { width: 40px; height: 5px; border-radius: 3px; background: var(--ink-faint); overflow: hidden; }
+  .day-row-hydration-fill { height: 100%; background: var(--water); border-radius: 3px; }
+  .day-row-hydration-label { font-size: 9.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .drilldown { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
   .drilldown-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 13px; font-weight: 500; color: var(--ink); }
   .drilldown-close { font-size: 12px; font-weight: 500; color: var(--ink-soft); background: transparent; border: none; padding: 0; }
@@ -568,10 +577,12 @@
       <div class="report-summary" id="reportSummary"></div>
       <div class="chart-container"><canvas id="slouchChart"></canvas></div>
       <div id="weekDayRows" style="display:none;">
-        <div class="day-rows-caption">totals · minute-by-minute pattern — click a day for full detail</div>
+        <div class="day-rows-legend" id="weekDayRowsLegend"></div>
+        <div class="day-rows-caption">click a day for full detail</div>
         <div class="day-rows" id="weekDayRowsList"></div>
       </div>
       <div class="chart-container" style="margin-top:12px;"><canvas id="todayTimelineChart" style="display:none;"></canvas></div>
+      <div class="chart-container" style="margin-top:20px;"><canvas id="hydrationChart" style="display:none;"></canvas></div>
       <div class="drilldown" id="dayDrilldown" style="display:none;">
         <div class="drilldown-header">
           <span id="dayDrilldownTitle"></span>
