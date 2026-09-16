@@ -198,11 +198,9 @@ total history. Added:
   (2am Brisbane), same secrets/style as the existing (still-dormant)
   `generate-summary.cjs`. Recomputes everything up to a 2-day-old cutoff
   on every run (full recompute, not incremental) so it's self-healing
-  against late writes or backdated corrections. **Not yet confirmed to
-  have run successfully on GitHub's actual schedule** — only backfilled
-  once manually via direct SQL (227 rows, covering all history through
-  2026-09-12) and syntax-checked locally. Check the Actions tab after its
-  first real 2am run.
+  against late writes or backdated corrections. Confirmed working via a
+  real `workflow_dispatch` run on 2026-09-16 — see "Fixed 2026-09-16"
+  below for why it didn't run at all before that.
 - `showReport()` now reads `posture_daily_summary` for anything older than
   2 days and raw `posture_events` for the last 2 days (not yet rolled up),
   merged through one shared `addToBucket()` so both paths compute
@@ -217,6 +215,44 @@ total history. Added:
   Supabase queries + `node --check` + DOM-id cross-referencing, not a real
   click-through. Worth doing before trusting the drill-down UI works as
   intended.
+
+**Fixed 2026-09-16, from a user report of the week/month chart barely
+correlating with what the day felt like (hour-by-hour view showing real
+slumping, day/week chart looking "mostly fine"):**
+- **The nightly rollup had never run, not once, since the one-time manual
+  backfill.** Root cause was two separate bugs stacked on top of each
+  other:
+  1. `.github/workflows/rollup.yml` existed on disk but was **never
+     `git add`ed, committed, or pushed** — `git log --all` had zero
+     commits touching it, so GitHub Actions had no idea the workflow
+     existed and had never scheduled it. The file was also corrupted
+     (line 1 read `git statusname: Roll up daily summary` — looks like a
+     `git status` command's output got pasted into the file instead of
+     the terminal), which would have broken it even if it had been
+     pushed as-is.
+  2. Once pushed and manually triggered, it failed immediately with
+     `permission denied for table posture_daily_summary` — `service_role`
+     had never been granted `SELECT`/`INSERT`/`UPDATE` on that table (the
+     same class of bug as the `hydration_events` sequence grant from
+     2026-08-26: creating a table doesn't automatically grant every role
+     DML on it). Fixed via migration `grant_service_role_daily_summary`.
+  Net effect: `posture_daily_summary` was frozen at 2026-09-11 (the
+  manual-backfill cutoff) while raw `posture_events` kept growing
+  normally. `showReport()`'s 2-day-raw / older-than-2-days-rollup split
+  meant every day in between had **no data at all** in the week/month
+  chart — not wrong data, just silently blank bars, which reads as "fine"
+  at a glance. The "today" tab and the ambient hour-by-hour timeline were
+  never affected — both always read raw `posture_events` directly.
+  **General rule this establishes: after adding a Supabase table, verify
+  `service_role`'s actual grants directly (`information_schema.role_table_grants`)
+  rather than assuming CREATE TABLE implies write access — this is now
+  the second time a forgotten grant silently broke a feature.** Also:
+  after adding a scheduled GitHub Actions workflow, confirm `git log --all
+  -- <path>` shows it landed on the remote default branch, not just that
+  the file exists locally.
+- Backfilled via a manual `workflow_dispatch` run immediately after the
+  fix (234 rows, current through 2026-09-14) rather than waiting for the
+  next 2am Brisbane cron.
 
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
@@ -239,9 +275,11 @@ total history. Added:
    isolation** are implemented and code-reviewed but still haven't been
    proven by actual simultaneous multi-device or multi-person use — only
    solo, sequential testing so far.
-6. **The nightly rollup workflow hasn't completed a real scheduled run
-   yet** — see "New: daily summary rollup" above. Confirm it in the
-   Actions tab after its first 2am Brisbane run.
+6. **The nightly rollup workflow has only ever run via manual
+   `workflow_dispatch` so far** — see "Fixed 2026-09-16" above. It's now
+   correctly registered with GitHub, so the 2am Brisbane cron should pick
+   it up on its own; confirm in the Actions tab after the first
+   unattended run actually fires.
 
 **Deliberately dormant / paused on purpose** (not broken, user's own call):
 - AI weekly summary. `ANTHROPIC_API_KEY` is set as a GitHub secret, the
