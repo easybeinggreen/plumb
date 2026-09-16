@@ -1458,16 +1458,25 @@ const TIMELINE_COLORS = {
   future: 'transparent'
 };
 
-// Classifies every minute of `referenceDate` into a coarse state (good/
-// slouch/break/away/not_tracking/future) from raw events, then collapses
-// that into contiguous segments. Pulled out of renderTodayTimeline so the
-// same classification feeds both the full single-day timeline and the
-// compact per-day strips in the week view -- one source of truth for "what
-// happened when" that later AI summarization can also consume directly.
-function computeDaySegments(events, referenceDate) {
+// Classifies every minute of `referenceDate` into a base state (good/break/
+// away/not_tracking/future) from raw events, plus -- for "good" minutes --
+// what fraction of that minute was actually spent slouching (0..1), not
+// just whether a slouch event touched it at all. A single 8-second posture
+// correction shouldn't paint a whole 60-second block solid orange the same
+// as ten straight minutes of real slumping: confirmed on real data
+// (2026-09-14) that 1,169 slouch events averaging 8s each touched 297
+// distinct minutes -- nearly 5 hours' worth of solid-orange minutes -- while
+// the true slouch total that day was 2.6 hours, which is exactly why the
+// minute strip looked far more slouch-heavy than the totals bar next to it.
+// Pulled out of renderTodayTimeline so the same classification feeds both
+// the full single-day timeline and the compact per-day strips in the week
+// view -- one source of truth for "what happened when" that later AI
+// summarization can also consume directly.
+function computeMinuteData(events, referenceDate) {
   const now = new Date();
   const refDate = referenceDate || now;
   const midnight = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate());
+  const dayEnd = new Date(midnight.getTime() + 24 * 3600 * 1000);
   const isToday = midnight.getTime() === new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   // A past day is fully elapsed -- no "future" greying, no "now" line. Only
   // today has a real cutoff partway through.
@@ -1480,11 +1489,6 @@ function computeDaySegments(events, referenceDate) {
 
   events.forEach(e => { if (e.type === 'presence') markMinutes(e, states, 'good'); });
   events.forEach(e => {
-    if (['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) {
-      markMinutes(e, states, 'slouch');
-    }
-  });
-  events.forEach(e => {
     if (e.type === 'break') markMinutes(e, states, 'break');
     else if (e.type === 'away') markMinutes(e, states, 'away');
     else if (e.type === 'not_tracking') markMinutes(e, states, 'not_tracking');
@@ -1495,37 +1499,69 @@ function computeDaySegments(events, referenceDate) {
   // Bridge short not_tracking runs sandwiched between two tracked segments so
   // a half-second flicker doesn't paint a stray "not tracking" sliver.
   const BRIDGE_MAX_MIN = 2;
-  const bridgeable = (s) => s === 'good' || s === 'slouch';
   for (let i = 0; i < 1440; i++) {
     if (states[i] !== 'not_tracking') continue;
     let j = i;
     while (j < 1440 && states[j] === 'not_tracking') j++;
-    if (j - i <= BRIDGE_MAX_MIN && bridgeable(states[i - 1]) && bridgeable(states[j])) {
+    if (j - i <= BRIDGE_MAX_MIN && states[i - 1] === 'good' && states[j] === 'good') {
       for (let k = i; k < j; k++) states[k] = 'good';
     }
     i = j - 1;
   }
 
-  const segments = [];
-  let cur = states[0];
-  let start = 0;
-  for (let i = 1; i < 1440; i++) {
-    if (states[i] !== cur) {
-      segments.push({ state: cur, startMin: start, endMin: i });
-      start = i;
-      cur = states[i];
+  // How many seconds of each minute a slouch-type event actually overlapped,
+  // not just whether it touched the minute -- this is what makes the strip
+  // reflect real density instead of rounding every touch up to a full 60s.
+  const slouchSeconds = new Array(1440).fill(0);
+  events.forEach(e => {
+    if (!['lateral_left', 'lateral_right', 'compression', 'lean_in'].includes(e.type)) return;
+    const start = new Date(e.start_time);
+    const end = new Date(e.end_time);
+    if (isNaN(start) || isNaN(end)) return;
+    let cursor = new Date(Math.max(start, midnight));
+    const clippedEnd = new Date(Math.min(end, dayEnd));
+    if (clippedEnd <= cursor) return;
+    let m = Math.floor((cursor - midnight) / 60000);
+    while (cursor < clippedEnd && m < 1440) {
+      const minuteEnd = new Date(midnight.getTime() + (m + 1) * 60000);
+      const segEnd = new Date(Math.min(clippedEnd, minuteEnd));
+      if (m >= 0) slouchSeconds[m] += (segEnd - cursor) / 1000;
+      cursor = segEnd;
+      m++;
     }
-  }
-  segments.push({ state: cur, startMin: start, endMin: 1440 });
+  });
+  const slouchFrac = slouchSeconds.map(s => Math.min(1, s / 60));
 
-  return { segments, isToday, nowMinute };
+  return { states, slouchFrac, isToday, nowMinute, midnight };
 }
 
-// Compact, unlabeled version of the timeline -- just the colored segments,
-// sized to fill whatever the canvas's CSS layout already gives it. Used for
-// the per-day rows in the week view, where 7 of these sit next to a totals
-// bar so the pattern within a day is visible without clicking in.
-function drawDayStrip(canvas, segments) {
+// Draws one minute-resolution track: solid color per base state, with a
+// slouch-density overlay (alpha = fraction of that minute spent slouching)
+// on top of "good" minutes instead of a flat on/off paint. Shared by the
+// full single-day timeline and the compact per-day strips so both render
+// the same underlying data the same way.
+function drawMinuteTrack(ctx2, x0, y0, width, height, states, slouchFrac) {
+  for (let m = 0; m < 1440; m++) {
+    const state = states[m];
+    if (state === 'future') continue;
+    const x = x0 + (m / 1440) * width;
+    const w = x0 + ((m + 1) / 1440) * width - x;
+    ctx2.fillStyle = TIMELINE_COLORS[state] || '#ccc';
+    ctx2.fillRect(x, y0, w, height);
+    if (state === 'good' && slouchFrac[m] > 0) {
+      ctx2.globalAlpha = slouchFrac[m];
+      ctx2.fillStyle = TIMELINE_COLORS.slouch;
+      ctx2.fillRect(x, y0, w, height);
+      ctx2.globalAlpha = 1;
+    }
+  }
+}
+
+// Compact, unlabeled version of the timeline, sized to fill whatever the
+// canvas's CSS layout already gives it. Used for the per-day rows in the
+// week view, where 7 of these sit next to a totals bar so the pattern
+// within a day is visible without clicking in.
+function drawDayStrip(canvas, minuteData) {
   const width = Math.max(canvas.getBoundingClientRect().width || canvas.parentElement.clientWidth || 200, 40);
   const height = 16;
   const dpr = window.devicePixelRatio || 1;
@@ -1536,13 +1572,7 @@ function drawDayStrip(canvas, segments) {
   const ctx2 = canvas.getContext('2d');
   ctx2.scale(dpr, dpr);
   ctx2.clearRect(0, 0, width, height);
-  segments.forEach(seg => {
-    if (seg.state === 'future') return;
-    const x = (seg.startMin / 1440) * width;
-    const w = ((seg.endMin - seg.startMin) / 1440) * width;
-    ctx2.fillStyle = TIMELINE_COLORS[seg.state] || '#ccc';
-    ctx2.fillRect(x, 0, w, height);
-  });
+  drawMinuteTrack(ctx2, 0, 0, width, height, minuteData.states, minuteData.slouchFrac);
 }
 
 const TOTALS_BAR_COLORS = { good: '#0A2626', left: '#F0DAC7', right: '#E4C1A0', slump: '#C1622E', lean: '#2E7D6B', break: '#C9C2B3' };
@@ -1625,8 +1655,8 @@ function renderWeekDayRows(dates, dateMap, eventsByDate) {
     weekDayRowsList.appendChild(row);
 
     drawTotalsBar(totalsCanvas, bucket);
-    const { segments } = computeDaySegments(dayEvents, new Date(ds + 'T00:00:00'));
-    drawDayStrip(stripCanvas, segments);
+    const minuteData = computeMinuteData(dayEvents, new Date(ds + 'T00:00:00'));
+    drawDayStrip(stripCanvas, minuteData);
   });
 }
 
@@ -1651,8 +1681,7 @@ function renderTodayTimeline(events, canvas, referenceDate) {
   const legendY = timelineHeight + 22;
   const hourLabelY = timelineHeight + 14;
 
-  const { segments, isToday, nowMinute } = computeDaySegments(events, referenceDate);
-
+  const { states, slouchFrac, isToday, nowMinute, midnight } = computeMinuteData(events, referenceDate);
   const colors = TIMELINE_COLORS;
 
   const labels = {
@@ -1663,14 +1692,23 @@ function renderTodayTimeline(events, canvas, referenceDate) {
     not_tracking: 'not tracking'
   };
 
-  segments.forEach(seg => {
-    if (seg.state === 'future') return;
+  drawMinuteTrack(ctx2, 0, 0, width, timelineHeight, states, slouchFrac);
 
-    const x = (seg.startMin / 1440) * width;
-    const w = ((seg.endMin - seg.startMin) / 1440) * width;
-    ctx2.fillStyle = colors[seg.state] || '#ccc';
-    ctx2.fillRect(x, 0, w, timelineHeight);
-  });
+  // Contiguous runs of the same base state, for the hover tooltip below --
+  // the fill itself no longer needs these (drawMinuteTrack paints
+  // per-minute), but "sitting well, 09:14-11:40" reads better on hover than
+  // a single minute would.
+  const segments = [];
+  let segCur = states[0];
+  let segStart = 0;
+  for (let i = 1; i < 1440; i++) {
+    if (states[i] !== segCur) {
+      segments.push({ state: segCur, startMin: segStart, endMin: i });
+      segStart = i;
+      segCur = states[i];
+    }
+  }
+  segments.push({ state: segCur, startMin: segStart, endMin: 1440 });
 
   ctx2.fillStyle = '#4B615E';
   ctx2.font = '10px Karla, sans-serif';
@@ -1772,7 +1810,15 @@ function renderTodayTimeline(events, canvas, referenceDate) {
       const startLabel = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const endLabel = endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      canvas.title = `${labels[seg.state]}\n${startLabel} – ${endLabel}\n${formatDuration(seg.endMin - seg.startMin)}`;
+      let extra = '';
+      if (seg.state === 'good') {
+        let sum = 0;
+        for (let m = seg.startMin; m < seg.endMin; m++) sum += slouchFrac[m];
+        const avgPct = Math.round((sum / (seg.endMin - seg.startMin)) * 100);
+        if (avgPct > 0) extra = ` · ${avgPct}% slouching`;
+      }
+
+      canvas.title = `${labels[seg.state]}${extra}\n${startLabel} – ${endLabel}\n${formatDuration(seg.endMin - seg.startMin)}`;
     } else {
       canvas.title = '';
     }
