@@ -429,9 +429,9 @@ function incrementBreaksTaken() {
   localStorage.setItem(BREAK_TAKEN_KEY_PREFIX + today(), String(breaksTakenToday));
 }
 
-function finalizePresenceBlock(endedBy = 'person_left') {
+function finalizePresenceBlock(endedBy = 'person_left', endTs = Date.now()) {
   if (!presenceStartedAt) return;
-  const end = Date.now();
+  const end = endTs;
   const sittingSeconds = (end - presenceStartedAt) / 1000;
   if (sittingSeconds > 0) {
     lastFinalizedSittingSeconds = sittingSeconds;
@@ -530,12 +530,20 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
 
+  // Both blocks must end at hiddenStart, not now -- the hidden span itself
+  // gets logged separately as not_tracking below. Ending at Date.now() here
+  // previously attributed the entire hidden/asleep gap as continuous
+  // slouching AND continuous presence, on top of also logging the same
+  // span as not_tracking -- a real, confirmed bug: a tab left hidden
+  // overnight produced single compression events of 14.2h (2026-09-15),
+  // 15.7h (2026-08-26, mistakenly believed fixed by a different, unrelated
+  // leak-path fix that day), and 87.9h (2026-08-21).
   if (slouchStartedAt) {
-    logPostureEvent(slouchType, slouchStartedAt, Date.now());
+    logPostureEvent(slouchType, slouchStartedAt, hiddenStart);
     slouchStartedAt = null;
     slouchAccumulatedMs = 0;
   }
-  finalizePresenceBlock('tab_hidden');
+  finalizePresenceBlock('tab_hidden', hiddenStart);
   logNotTrackingEvent(hiddenStart, Date.now());
 
   isPersonPresent = false;
