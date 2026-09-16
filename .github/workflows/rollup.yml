@@ -1,0 +1,26 @@
+name: Roll up daily summary
+
+on:
+  schedule:
+    # 16:00 UTC = 2am Brisbane (UTC+10, no DST) -- well clear of any normal
+    # usage window, so it never races a still-open session for "today".
+    - cron: '0 16 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  rollup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Roll up posture_events into posture_daily_summary
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: node scripts/rollup-summary.cjs
