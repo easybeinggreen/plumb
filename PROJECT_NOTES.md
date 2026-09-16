@@ -41,15 +41,30 @@ alone for now, not forgotten.
   runs in the Monday-morning scheduled Action, reads `posture_events` from
   Supabase, calls the Anthropic API, writes `public/data/summary.json`.
 
-## Git / deployment state (as of 2026-08-26)
+## Git / deployment state (as of 2026-09-14)
 
-Work happens on branch `fix/sync-and-alignment-flow`, merged into `main` via
-PRs (branch protection requires this — direct pushes to `main` are blocked).
-GitHub Pages deploys automatically on every push to `main`. History so far:
-PR #1–#4 = cross-device sync fixes, per-user login, slouch% formula fix.
-PR #5–#6 = the visual redesign (see below). **PR #7 is open, not yet
-merged**, containing the slouch-state-leak fix and voice fixes described
-below — check its state before assuming those fixes are live.
+Work now happens directly on `main` via `git push` from a local clone,
+authenticated through Claude's Filesystem MCP connector (edits written
+locally, then committed/pushed by the user from their own terminal) —
+not the GitHub web editor, and not exclusively PRs anymore. **`main` has
+branch protection requiring PRs, but pushes as the repo owner bypass it**
+(GitHub prints "Bypassed rule violations" rather than rejecting the push);
+worth knowing before assuming a direct push will be blocked. GitHub Pages
+still deploys automatically on every push to `main`, via Actions.
+
+History: PR #1–#4 = cross-device sync fixes, per-user login, slouch%
+formula fix. PR #5–#6 = the visual redesign. PR #7 = slouch-state-leak
+fix + voice fixes, merged 2026-08-30. Everything since has landed as
+direct commits to `main` (see "Fixed" entries below for what and why).
+
+Housekeeping: PRs #1 and #2's branches sat open for weeks after their
+work was already fully merged into `main` (confirmed via
+`git merge-base --is-ancestor` — every commit on both branches was
+already an ancestor of `main`) — GitHub just never got told to close
+them. If old-looking open PRs turn up again, check ancestry before
+assuming they're unmerged work; don't go by the "behind" count alone,
+it's misleading once a branch has been merged by anything other than
+the merge button.
 
 One real gotcha that already happened once: a PR can get merged from an
 *older* snapshot of the branch if more commits get pushed to it between
@@ -118,33 +133,115 @@ to see it; it's a claude.ai artifact URL, not stored in this repo.
   if muted — indistinguishable from broken). Now bypasses mute via a
   `force` param on `speak()`.
 
+**Fixed 2026-09-13/14, from real live-usage bug reports:**
+- **"Voice sometimes just stops working" — root cause found, not just
+  patched.** This was the item listed as unreproduced below as of
+  2026-08-26; it turned out to be much bigger than voice. `loop()` (the
+  main rAF tracking loop) had zero error handling and no listener on the
+  camera track's `ended` event. When another app took the camera (Zoom,
+  Teams, OS camera app) or the `<video>` element stalled on a stale/
+  zero-size frame, the pose model would throw, which silently killed the
+  rAF chain — `running` stayed `true`, the button still said "stop
+  camera", and whatever presence/slouch block was open at that moment
+  never got finalized or flushed. That's not just "voice stops" — it's
+  why whole afternoons were going missing from the report. Fixed with a
+  try/catch around the loop body plus a `track.addEventListener('ended', ...)`
+  listener, both routed through a new `handleCameraLost()` that closes
+  things down the same clean way a manual stop does, but visibly (console
+  warning + alert-feed entry + a distinct placeholder message), so it's
+  never silent again. **General rule this establishes: any place video/
+  camera state is touched needs to consider "what if this feed just
+  disappears," not assume `getUserMedia` succeeding once means it stays
+  good.**
+- **Calibrate button's first click after starting the camera genuinely did
+  nothing** — confirmed by the user (not just a stale-cursor rendering
+  quirk, which was the first hypothesis and turned out wrong). Root cause:
+  `calibrateBtn.disabled = false` was being set *after* `await
+  requestPipWindow()`, so there was a real window where the video was
+  already visibly playing and the button looked ready, but was still
+  genuinely disabled underneath. Moved the enable earlier, right after the
+  video is confirmed live. Also hardened the click handler itself to give
+  explicit feedback ("camera not ready" / "no person detected") instead of
+  ever failing silently again, regardless of what timing edge case might
+  still be lurking.
+- **Week/month report was silently truncated to roughly the first two days
+  of any range.** Root cause: Supabase's REST API caps responses at 1,000
+  rows by default (`pgrst.db_max_rows`, unset = platform default), and a
+  single week of this app's per-nudge event volume is 2,000+ rows. Ordered
+  `date.asc`, the cap cut the response off mid-week, so later days just
+  looked like zero data — indistinguishable from "didn't use it that day"
+  without checking the raw row count directly. Confirmed via direct
+  Supabase queries before concluding this (not guessed): every session,
+  including the ones the user was certain about, was correctly in the
+  database the whole time. Immediate fix: raised
+  `alter role authenticator set pgrst.db_max_rows = 100000;` +
+  `NOTIFY pgrst, 'reload config';` — live now. This also means
+  `generate-summary.cjs`'s unfiltered, undated fetch of all of
+  `posture_events` (see item below) was almost certainly hitting the same
+  cap and only ever seeing the earliest rows in the table's whole history,
+  not recent ones — worth re-checking once that script is actually turned
+  on.
+
+**New: daily summary rollup + day drill-down (2026-09-14).** The row-cap
+fix above is a real ceiling, not just a config bump — raw event volume
+only grows, so week/month reports need a fetch that doesn't scale with
+total history. Added:
+- `posture_daily_summary` table — one row per `(date, user_id, type)` with
+  `total_seconds`/`event_count`, RLS mirrored exactly from
+  `posture_events` (`using (true)`, matching the pragmatic single-user
+  stance — see "Decisions"). **Purely a read-side cache, never a
+  replacement for raw data** — nothing in this design ever deletes or
+  downsamples `posture_events`; the point was explicitly to keep full
+  granularity available forever for future AI pattern-detection/calendar-
+  correlation work, not trade it away for report performance.
+- `scripts/rollup-summary.cjs` + `.github/workflows/rollup.yml` — nightly
+  (2am Brisbane), same secrets/style as the existing (still-dormant)
+  `generate-summary.cjs`. Recomputes everything up to a 2-day-old cutoff
+  on every run (full recompute, not incremental) so it's self-healing
+  against late writes or backdated corrections. **Not yet confirmed to
+  have run successfully on GitHub's actual schedule** — only backfilled
+  once manually via direct SQL (227 rows, covering all history through
+  2026-09-12) and syntax-checked locally. Check the Actions tab after its
+  first real 2am run.
+- `showReport()` now reads `posture_daily_summary` for anything older than
+  2 days and raw `posture_events` for the last 2 days (not yet rolled up),
+  merged through one shared `addToBucket()` so both paths compute
+  identically. `today` view is untouched — always raw, always full
+  granularity, since the minute-by-minute timeline needs it.
+- Clicking a bar in the week/month chart now drills into that day's real
+  timeline (reuses `renderTodayTimeline`, generalized to take an optional
+  reference date instead of always assuming "now"). Always fetches raw
+  `posture_events` for the single clicked day regardless of whether it's
+  been rolled up — the raw row is permanent either way.
+- **Not yet tested in an actual browser.** Built and verified via direct
+  Supabase queries + `node --check` + DOM-id cross-referencing, not a real
+  click-through. Worth doing before trusting the drill-down UI works as
+  intended.
+
 **Still open, not yet fixed**:
-1. **"Voice sometimes just stops working" after extended use** — reported
-   by the user, not yet reproduced or diagnosed. The fixes above might be
-   related (stuck state of some kind) but this wasn't confirmed, don't
-   claim it's fixed. If it recurs, the browser console (F12) at the moment
-   it stops is the thing to actually look at — a guess without that
-   evidence is likely to waste time.
-2. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
+1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
    trim, no case-folding. Fine solo; will silently split data once other
    real people type names. Cheap fix, not done.
-3. **`generate-summary.cjs` doesn't filter by user.** Once more than one
+2. **`generate-summary.cjs` doesn't filter by user.** Once more than one
    person's data exists in `posture_events`, the (still-dormant) weekly
    summary would blend everyone's stats into one narrative.
-4. **`posture_logs` table still exists in Supabase, fully unused by the
+3. **`posture_logs` table still exists in Supabase, fully unused by the
    app** (the write path was removed when per-user login was built — it
    only ever fed the old denormalized daily-total approach, which is why it
    was retired, see "Decisions" below). Safe to `drop table posture_logs;`
    whenever; not urgent.
-5. **RLS stays permissive at the database level** on every table
+4. **RLS stays permissive at the database level** on every table
    (`using (true)`). Per-user separation is enforced entirely client-side.
    Deliberate tradeoff (see "Decisions"), not an oversight — but it means
    "login" is a data-partitioning convenience, not a privacy boundary.
-6. **Cross-device session/slouch reconciliation and per-user data
+5. **Cross-device session/slouch reconciliation and per-user data
    isolation** are implemented and code-reviewed but still haven't been
    proven by actual simultaneous multi-device or multi-person use — only
    solo, sequential testing so far.
+6. **The nightly rollup workflow hasn't completed a real scheduled run
+   yet** — see "New: daily summary rollup" above. Confirm it in the
+   Actions tab after its first 2am Brisbane run.
 
 **Deliberately dormant / paused on purpose** (not broken, user's own call):
 - AI weekly summary. `ANTHROPIC_API_KEY` is set as a GitHub secret, the
