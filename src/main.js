@@ -114,6 +114,11 @@ const hydrationButtons = {
   bottle: document.getElementById('hydrationBottleBtn')
 };
 
+const lightBox = document.getElementById('lightBox');
+const lightTrendEl = document.getElementById('lightTrend');
+const lightPctEl = document.getElementById('lightPct');
+const lightReadoutEl = document.getElementById('lightReadout');
+
 const breakRingFill = document.getElementById('breakRingFill');
 const BREAK_RING_CIRCUMFERENCE = 2 * Math.PI * 54;
 const breakTakenEl = document.getElementById('breakTaken');
@@ -148,6 +153,29 @@ let lastMovementAt = null;
 let lastStillnessNudgeAt = 0;
 let lastBreakNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
+
+// ---- Directional brightness ----
+// Sampled off the same video frame everything else already reads, split
+// into left/right halves to catch glare from a window on one side (the
+// motivating case: a west-facing window makes the left side of the desk
+// unworkable by mid-afternoon). Deliberately sampled far less often than
+// posture (every ~10s, piggybacked on the existing housekeeping interval)
+// -- brightness doesn't change frame-to-frame the way posture does, and
+// getImageData on every rAF tick would be a real, pointless cost.
+const LIGHT_TREND_WINDOW_MS = 6 * 60 * 1000; // how far back "dimming/brightening" looks
+const LIGHT_TREND_THRESHOLD = 0.05; // brightness delta over that window to call it a trend
+const LIGHT_SKEW_TOLERANCE = 0.12; // signed left/right imbalance before it counts as "glare on one side"
+const LIGHT_SUSTAIN_MS = 90 * 1000; // how long the skew must hold before nudging
+const LIGHT_LOG_INTERVAL_MS = 5 * 60 * 1000; // how often a reading gets persisted to Supabase
+const LIGHT_DIM_RGB = [23, 46, 44];
+const LIGHT_BRIGHT_RGB = [232, 178, 92];
+let lightSampleCanvas = null;
+let lightSampleCtx = null;
+let lightBrightnessHistory = []; // [{t, brightness}], trimmed to LIGHT_TREND_WINDOW_MS
+let lightSkewStartedAt = null;
+let lightSkewSide = null; // 'left' | 'right'
+let lastGlareNudgeAt = 0;
+let lastLightLogAt = 0;
 
 let presenceStartedAt = null;
 let absenceStartedAt = null;
@@ -711,6 +739,134 @@ async function undoHydration() {
 Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key], key)));
 hydrationUndoBtn.addEventListener('click', undoHydration);
 
+function lerpRgb(t, from, to) {
+  const r = Math.round(from[0] + (to[0] - from[0]) * t);
+  const g = Math.round(from[1] + (to[1] - from[1]) * t);
+  const b = Math.round(from[2] + (to[2] - from[2]) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function resetLightWidget() {
+  lightBox.style.background = 'var(--light-dim)';
+  lightTrendEl.textContent = '';
+  lightPctEl.textContent = '—';
+  lightReadoutEl.textContent = 'no camera yet';
+  lightBrightnessHistory = [];
+  lightSkewStartedAt = null;
+  lightSkewSide = null;
+}
+
+// The box itself IS the reading: a left-to-right gradient built from the
+// two halves' actual measured brightness, rather than a separate arrow or
+// number doing the explaining. Glancing at it tells you both how bright
+// overall and which side, in one shape.
+function updateLightWidget(leftAvg, rightAvg) {
+  const leftColor = lerpRgb(leftAvg, LIGHT_DIM_RGB, LIGHT_BRIGHT_RGB);
+  const rightColor = lerpRgb(rightAvg, LIGHT_DIM_RGB, LIGHT_BRIGHT_RGB);
+  lightBox.style.background = `linear-gradient(to right, ${leftColor}, ${rightColor})`;
+
+  const brightness = (leftAvg + rightAvg) / 2;
+  lightPctEl.textContent = `${Math.round(brightness * 100)}%`;
+
+  const trend = computeLightTrend();
+  lightTrendEl.textContent = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '';
+
+  const skew = rightAvg - leftAvg;
+  const side = Math.abs(skew) < LIGHT_SKEW_TOLERANCE ? 'balanced' : skew > 0 ? 'brighter on right' : 'brighter on left';
+  lightReadoutEl.textContent = side;
+}
+
+function computeLightTrend() {
+  if (lightBrightnessHistory.length < 2) return 'flat';
+  const first = lightBrightnessHistory[0].brightness;
+  const last = lightBrightnessHistory[lightBrightnessHistory.length - 1].brightness;
+  const delta = last - first;
+  if (delta > LIGHT_TREND_THRESHOLD) return 'up';
+  if (delta < -LIGHT_TREND_THRESHOLD) return 'down';
+  return 'flat';
+}
+
+// Mirrors the slouch sustain pattern (mild blip vs. held long enough to
+// actually nudge about) rather than firing the instant the imbalance
+// crosses tolerance -- a cloud passing over shouldn't trigger a voice
+// nudge, sustained glare from a low sun should.
+function maybeNudgeGlare(skew) {
+  const side = skew > 0 ? 'right' : 'left';
+  if (Math.abs(skew) < LIGHT_SKEW_TOLERANCE) {
+    lightSkewStartedAt = null;
+    lightSkewSide = null;
+    return;
+  }
+  if (lightSkewSide !== side) {
+    lightSkewStartedAt = Date.now();
+    lightSkewSide = side;
+    return;
+  }
+  if (Date.now() - lightSkewStartedAt < LIGHT_SUSTAIN_MS) return;
+  if (Date.now() - lastGlareNudgeAt < 10 * 60 * 1000) return; // once per 10 min, not every tick
+  if (!voiceNudgesEnabled) return;
+  let phrase;
+  if (side === 'left') { phrase = GLARE_LEFT_PHRASES[glareLeftIdx % GLARE_LEFT_PHRASES.length]; glareLeftIdx++; }
+  else { phrase = GLARE_RIGHT_PHRASES[glareRightIdx % GLARE_RIGHT_PHRASES.length]; glareRightIdx++; }
+  speak(phrase);
+  addAlertToFeed('glare', phrase);
+  lastGlareNudgeAt = Date.now();
+}
+
+async function logLightReading(brightness, skew) {
+  if (!SYNC_CONFIGURED) return;
+  if (Date.now() - lastLightLogAt < LIGHT_LOG_INTERVAL_MS) return;
+  lastLightLogAt = Date.now();
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/light_readings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'return=minimal' },
+      body: JSON.stringify([{ user_id: currentUserId, date: today(), brightness, skew }])
+    });
+  } catch (err) { console.warn('logLightReading:', err); }
+}
+
+// Downscales the current video frame to a tiny offscreen canvas (cheap:
+// 40x30 = 1200 pixels vs. the full feed) and averages luminance across the
+// left and right halves separately. Called from the existing 10s
+// housekeeping interval, not every rAF tick -- brightness has no need for
+// that resolution.
+function sampleLight() {
+  if (!running || !video.videoWidth) return;
+  if (!lightSampleCanvas) {
+    lightSampleCanvas = document.createElement('canvas');
+    lightSampleCanvas.width = 40;
+    lightSampleCanvas.height = 30;
+    lightSampleCtx = lightSampleCanvas.getContext('2d', { willReadFrequently: true });
+  }
+  let data;
+  try {
+    lightSampleCtx.drawImage(video, 0, 0, 40, 30);
+    data = lightSampleCtx.getImageData(0, 0, 40, 30).data;
+  } catch (e) { return; }
+
+  let leftSum = 0, leftN = 0, rightSum = 0, rightN = 0;
+  for (let y = 0; y < 30; y++) {
+    for (let x = 0; x < 40; x++) {
+      const i = (y * 40 + x) * 4;
+      const lum = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+      if (x < 20) { leftSum += lum; leftN++; } else { rightSum += lum; rightN++; }
+    }
+  }
+  const leftAvg = leftSum / leftN;
+  const rightAvg = rightSum / rightN;
+  const brightness = (leftAvg + rightAvg) / 2;
+  const skew = rightAvg - leftAvg;
+
+  lightBrightnessHistory.push({ t: Date.now(), brightness });
+  const cutoff = Date.now() - LIGHT_TREND_WINDOW_MS;
+  while (lightBrightnessHistory.length && lightBrightnessHistory[0].t < cutoff) lightBrightnessHistory.shift();
+
+  updateLightWidget(leftAvg, rightAvg);
+  maybeNudgeGlare(skew);
+  logLightReading(brightness, skew);
+}
+
 hydrationTargetInput.value = hydrationTargetMl;
 hydrationTargetInput.addEventListener('change', () => {
   hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 2000);
@@ -830,7 +986,9 @@ const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
 const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Nice long break — welcome back.", "That was a proper break — good stuff.", "Well rested — good to have you back."];
 const BREAK_RETURN_SHORT_PHRASES = ["Good break — that was a nice stretch.", "Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet."];
-let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0;
+const GLARE_LEFT_PHRASES = ["Strong light on your left — worth adjusting the blind.", "It's gotten bright on your left side.", "Left side's quite bright now — check the light."];
+const GLARE_RIGHT_PHRASES = ["Strong light on your right — worth adjusting the blind.", "It's gotten bright on your right side.", "Right side's quite bright now — check the light."];
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0, glareLeftIdx = 0, glareRightIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
 function drawPoseDots(points, color) {
@@ -1221,6 +1379,7 @@ function stopCamera(reason = 'manual') {
 
   stillnessRef = null;
   lastMovementAt = null;
+  resetLightWidget();
   localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
 
   if (video.srcObject) {
@@ -2583,6 +2742,7 @@ setInterval(() => {
   flushEvents();
   reconcileTodayFromCloud();
   if (!trackingSummary.hidden) renderTrackingSummary();
+  sampleLight();
 }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');

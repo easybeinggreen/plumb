@@ -368,17 +368,36 @@ work from.
   regardless, per item 3 above). Zero tokens spent. Left off intentionally
   until there's trustworthy multi-day, multi-user data worth summarizing.
 
-## Roadmap (not started, captured 2026-09-17 so they don't get lost)
+## Roadmap (captured 2026-09-17 so they don't get lost)
 
-None of these are built. Listed here in the order the user raised them, not
-priority:
+Listed here in the order the user raised them, not priority. Item 1 is now
+built (2026-09-17); the rest are still not started.
 
-1. **Directional brightness/glare square**, next to the hydration gauge —
-   discussed in detail (brightness + left/right skew, sampled every 30-60s
-   off a downscaled frame, nudges on sustained glare) then explicitly paused
-   ("pause on brightness for a moment") in favor of the data-integrity work.
-   Design already scoped, just not built. Revisit that conversation before
-   starting rather than re-deriving it.
+1. **Directional brightness/glare square, built.** Lives next to the
+   hydration gauge in the `today` panel. `sampleLight()` (`src/main.js`)
+   downscales the video frame to 40x30 on an offscreen canvas every ~10s
+   (piggybacked on the existing housekeeping interval, not a new timer),
+   averages luminance separately for the left/right halves, and the box's
+   own background is literally a left-to-right CSS gradient built from
+   those two measured values (`updateLightWidget()`) -- no separate arrow
+   needed, the gradient *is* the reading, directionality and magnitude
+   both visible at a glance. A trend arrow compares brightness now against
+   6 minutes ago (`LIGHT_TREND_WINDOW_MS`). Sustained skew (>12% for 90s)
+   triggers a voice nudge via the same sustain-before-nudge pattern as
+   posture, capped at once per 10 minutes (`maybeNudgeGlare()`). Readings
+   persist to a new `light_readings` table every 5 minutes
+   (`logLightReading()`) -- same `date`/`user_id` shape as every other
+   events table, RLS `using(true)`, `anon` granted `SELECT`+`INSERT` up
+   front this time (learned from the `posture_daily_summary` grant misses
+   two days running). **Not yet charted anywhere** -- data is accumulating
+   in `light_readings` for whenever a trend view is worth building, same
+   as hydration was before its own trend got added. Verified: gradient
+   rendering, idle state, and the Supabase write path (schema + grants) all
+   confirmed working; the actual live-camera sampling couldn't be verified
+   end-to-end in a sandboxed browser with no real webcam -- worth a real
+   click-through, especially watching what happens near a genuinely bright
+   window, before fully trusting the nudge threshold (90s/12%) feels right
+   in practice.
 2. **Connect OpenRouter for basic AI analysis.** Distinct from the
    already-built-but-dormant `generate-summary.cjs` (which calls the
    Anthropic API directly). Natural first use case once connected: the
