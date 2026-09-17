@@ -1765,12 +1765,21 @@ function computeMinuteData(events, referenceDate) {
 }
 
 // Draws one minute-resolution track: solid color per base state, with a
-// slouch-density overlay on top of "good" minutes -- alpha = fraction of
-// that minute spent slouching, color = whichever slouch sub-type actually
-// dominated that minute (from CATEGORY_COLORS, same map the totals bar
-// uses), instead of a flat on/off paint in one fixed color. Shared by the
-// full single-day timeline and the compact per-day strips so both render
-// the same underlying data the same way.
+// slouch-density indicator on top of "good" minutes -- color = whichever
+// slouch sub-type actually dominated that minute (from CATEGORY_COLORS,
+// the exact same map the totals bar uses), height = fraction of that
+// minute spent slouching, as a small bar rising from the bottom rather
+// than a flat on/off paint in one fixed color.
+//
+// This used to be opacity-based (alpha = density) instead of height-based.
+// That's wrong for color-matching even though the hex value was identical:
+// alpha-blending a color over the very dark "good" backdrop desaturates it
+// towards near-black at the densities that are actually typical (most
+// slouch events are brief, per the 2026-09-14 finding -- 8s average), so a
+// "matching" orange rendered as a barely-tinted near-black smudge next to
+// the totals bar's fully-saturated orange. Height keeps every color at
+// full, undiluted saturation regardless of density -- a real color match,
+// not just an identical hex value that doesn't read as one.
 function drawMinuteTrack(ctx2, x0, y0, width, height, states, slouchFrac, slouchType) {
   for (let m = 0; m < 1440; m++) {
     const state = states[m];
@@ -1780,10 +1789,9 @@ function drawMinuteTrack(ctx2, x0, y0, width, height, states, slouchFrac, slouch
     ctx2.fillStyle = CATEGORY_COLORS[state] || '#ccc';
     ctx2.fillRect(x, y0, w, height);
     if (state === 'good' && slouchFrac[m] > 0 && slouchType[m]) {
-      ctx2.globalAlpha = slouchFrac[m];
+      const barH = height * slouchFrac[m];
       ctx2.fillStyle = CATEGORY_COLORS[slouchType[m]];
-      ctx2.fillRect(x, y0, w, height);
-      ctx2.globalAlpha = 1;
+      ctx2.fillRect(x, y0 + (height - barH), w, barH);
     }
   }
 }
@@ -1806,13 +1814,29 @@ function drawDayStrip(canvas, minuteData) {
   drawMinuteTrack(ctx2, 0, 0, width, height, minuteData.states, minuteData.slouchFrac, minuteData.slouchType);
 }
 
+// Total tracked seconds (everything drawTotalsBar actually stacks) for one
+// day's bucket -- shared with renderWeekDayRows so the scale passed in
+// there and the proportions drawn here can never disagree about what
+// counts.
+function totalsBarSeconds(bucket) {
+  return bucket.sessionSeconds + bucket.break + bucket.away;
+}
+
 // The same categories (and CATEGORY_COLORS) as the minute strip next to it
 // and the month view's stacked bar chart, drawn as one compact horizontal
 // bar per day instead of a Chart.js dataset -- pairs with drawDayStrip()
 // in the week view's day rows. Includes "away" now too (previously only
 // the minute strip showed it), so a day with real away-time doesn't look
 // like it's missing time between the two bars.
-function drawTotalsBar(canvas, bucket) {
+//
+// The bar's LENGTH (not just its internal proportions) is scaled against
+// maxSeconds -- the longest day in the same week -- so a 2-hour day draws
+// a short bar and an 8-hour day draws a full one, instead of both always
+// filling the box edge-to-edge regardless of how much was actually
+// tracked. Without this a nearly-idle day and a full day of use looked
+// identical at a glance, which was the actual complaint: a full box read
+// as "fully accounted for" no matter what it was a box *of*.
+function drawTotalsBar(canvas, bucket, maxSeconds) {
   const width = Math.max(canvas.getBoundingClientRect().width || canvas.parentElement.clientWidth || 110, 40);
   const height = 16;
   const dpr = window.devicePixelRatio || 1;
@@ -1824,21 +1848,24 @@ function drawTotalsBar(canvas, bucket) {
   ctx2.scale(dpr, dpr);
   ctx2.clearRect(0, 0, width, height);
 
+  // Faint full-width baseline so a short day's unfilled remainder reads as
+  // "less than the busiest day," not as a rendering gap.
+  ctx2.fillStyle = 'rgba(10,38,38,0.06)';
+  ctx2.fillRect(0, 0, width, height);
+
   const good = Math.max(0, bucket.sessionSeconds - bucket.left - bucket.right - bucket.slump - bucket.lean);
   const segs = [
     ['good', good], ['left', bucket.left], ['right', bucket.right],
     ['slump', bucket.slump], ['lean', bucket.lean], ['break', bucket.break], ['away', bucket.away]
   ];
-  const total = segs.reduce((sum, [, v]) => sum + v, 0);
-  if (total <= 0) {
-    ctx2.fillStyle = 'rgba(10,38,38,0.06)';
-    ctx2.fillRect(0, 0, width, height);
-    return;
-  }
+  const total = totalsBarSeconds(bucket);
+  if (total <= 0 || maxSeconds <= 0) return;
+
+  const barWidth = width * Math.min(1, total / maxSeconds);
   let x = 0;
   segs.forEach(([key, val]) => {
     if (val <= 0) return;
-    const w = (val / total) * width;
+    const w = (val / total) * barWidth;
     ctx2.fillStyle = CATEGORY_COLORS[key];
     ctx2.fillRect(x, 0, w, height);
     x += w;
@@ -1889,6 +1916,7 @@ function renderWeekLegend() {
 function renderWeekDayRows(dates, dateMap, eventsByDate, hydrationByDate) {
   renderWeekLegend();
   weekDayRowsList.innerHTML = '';
+  const maxSeconds = Math.max(1, ...dates.map(ds => totalsBarSeconds(dateMap[ds])));
   dates.forEach(ds => {
     const bucket = dateMap[ds];
     const dayEvents = eventsByDate[ds] || [];
@@ -1939,7 +1967,7 @@ function renderWeekDayRows(dates, dateMap, eventsByDate, hydrationByDate) {
 
     weekDayRowsList.appendChild(row);
 
-    drawTotalsBar(totalsCanvas, bucket);
+    drawTotalsBar(totalsCanvas, bucket, maxSeconds);
     const minuteData = computeMinuteData(dayEvents, new Date(ds + 'T00:00:00'));
     drawDayStrip(stripCanvas, minuteData);
   });
