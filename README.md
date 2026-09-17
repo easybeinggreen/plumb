@@ -160,6 +160,7 @@ Repo Settings → Secrets and variables → Actions → New repository secret, a
 | `SUPABASE_URL` | your Project URL (same value again) | No |
 | `SUPABASE_SERVICE_KEY` | your service_role key | **Yes — keep private** |
 | `ANTHROPIC_API_KEY` | from console.anthropic.com | **Yes — keep private** |
+| `OPENROUTER_API_KEY` | from openrouter.ai/keys | **Yes — keep private** |
 
 ### 3. GitHub Pages source
 

@@ -515,7 +515,11 @@ Listed in the order the user raised them, not priority.
    offline Piper TTS. Tradeoff to weigh when scoping: Piper's whole appeal
    is offline/private (`@mintplex-labs/piper-tts-web`, no network call per
    nudge); ElevenLabs would mean a network call and API cost per spoken
-   nudge, or a cached-phrase approach instead.
+   nudge, or a cached-phrase approach instead. Specifically: use ElevenLabs
+   to generate a *range* of selectable voices (not just one replacement
+   voice) — likely pairs with the cached-phrase approach, since nudge text
+   is a small fixed set, so each voice's full phrase set could be
+   pre-generated once rather than synthesized live per nudge.
 6. **"My best self" / "call ready" self-check button.** Refined
    2026-09-17: not just a one-off check against a fixed prompt -- capture
    and save a reference "best self" photo (hair brushed, sitting up,
