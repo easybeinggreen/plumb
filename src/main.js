@@ -1764,35 +1764,55 @@ function computeMinuteData(events, referenceDate) {
   return { states, slouchFrac, slouchType, isToday, nowMinute, midnight };
 }
 
-// Draws one minute-resolution track: solid color per base state, with a
-// slouch-density indicator on top of "good" minutes -- color = whichever
-// slouch sub-type actually dominated that minute (from CATEGORY_COLORS,
-// the exact same map the totals bar uses), height = fraction of that
-// minute spent slouching, as a small bar rising from the bottom rather
-// than a flat on/off paint in one fixed color.
-//
-// This used to be opacity-based (alpha = density) instead of height-based.
-// That's wrong for color-matching even though the hex value was identical:
-// alpha-blending a color over the very dark "good" backdrop desaturates it
-// towards near-black at the densities that are actually typical (most
-// slouch events are brief, per the 2026-09-14 finding -- 8s average), so a
-// "matching" orange rendered as a barely-tinted near-black smudge next to
-// the totals bar's fully-saturated orange. Height keeps every color at
-// full, undiluted saturation regardless of density -- a real color match,
-// not just an identical hex value that doesn't read as one.
-function drawMinuteTrack(ctx2, x0, y0, width, height, states, slouchFrac, slouchType) {
-  for (let m = 0; m < 1440; m++) {
-    const state = states[m];
-    if (state === 'future') continue;
-    const x = x0 + (m / 1440) * width;
-    const w = x0 + ((m + 1) / 1440) * width - x;
-    ctx2.fillStyle = CATEGORY_COLORS[state] || '#ccc';
-    ctx2.fillRect(x, y0, w, height);
-    if (state === 'good' && slouchFrac[m] > 0 && slouchType[m]) {
-      const barH = height * slouchFrac[m];
-      ctx2.fillStyle = CATEGORY_COLORS[slouchType[m]];
-      ctx2.fillRect(x, y0 + (height - barH), w, barH);
+const CATEGORY_ORDER = ['good', 'left', 'right', 'slump', 'lean', 'break', 'away', 'not_tracking'];
+
+// Groups consecutive minutes into `bucketMinutes`-wide buckets and draws
+// each as a small vertical stack -- good on top, everything else stacked
+// below it in proportion to how much of that bucket it actually took up --
+// using the exact same category order and colors as the totals bar. This
+// replaced a true one-column-per-minute renderer: at full-day scale, 1440
+// individual minute-columns (many real but brief, ~8s average per the
+// 2026-09-14 finding) read as a chaotic barcode rather than a shape you
+// could glance at and interpret. Bucketing trades that precision away
+// visually -- it's still there in the underlying minuteData for the hover
+// tooltip and the day-drilldown -- for "rough patches vs. clean stretches"
+// at a glance, which is what this view is actually for.
+function drawBucketedTrack(ctx2, x0, y0, width, height, minuteData, bucketMinutes) {
+  const { states, slouchFrac, slouchType } = minuteData;
+  for (let startM = 0; startM < 1440; startM += bucketMinutes) {
+    const endM = Math.min(1440, startM + bucketMinutes);
+    const secs = { good: 0, left: 0, right: 0, slump: 0, lean: 0, break: 0, away: 0, not_tracking: 0 };
+    let accounted = 0;
+    for (let m = startM; m < endM; m++) {
+      const state = states[m];
+      if (state === 'future') continue;
+      if (state === 'good') {
+        const frac = slouchFrac[m] || 0;
+        const type = slouchType[m];
+        if (frac > 0 && type) {
+          secs[type] += 60 * frac;
+          secs.good += 60 * (1 - frac);
+        } else {
+          secs.good += 60;
+        }
+      } else {
+        secs[state] += 60;
+      }
+      accounted += 60;
     }
+    if (accounted <= 0) continue; // bucket is entirely future (or empty)
+
+    const x = x0 + (startM / 1440) * width;
+    const bucketW = x0 + (endM / 1440) * width - x;
+    let y = y0;
+    CATEGORY_ORDER.forEach(key => {
+      const val = secs[key];
+      if (val <= 0) return;
+      const h = (val / accounted) * height;
+      ctx2.fillStyle = CATEGORY_COLORS[key];
+      ctx2.fillRect(x, y, bucketW, h);
+      y += h;
+    });
   }
 }
 
@@ -1811,7 +1831,7 @@ function drawDayStrip(canvas, minuteData) {
   const ctx2 = canvas.getContext('2d');
   ctx2.scale(dpr, dpr);
   ctx2.clearRect(0, 0, width, height);
-  drawMinuteTrack(ctx2, 0, 0, width, height, minuteData.states, minuteData.slouchFrac, minuteData.slouchType);
+  drawBucketedTrack(ctx2, 0, 0, width, height, minuteData, 20);
 }
 
 // Total tracked seconds (everything drawTotalsBar actually stacks) for one
@@ -1994,14 +2014,15 @@ function renderTodayTimeline(events, canvas, referenceDate) {
   const legendY = timelineHeight + 22;
   const hourLabelY = timelineHeight + 14;
 
-  const { states, slouchFrac, slouchType, isToday, nowMinute, midnight } = computeMinuteData(events, referenceDate);
+  const minuteData = computeMinuteData(events, referenceDate);
+  const { states, slouchFrac, isToday, nowMinute, midnight } = minuteData;
   // Same colors/labels as the week view's legend (CATEGORY_COLORS/LABELS) --
   // just with the break/away duration hints this bigger legend has room
   // for, so this and the week view never disagree about what a color means.
   const colors = CATEGORY_COLORS;
   const labels = { ...CATEGORY_LABELS, break: 'break (1–60m)', away: 'away (60m+)' };
 
-  drawMinuteTrack(ctx2, 0, 0, width, timelineHeight, states, slouchFrac, slouchType);
+  drawBucketedTrack(ctx2, 0, 0, width, timelineHeight, minuteData, 10);
 
   // Contiguous runs of the same base state, for the hover tooltip below --
   // the fill itself no longer needs these (drawMinuteTrack paints
