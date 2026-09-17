@@ -318,13 +318,112 @@ found by querying live data directly rather than reasoning from the code:
 Also added: the week tab now renders each day as a row pairing a
 consolidated totals bar with a compact minute-by-minute pattern strip
 (click through to the full timeline), instead of only the aggregate
-stacked bar — see `renderWeekDayRows()`/`computeDaySegments()` in
-`src/main.js`. Week now always fetches raw events for the full 7-day
-range rather than leaning on the rollup table for most of it (cheap at
-that volume); month is unchanged and still needs the rollup split. Explicit
-motivation from the user: getting totals and the real per-minute pattern
-into the same shape, per day, is what eventual AI summarization needs to
-work from.
+stacked bar — see `renderWeekDayRows()` in `src/main.js`. Week now always
+fetches raw events for the full 7-day range rather than leaning on the
+rollup table for most of it (cheap at that volume); month is unchanged and
+still needs the rollup split. Explicit motivation from the user: getting
+totals and the real per-minute pattern into the same shape, per day, is
+what eventual AI summarization needs to work from.
+
+**Timeline rendering, 2026-09-17: four iterations in one afternoon, worth
+reading before touching `computeMinuteData`/`drawPixelBands` again.** All
+from direct, immediate user feedback on each attempt — the lesson here is
+more about *how fast this loop was*, and to trust explicit visual feedback
+over "more accurate" instincts:
+1. Per-minute cells first showed slouch density as **opacity** (alpha =
+   fraction of that minute spent slouching) over the dark "good" color.
+   Technically correct, but alpha-blending a color onto a near-black
+   backdrop desaturates it — and since slouch events average ~8s (see the
+   2026-09-15 finding), most density values are low, so most "orange"
+   rendered as a barely-tinted near-black smudge, not orange. This is
+   *why* the totals bar and the minute strip looked like they disagreed
+   even after their color constants were unified (`CATEGORY_COLORS`) —
+   same hex value, desaturated by opacity math, doesn't read as the same
+   color.
+2. Switched opacity → **height** (a small full-saturation bar rising from
+   the bottom of each minute, height = density). Fixed the desaturation,
+   but 1440 individual minute-columns at full-day scale still read as a
+   "chaotic barcode," per the user's own words — accurate isn't the same
+   as legible.
+3. Tried **bucketing** (grouping ~10-20 min into one wider column, each
+   drawn as a small proportional stack — same technique as the totals bar,
+   repeated at finer time resolution). Smoother, but still fundamentally a
+   composition chart, which is what the user objected to next: "the chart
+   is purely horizontal bands... not half a band or 2/3."
+4. **Landed on `drawPixelBands()`**: one solid, single color per physical
+   pixel column, chosen by majority vote of whichever category actually
+   made up the most of that pixel's span of minutes — never a blend, never
+   a stack, never a partial fill. A timeline reads as flat bands or it
+   isn't one; composition belongs to the totals bar alone. Turns out
+   majority vote *also* solves problem #2 for free, as a side effect of
+   just picking one color like a timeline should: a brief 8s correction
+   that's a minority of its pixel's ~2-3 real minutes loses the vote and
+   that pixel reads as good, no opacity/height trick required. Real pixel
+   widths measured before building this (not guessed): ~1.7 min/px on the
+   full single-day timeline, ~2.9 min/px on the week view's per-day strips
+   at typical window size — both are canvases, so this scales with window
+   width, not a fixed grid.
+
+The totals bar (left side of each week row) was **never** part of this —
+it's deliberately a composition chart (`drawTotalsBar()`, blocks summed and
+stacked), confirmed by the user as working as intended throughout. Also
+fixed same day: its bar length now scales against the longest day in the
+same week (`maxSeconds` in `renderWeekDayRows()`) instead of always filling
+edge-to-edge regardless of how much was actually tracked — a 20-minute day
+and a 10-hour day used to look equally "full."
+
+Also 2026-09-17: every duration display now goes through one
+`formatMinutes()` helper (minutes under an hour, `Xh Ym` past that) —
+applied to day-row meta text, report summary metrics, the month chart's
+axis/tooltips, and the dormant AI summary chart. A basic hydration trend
+was added too: week gets a per-day water bar in each row, month gets its
+own Chart.js chart (litres/day vs. a dashed 2L target line) — logs quietly
+in the background, no chart, was the prior state; this closed that gap
+once the user asked to actually see the trend.
+
+**Brightness box fixes, 2026-09-17/18, from direct user feedback on the
+box built earlier that day:**
+- **Left/right were genuinely backwards.** The raw `<video>` frame `sampleLight()`
+  reads via `drawImage()` is **not** mirrored — only the on-screen
+  `#video`/`#overlay` elements are, via CSS `transform: scaleX(-1)`. So raw
+  x<20 is actually the *right* side of what the user sees of themselves on
+  screen, not the left. The original code assigned raw x<20 straight to
+  "left." Swapped in `sampleLight()`; verified with synthetic data end-to-
+  end (both the numeric label and the canvas render) before shipping, not
+  just reasoned through.
+- **The box is now an actual `<canvas>`** (`drawLightPattern()`) showing
+  the real sampled 40x30 frame, recolored per-pixel through the
+  dim→bright ramp and mirrored to match the self-view — not a flat
+  two-stop CSS gradient standing in for "where the light is." Direct user
+  ask: "is there a way of reproducing the light pattern... it looks like
+  just a fader."
+- Percentage now reads **"43% bright"**, not a bare ambiguous "43%" (user
+  genuinely couldn't tell which direction the scale ran).
+- Box nudged down (`margin-top: 30px` via `.gauge-col-light`) to roughly
+  center with the 150px hydration gauge next to it, instead of top-
+  aligning and looking stranded.
+- Added a research-backed `RESEARCH_INFO.brightness` entry (ISO 8995-1
+  desk lighting, general display-luminance-ratio/glare guidance) plus a
+  new "ambient light" section in Settings with an info icon — confirmed
+  the existing hydration/movement (`hydrationTarget`/`breakInterval`/
+  `stillness`) entries are all still intact, nothing regressed there.
+- **Not yet built, explicitly deferred, not forgotten:** charting
+  acceptable-vs-unacceptable brightness exposure over time (the
+  `light_readings` table has very little data yet — user explicitly said
+  "collect data quietly" a few messages before asking for this chart, so
+  building it now would be against their own recent instruction; revisit
+  once there's a few real days logged), and auto-brightening/dimming the
+  *page itself* to compensate for detected glare (real idea, floated as
+  "would be cool," needs actual design thought before building).
+
+**Workflow note for whoever picks this up next: the user's explicit
+instruction (2026-09-17) is that slouch-detection calibration work — the
+next planned phase — happens on a separate branch, not directly on `main`,
+specifically so the current `main` state is preserved as a clean rollback
+point before that work starts.** This is a deliberate change from the
+"direct commits to main" pattern described earlier in this file, scoped to
+that one upcoming phase. Don't start calibration changes on `main` without
+checking whether that branch already exists / was already started.
 
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
@@ -347,16 +446,17 @@ work from.
    isolation** are implemented and code-reviewed but still haven't been
    proven by actual simultaneous multi-device or multi-person use — only
    solo, sequential testing so far.
-6. **The nightly rollup workflow has only ever run via manual
-   `workflow_dispatch` so far** — see "Fixed 2026-09-16" above. It's now
-   correctly registered with GitHub, so the 2am Brisbane cron should pick
-   it up on its own; confirm in the Actions tab after the first
-   unattended run actually fires.
-7. **Three known-corrupted historical rows in `posture_events`** (87.9h
-   compression on 2026-08-21, 15.7h on 2026-08-26, 14.2h on 2026-09-15 —
-   see "Fixed 2026-09-17" above) are still uncorrected as of this writing.
-   Any all-time or multi-week stat that spans those three dates is
-   currently wrong until they're cleaned up or deleted.
+
+~~6. The nightly rollup workflow has only ever run via manual
+workflow_dispatch~~ — **resolved 2026-09-17**: a real unattended `schedule`-
+triggered run succeeded at 19:37 UTC that day (run 35266011787). The 2am
+Brisbane cron is confirmed working on its own now, not just via manual
+trigger.
+
+~~7. Three known-corrupted historical rows~~ — **resolved 2026-09-17**: user
+confirmed, all three (87.9h/15.7h/14.2h bogus compression events) deleted
+from `posture_events` and `posture_daily_summary` re-rolled. No known
+corrupted rows remain as of this writing.
 
 **Deliberately dormant / paused on purpose** (not broken, user's own call):
 - AI weekly summary. `ANTHROPIC_API_KEY` is set as a GitHub secret, the
@@ -368,40 +468,35 @@ work from.
   regardless, per item 3 above). Zero tokens spent. Left off intentionally
   until there's trustworthy multi-day, multi-user data worth summarizing.
 
-## Roadmap (captured 2026-09-17 so they don't get lost)
+## Roadmap (captured 2026-09-17, updated 2026-09-18 -- so nothing gets lost)
 
-Listed here in the order the user raised them, not priority. Item 1 is now
-built (2026-09-17); the rest are still not started.
+Listed in the order the user raised them, not priority.
 
-1. **Directional brightness/glare square, built.** Lives next to the
-   hydration gauge in the `today` panel. `sampleLight()` (`src/main.js`)
-   downscales the video frame to 40x30 on an offscreen canvas every ~10s
-   (piggybacked on the existing housekeeping interval, not a new timer),
-   averages luminance separately for the left/right halves, and the box's
-   own background is literally a left-to-right CSS gradient built from
-   those two measured values (`updateLightWidget()`) -- no separate arrow
-   needed, the gradient *is* the reading, directionality and magnitude
-   both visible at a glance. A trend arrow compares brightness now against
-   6 minutes ago (`LIGHT_TREND_WINDOW_MS`). Sustained skew (>12% for 90s)
-   triggers a voice nudge via the same sustain-before-nudge pattern as
-   posture, capped at once per 10 minutes (`maybeNudgeGlare()`). Readings
-   persist to a new `light_readings` table every 5 minutes
-   (`logLightReading()`) -- same `date`/`user_id` shape as every other
-   events table, RLS `using(true)`, `anon` granted `SELECT`+`INSERT` up
-   front this time (learned from the `posture_daily_summary` grant misses
-   two days running). **Not yet charted anywhere** -- data is accumulating
-   in `light_readings` for whenever a trend view is worth building, same
-   as hydration was before its own trend got added. Verified: gradient
-   rendering, idle state, and the Supabase write path (schema + grants) all
-   confirmed working; the actual live-camera sampling couldn't be verified
-   end-to-end in a sandboxed browser with no real webcam -- worth a real
-   click-through, especially watching what happens near a genuinely bright
-   window, before fully trusting the nudge threshold (90s/12%) feels right
-   in practice.
+1. **Directional brightness/glare square — built and iterated on, see
+   "Brightness box fixes" above for the full detail.** Live in the `today`
+   panel: `sampleLight()` samples every ~10s, `drawLightPattern()` renders
+   the real (mirrored) low-res light pattern onto a canvas, `logLightReading()`
+   persists to `light_readings` every 5 min (not yet charted anywhere --
+   see items 1a/1b below). Left/right mirroring bug found and fixed
+   2026-09-18.
+   - **1a. Chart acceptable-vs-unacceptable brightness exposure over
+     time** in the totals view, backed by real research (same
+     `RESEARCH_INFO.brightness` sourcing already added -- ISO 8995-1 /
+     luminance-ratio guidance) for what "acceptable" actually means, plus
+     how much time was spent outside it and what to do about it. Explicitly
+     deferred 2026-09-17 until `light_readings` has real days of data to
+     chart -- don't build this against a near-empty table.
+   - **1b. Auto-brighten/dim the page itself** to compensate for detected
+     glare (e.g. bright ambient light → boost contrast/theme; dim
+     surroundings → ease off). Floated as "would be cool," not scoped.
+     Real constraint worth remembering when this gets picked up: JS can't
+     touch the OS/monitor's actual brightness, only the page's own
+     rendering (see the original brightness-scoping conversation for what
+     that leaves on the table).
 2. **Connect OpenRouter for basic AI analysis.** Distinct from the
    already-built-but-dormant `generate-summary.cjs` (which calls the
-   Anthropic API directly). Natural first use case once connected: the
-   "call ready check" idea below, which needs a vision-capable model.
+   Anthropic API directly). Natural first use case once connected: item 6
+   below, which needs a vision-capable model.
 3. **Google Calendar integration** — correlate posture/slouch patterns
    against calendar events, specifically interested in whether posture
    changes during calls. Would need: OAuth to read the user's calendar
@@ -421,15 +516,22 @@ built (2026-09-17); the rest are still not started.
    is offline/private (`@mintplex-labs/piper-tts-web`, no network call per
    nudge); ElevenLabs would mean a network call and API cost per spoken
    nudge, or a cached-phrase approach instead.
-6. **"Call ready" self-check button** — hit a button, get told if hair's
-   tidy, teeth are clear, background's not messy, before joining a call.
-   Confirmed doable: capture a single frame from the existing video/canvas
-   (`canvas.toDataURL()` or `toBlob()`), send it to a vision-capable LLM
-   with a prompt asking for exactly those things, show the response. This
-   is the natural first real use of the OpenRouter connection (item 2) --
-   no new capture infrastructure needed, since the frame is already sitting
-   in the same `overlay`/`video` elements everything else in this app reads
-   from.
+6. **"My best self" / "call ready" self-check button.** Refined
+   2026-09-17: not just a one-off check against a fixed prompt -- capture
+   and save a reference "best self" photo (hair brushed, sitting up,
+   dressed smartly) once, then a button that captures the current frame
+   and compares it *against that saved reference* (teeth, hair, background
+   clutter, etc.) via a vision-capable LLM, not just an absolute checklist.
+   Confirmed doable, no new capture infra needed (same `video`/`overlay`
+   elements everything else reads from) -- but explicitly blocked on item 2
+   (OpenRouter) by the user's own admission ("we are going to need to
+   connect to openrouter first i think"). Don't start this before that.
+
+**Also noted 2026-09-17, not yet a scoped roadmap item:** the next phase of
+work after all of the above is better calibration of the slouch-detection
+monitor itself -- but per the user's explicit instruction, that happens on
+its own branch, not on `main`. See the workflow note in "Fixed 2026-09-17/18"
+above before starting it.
 
 ## The presence/break/away/not-tracking state model
 
