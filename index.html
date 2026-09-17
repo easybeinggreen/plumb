@@ -568,6 +568,7 @@
     <div class="hydration-size-row"><label>glare nudge <button class="info-icon" type="button" data-info="brightness" aria-label="why this default">i</button></label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&gt;12% imbalance, held 90s</span></div>
 
     <h3 class="settings-section-title">device</h3>
+    <div class="hydration-size-row"><label for="deviceLabelInput" title="lets reports tell devices apart, e.g. laptop vs. desk rig -- separate from your name above">device name</label><input type="text" id="deviceLabelInput" placeholder="e.g. laptop" maxlength="40" /></div>
     <div class="hydration-size-row"><label for="cameraSelect">camera</label><select id="cameraSelect"><option value="">default camera</option></select></div>
     <div class="hydration-size-row">
       <label for="voiceSelect">voice</label>
@@ -613,6 +614,10 @@
       <button class="tab" data-range="ai">ai summary</button>
     </div>
     <div class="tab-panel active" id="panelNumeric">
+      <div id="reportDeviceFilterRow" style="display:flex;align-items:center;gap:8px;margin:-6px 0 12px;">
+        <label for="reportDeviceFilter" style="font-size:12px;color:var(--ink-soft);">device</label>
+        <select id="reportDeviceFilter" style="font-size:12px;"><option value="">all devices</option></select>
+      </div>
       <div class="report-summary" id="reportSummary"></div>
       <div class="chart-container"><canvas id="slouchChart"></canvas></div>
       <div id="weekDayRows" style="display:none;">

@@ -20,6 +20,20 @@ if (currentUserId) {
   showUserPicker();
 }
 
+// ---- Device identity ----
+// Separate axis from user identity above: this tags which physical device
+// produced an event, so a cross-device user (the whole point of the name
+// above merging, not separating, across devices) can still tell "posture
+// is worse on the laptop than the desk rig" apart in reports. Auto-
+// generated once per browser install, editable in Settings -- not tied to
+// currentUserId, since a device keeps its own identity even if you switch
+// which person's name is signed in on it.
+let deviceLabel = localStorage.getItem('plumb:deviceLabel');
+if (!deviceLabel) {
+  deviceLabel = `device-${Math.random().toString(36).slice(2, 6)}`;
+  localStorage.setItem('plumb:deviceLabel', deviceLabel);
+}
+
 // ---- DOM references (all at top) ----
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
@@ -34,6 +48,7 @@ const tsStats = document.getElementById('tsStats');
 
 const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
+const deviceLabelInput = document.getElementById('deviceLabelInput');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const breakToggleBtn = document.getElementById('breakToggleBtn');
 const testVoiceBtn = document.getElementById('testVoiceBtn');
@@ -82,6 +97,8 @@ const alertFeed = document.getElementById('alertFeed');
 const modalOverlay = document.getElementById('modalOverlay');
 const modalClose = document.getElementById('modalClose');
 const modalTabs = document.getElementById('modalTabs');
+const reportDeviceFilterRow = document.getElementById('reportDeviceFilterRow');
+const reportDeviceFilter = document.getElementById('reportDeviceFilter');
 const reportSummary = document.getElementById('reportSummary');
 const slouchChartCtx = document.getElementById('slouchChart').getContext('2d');
 const hydrationChartCtx = document.getElementById('hydrationChart').getContext('2d');
@@ -290,6 +307,7 @@ async function flushEvents() {
 
   const toSend = eventBuffer.map(ev => ({
     user_id: currentUserId,
+    device_label: deviceLabel,
     date: ev.date || null,
     start_time: ev.start_time || null,
     end_time: ev.end_time || null,
@@ -956,6 +974,17 @@ hydrationTargetInput.addEventListener('change', () => {
   localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl));
   renderHydration();
   scheduleSettingsPush();
+});
+
+// Purely local, unlike the sliders above -- device_label describes THIS
+// device specifically, so it has no business living in the shared
+// app_settings row (that would make every device overwrite the others'
+// label on every sync, which defeats the point).
+deviceLabelInput.value = deviceLabel;
+deviceLabelInput.addEventListener('change', () => {
+  deviceLabel = deviceLabelInput.value.trim() || deviceLabel;
+  deviceLabelInput.value = deviceLabel;
+  localStorage.setItem('plumb:deviceLabel', deviceLabel);
 });
 Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
   input.value = hydrationSizes[key];
@@ -2381,6 +2410,40 @@ async function showReport(range) {
     events = await fetchEventsForRange(start, end);
   }
 
+  // Device filter: only meaningful where the underlying rows actually carry
+  // device_label, which is raw posture_events, not the rolled-up
+  // posture_daily_summary (rollup-summary.cjs groups by date/user/type only
+  // -- device is lost once a day's been summarized). "today" and "week" are
+  // always raw (see comment above), so filtering works cleanly there; month
+  // blends 2 days of raw with weeks of un-tagged rollup rows, so filtering
+  // it would silently show mixed-device history next to single-device
+  // recent days -- disabled there instead of quietly being wrong.
+  const knownDevices = [...new Set(events.map(e => e.device_label).filter(Boolean))].sort();
+  const prevDeviceChoice = reportDeviceFilter.value;
+  reportDeviceFilter.innerHTML = '';
+  const allOpt = document.createElement('option');
+  allOpt.value = '';
+  allOpt.textContent = 'all devices';
+  reportDeviceFilter.appendChild(allOpt);
+  knownDevices.forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d;
+    reportDeviceFilter.appendChild(opt);
+  });
+  if (range === 'month') {
+    reportDeviceFilter.value = '';
+    reportDeviceFilter.disabled = true;
+    reportDeviceFilterRow.title = "device breakdown isn't available yet for anything older than 2 days (the nightly rollup doesn't track it per-device)";
+  } else {
+    reportDeviceFilter.disabled = false;
+    reportDeviceFilterRow.title = '';
+    reportDeviceFilter.value = knownDevices.includes(prevDeviceChoice) ? prevDeviceChoice : '';
+    if (reportDeviceFilter.value) {
+      events = events.filter(e => e.device_label === reportDeviceFilter.value);
+    }
+  }
+
   const hydrationByDate = {};
   hydrationRows.forEach(r => {
     hydrationByDate[r.date] = (hydrationByDate[r.date] || 0) + (r.volume_ml || 0);
@@ -2629,6 +2692,10 @@ modalTabs.addEventListener('click', e => {
     e.target.classList.add('active');
     showReport(e.target.dataset.range);
   }
+});
+reportDeviceFilter.addEventListener('change', () => {
+  const active = document.querySelector('.tab.active');
+  showReport(active ? active.dataset.range : 'today');
 });
 
 // ---- Critical listeners ----
