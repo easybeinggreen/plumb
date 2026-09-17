@@ -8,7 +8,7 @@ const path = require('path');
 const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'data', 'summary.json');
 const MODEL = 'claude-haiku-4-5-20251001';
 
-const SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in'];
+const SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in', 'sitting_low'];
 
 async function fetchRows() {
   const url = process.env.SUPABASE_URL;
