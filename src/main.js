@@ -149,6 +149,7 @@ let baselineShoulderWidth = null;
 // distinct from neck compression, see comment above sinkRatio().
 let baselineEyeDistanceRatio = null;
 let baselineNoseY = null;
+let faceMissingSince = null;
 let lastFrameTime = performance.now();
 
 let slouchStartedAt = null;
@@ -1118,6 +1119,7 @@ function noseOffset(nose, shMid, lSh, rSh) {
 // detection behaves exactly as it did before -- verify against a real
 // chair-vs-person test rather than trusting this blind.
 const FACE_VISIBILITY_MIN = 0.5;
+const FACE_VISIBILITY_GRACE_MS = 1500;
 function hasVisibleFace(lm) {
   const points = [lm[0], lm[2], lm[5]]; // nose, left eye, right eye
   return points.every(p => typeof p.visibility !== 'number' || p.visibility >= FACE_VISIBILITY_MIN);
@@ -2690,7 +2692,28 @@ function loop() {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
 
   const lm = result.landmarks && result.landmarks.length > 0 ? result.landmarks[0] : null;
-  if (lm && hasVisibleFace(lm)) {
+  // A single low-confidence frame (a head turn, a bad angle, motion blur)
+  // shouldn't immediately read as "gone" -- that flickers isPersonPresent
+  // true/false every other frame, each flip finalizing/reopening presence
+  // and slouch blocks, which is exactly the kind of per-frame churn that
+  // reads as stutter/lag even though the actual compute cost is trivial.
+  // Grace period is tiny next to BREAK_MIN_SECONDS (60s) downstream, so it
+  // doesn't meaningfully delay real break/away detection -- only smooths
+  // over noise in the new face-visibility check specifically. Doesn't apply
+  // to the "no landmarks at all" case below, which is the pre-existing,
+  // already-noise-filtered path.
+  let faceOk = false;
+  if (lm) {
+    if (hasVisibleFace(lm)) {
+      faceMissingSince = null;
+      faceOk = true;
+    } else if (faceMissingSince && now - faceMissingSince < FACE_VISIBILITY_GRACE_MS) {
+      faceOk = true;
+    } else {
+      if (!faceMissingSince) faceMissingSince = now;
+    }
+  }
+  if (lm && faceOk) {
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
     drawPoseDots([leftEar, rightEar, leftSh, rightSh]);
 
