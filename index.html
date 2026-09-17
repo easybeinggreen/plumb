@@ -237,11 +237,15 @@
   .break-ring-center b { font-weight: 700; font-size: 21px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; text-align: center; }
   .break-ring-center span { font-size: 10px; font-weight: 500; color: var(--ink-soft); margin-top: 3px; text-align: center; }
 
+  /* Sits next to the 150px-tall hydration gauge -- pushed down so its own
+     midpoint lines up with the gauge's, instead of both top-aligning and
+     leaving the shorter box looking stranded near the top. */
+  .gauge-col-light { margin-top: 30px; }
   .light-box {
     width: 90px; height: 90px; border-radius: 14px; border: 1.5px solid var(--ink-faint-2);
     position: relative; overflow: hidden; background: var(--light-dim);
-    transition: background 1.4s ease;
   }
+  .light-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .light-trend {
     position: absolute; top: 6px; right: 7px; font-size: 13px; font-weight: 700;
     color: rgba(255,255,255,0.9); text-shadow: 0 1px 2px rgba(0,0,0,0.4); line-height: 1;
@@ -472,8 +476,9 @@
             </div>
             <button class="hydration-undo" id="hydrationUndoBtn" type="button" hidden>undo last</button>
           </div>
-          <div class="gauge-col">
-            <div class="light-box" id="lightBox" title="left half / right half brightness">
+          <div class="gauge-col gauge-col-light">
+            <div class="light-box" id="lightBoxWrap" title="how bright it is, and where -- a live low-res view of the room's lighting">
+              <canvas id="lightBox"></canvas>
               <span class="light-trend" id="lightTrend"></span>
               <span class="light-pct" id="lightPct">—</span>
             </div>
@@ -549,6 +554,9 @@
     <div class="hydration-size-row"><label for="hydrationMugInput">mug (ml)</label><input type="number" id="hydrationMugInput" min="50" max="1000" step="10" value="250" /></div>
     <div class="hydration-size-row"><label for="hydrationCanInput">can (ml)</label><input type="number" id="hydrationCanInput" min="50" max="1000" step="5" value="355" /></div>
     <div class="hydration-size-row"><label for="hydrationBottleInput">bottle (ml)</label><input type="number" id="hydrationBottleInput" min="50" max="2000" step="10" value="500" /></div>
+
+    <h3 class="settings-section-title">ambient light</h3>
+    <div class="hydration-size-row"><label>glare nudge <button class="info-icon" type="button" data-info="brightness" aria-label="why this default">i</button></label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&gt;12% imbalance, held 90s</span></div>
 
     <h3 class="settings-section-title">device</h3>
     <div class="hydration-size-row"><label for="cameraSelect">camera</label><select id="cameraSelect"><option value="">default camera</option></select></div>

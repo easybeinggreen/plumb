@@ -114,6 +114,7 @@ const hydrationButtons = {
   bottle: document.getElementById('hydrationBottleBtn')
 };
 
+const lightBoxWrap = document.getElementById('lightBoxWrap');
 const lightBox = document.getElementById('lightBox');
 const lightTrendEl = document.getElementById('lightTrend');
 const lightPctEl = document.getElementById('lightPct');
@@ -753,15 +754,22 @@ async function undoHydration() {
 Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key], key)));
 hydrationUndoBtn.addEventListener('click', undoHydration);
 
+function lerpRgbArr(t, from, to) {
+  return [
+    Math.round(from[0] + (to[0] - from[0]) * t),
+    Math.round(from[1] + (to[1] - from[1]) * t),
+    Math.round(from[2] + (to[2] - from[2]) * t)
+  ];
+}
 function lerpRgb(t, from, to) {
-  const r = Math.round(from[0] + (to[0] - from[0]) * t);
-  const g = Math.round(from[1] + (to[1] - from[1]) * t);
-  const b = Math.round(from[2] + (to[2] - from[2]) * t);
+  const [r, g, b] = lerpRgbArr(t, from, to);
   return `rgb(${r},${g},${b})`;
 }
 
 function resetLightWidget() {
-  lightBox.style.background = 'var(--light-dim)';
+  lightBoxWrap.style.background = 'var(--light-dim)';
+  const ctx = lightBox.getContext('2d');
+  ctx.clearRect(0, 0, lightBox.width, lightBox.height);
   lightTrendEl.textContent = '';
   lightPctEl.textContent = '—';
   lightReadoutEl.textContent = 'no camera yet';
@@ -770,23 +778,50 @@ function resetLightWidget() {
   lightSkewSide = null;
 }
 
-// The box itself IS the reading: a left-to-right gradient built from the
-// two halves' actual measured brightness, rather than a separate arrow or
-// number doing the explaining. Glancing at it tells you both how bright
-// overall and which side, in one shape.
-function updateLightWidget(leftAvg, rightAvg) {
-  const leftColor = lerpRgb(leftAvg, LIGHT_DIM_RGB, LIGHT_BRIGHT_RGB);
-  const rightColor = lerpRgb(rightAvg, LIGHT_DIM_RGB, LIGHT_BRIGHT_RGB);
-  lightBox.style.background = `linear-gradient(to right, ${leftColor}, ${rightColor})`;
+// Recolors the actual sampled frame (40x30, dim->bright per pixel) and
+// scales it up into the box -- a real, live, low-resolution view of where
+// the light in the room actually is, not just a two-stop left/right fade
+// standing in for it. Mirrored horizontally on the way in, same as the
+// video/overlay elements already are, since the raw camera frame isn't
+// mirrored but everything else you see of yourself in this app is.
+function drawLightPattern(canvas, data, srcW, srcH) {
+  const tmp = document.createElement('canvas');
+  tmp.width = srcW;
+  tmp.height = srcH;
+  const tctx = tmp.getContext('2d');
+  const out = tctx.createImageData(srcW, srcH);
+  for (let i = 0; i < srcW * srcH; i++) {
+    const o = i * 4;
+    const lum = (0.2126 * data[o] + 0.7152 * data[o + 1] + 0.0722 * data[o + 2]) / 255;
+    const [r, g, b] = lerpRgbArr(lum, LIGHT_DIM_RGB, LIGHT_BRIGHT_RGB);
+    out.data[o] = r; out.data[o + 1] = g; out.data[o + 2] = b; out.data[o + 3] = 255;
+  }
+  tctx.putImageData(out, 0, 0);
 
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const cw = rect.width || 90, ch = rect.height || 90;
+  canvas.width = cw * dpr;
+  canvas.height = ch * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.save();
+  ctx.translate(cw, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(tmp, 0, 0, cw, ch);
+  ctx.restore();
+}
+
+function updateLightWidget(leftAvg, rightAvg) {
   const brightness = (leftAvg + rightAvg) / 2;
-  lightPctEl.textContent = `${Math.round(brightness * 100)}%`;
+  lightPctEl.textContent = `${Math.round(brightness * 100)}% bright`;
 
   const trend = computeLightTrend();
   lightTrendEl.textContent = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '';
 
   const skew = rightAvg - leftAvg;
-  const side = Math.abs(skew) < LIGHT_SKEW_TOLERANCE ? 'balanced' : skew > 0 ? 'brighter on right' : 'brighter on left';
+  const side = Math.abs(skew) < LIGHT_SKEW_TOLERANCE ? 'evenly lit' : skew > 0 ? 'brighter on right' : 'brighter on left';
   lightReadoutEl.textContent = side;
 }
 
@@ -845,6 +880,13 @@ async function logLightReading(brightness, skew) {
 // left and right halves separately. Called from the existing 10s
 // housekeeping interval, not every rAF tick -- brightness has no need for
 // that resolution.
+//
+// The raw video frame is NOT mirrored (only the on-screen <video>/#overlay
+// elements are, via CSS transform: scaleX(-1)) -- so raw x<20 is actually
+// the right side of what you see of yourself, and raw x>=20 is the left.
+// Confirmed backwards by the user ("it says brighter on the right when
+// it's actually brighter on the left"): this assignment is the fix,
+// swapped from the original left<->right mapping.
 function sampleLight() {
   if (!running || !video.videoWidth) return;
   if (!lightSampleCanvas) {
@@ -864,7 +906,7 @@ function sampleLight() {
     for (let x = 0; x < 40; x++) {
       const i = (y * 40 + x) * 4;
       const lum = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
-      if (x < 20) { leftSum += lum; leftN++; } else { rightSum += lum; rightN++; }
+      if (x < 20) { rightSum += lum; rightN++; } else { leftSum += lum; leftN++; }
     }
   }
   const leftAvg = leftSum / leftN;
@@ -876,6 +918,7 @@ function sampleLight() {
   const cutoff = Date.now() - LIGHT_TREND_WINDOW_MS;
   while (lightBrightnessHistory.length && lightBrightnessHistory[0].t < cutoff) lightBrightnessHistory.shift();
 
+  drawLightPattern(lightBox, data, 40, 30);
   updateLightWidget(leftAvg, rightAvg);
   maybeNudgeGlare(skew);
   logLightReading(brightness, skew);
@@ -3047,6 +3090,12 @@ const RESEARCH_INFO = {
     short: '2 litres sits at the lower end of what major health bodies cite \u2014 a reasonable default, but not a precise target everyone should hit exactly.',
     long: "EFSA's adequate-intake figures are 2.0 L/day for women and 2.5 L/day for men (total water, including food \u2014 food typically supplies 20\u201330% of that). The IOM's figures are higher: 2.7 L/day women, 3.7 L/day men. The famous \u201c8 glasses a day\u201d rule doesn't trace back to a specific trial \u2014 it's a simplification of older guidance that included food-derived water. Thirst and urine colour are generally more reliable day-to-day signals than any fixed number.",
     source: 'Source: EFSA, \u201cDietary reference values for water\u201d (2010); Institute of Medicine (2004).'
+  },
+  brightness: {
+    title: 'ambient light & glare',
+    short: "Screens are easiest on the eyes when their brightness roughly matches the room around them \u2014 a screen fighting a much brighter or much darker surrounding is the more consistent source of strain, not brightness in isolation.",
+    long: "Office lighting guidance (ISO 8995-1) targets roughly 500 lux at a desk, and display/ergonomics guidance generally recommends keeping screen luminance within about a 3:1 ratio against your immediate surroundings and 10:1 against the wider room, rather than any fixed absolute brightness \u2014 a screen fighting a bright window behind or beside you (or, at night, a screen much brighter than a dark room) is what actually tends to produce glare-related eye strain. That's why this tracks the balance between the two sides of the room, not just overall brightness on its own.",
+    source: 'Source: ISO 8995-1 (lighting for work places); general office ergonomics/display-screen luminance-ratio guidance (e.g. IES, HSE/OSHA display screen guidance) \u2014 general synthesis, not one definitive study.'
   }
 };
 
