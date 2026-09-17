@@ -518,6 +518,31 @@ surfaced as a disabled control with an explanatory tooltip rather than
 silently blending devices together. Only tags data going forward; nothing
 to backfill since the concept didn't exist before today.
 
+**Ergonomic setup wizard, added same session, user's idea.** A 5-step
+guided flow before calibrating (welcome -> camera & screen distance ->
+lighting -> desk/chair checklist -> calibrate), behind a new "set up your
+desk" button next to calibrate. Deliberately conservative about what it
+claims to measure:
+- Camera/distance step gives a one-shot ("check now") eye-tilt/eye-
+  distance reading, not a continuous loop -- `alignPreviewFrame()` already
+  runs its own continuous `detectForVideo()` loop during the pre-
+  calibration countdown, and MediaPipe's VIDEO mode needs strictly
+  increasing timestamps across calls, so a second concurrent rAF loop
+  risked colliding with it. It also does **not** claim to detect "camera
+  too high/too low" -- I couldn't verify which direction that error would
+  even point without a real camera in this environment (the exact kind of
+  mistake that already bit the brightness left/right skew once), so it
+  surfaces the honest numbers with generic guidance instead of inventing a
+  verdict I can't back up.
+- Lighting step just mirrors the existing ambient-brightness box's own
+  live text, no new sampling.
+- Desk/chair basics is a plain manual checklist (not camera-measurable).
+- Final step calls the same `performCalibration()` the main calibrate
+  button uses (extracted out so there's one calibration implementation,
+  not two).
+**Not yet tested live** -- same camera-access limitation as everything
+else built this session.
+
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
