@@ -54,6 +54,7 @@ const dzTolerance = document.getElementById('dzTolerance');
 const lmLateral = document.getElementById('lmLateral');
 const lmSlump = document.getElementById('lmSlump');
 const lmLean = document.getElementById('lmLean');
+const lmSink = document.getElementById('lmSink');
 
 const gearBtn = document.getElementById('gearBtn');
 const settingsModalOverlay = document.getElementById('settingsModalOverlay');
@@ -62,12 +63,14 @@ const settingsModalClose = document.getElementById('settingsModalClose');
 const toleranceSlider = document.getElementById('toleranceSlider');
 const compressionToleranceSlider = document.getElementById('compressionToleranceSlider');
 const leanToleranceSlider = document.getElementById('leanToleranceSlider');
+const sinkToleranceSlider = document.getElementById('sinkToleranceSlider');
 const sustainSlider = document.getElementById('sustainSlider');
 const breakSlider = document.getElementById('breakSlider');
 const stillnessSlider = document.getElementById('stillnessSlider');
 const toleranceVal = document.getElementById('toleranceVal');
 const compressionToleranceVal = document.getElementById('compressionToleranceVal');
 const leanToleranceVal = document.getElementById('leanToleranceVal');
+const sinkToleranceVal = document.getElementById('sinkToleranceVal');
 const sustainVal = document.getElementById('sustainVal');
 const breakVal = document.getElementById('breakVal');
 const stillnessVal = document.getElementById('stillnessVal');
@@ -141,12 +144,17 @@ let bgAudioEnabled = false;
 let baselineLateral = null;
 let baselineNeckRatio = null;
 let baselineShoulderWidth = null;
+// Eye-distance baseline drives lean-in (see interEyeDistanceRatio below);
+// nose-y baseline drives the separate "sitting low in chair" signal --
+// distinct from neck compression, see comment above sinkRatio().
+let baselineEyeDistanceRatio = null;
+let baselineNoseY = null;
 let lastFrameTime = performance.now();
 
 let slouchStartedAt = null;
 let slouchType = null;
 let slouchAccumulatedMs = 0;
-let displayLateral = 0, displayCompression = 0, displayLean = 0;
+let displayLateral = 0, displayCompression = 0, displayLean = 0, displaySink = 0;
 let lastPostureNudgeAt = 0;
 
 let stillnessRef = null;
@@ -154,6 +162,7 @@ let lastMovementAt = null;
 let lastStillnessNudgeAt = 0;
 let lastBreakNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
+const POSTURE_NUDGE_COOLDOWN_MS = 30 * 1000; // was 5000ms -- see comment at its use in loop()
 
 // ---- Directional brightness ----
 // Sampled off the same video frame everything else already reads, split
@@ -1037,15 +1046,16 @@ async function speak(text, force = false) {
 
 const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it.", "Drifting left — ease back to centre.", "A little left lean — straighten up.", "Left side's dropped — bring it back."];
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust.", "Drifting right — ease back to centre.", "A little right lean — straighten up.", "Right side's dropped — bring it back."];
-const SLUMP_PHRASES = ["Slumping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture.", "Sinking a bit — lift through the chest.", "Spine's rounding — sit a touch taller.", "Shoulders back and down — reset."];
+const SLUMP_PHRASES = ["Neck's dropping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture.", "Sinking a bit — lift through the chest.", "Spine's rounding — sit a touch taller.", "Shoulders back and down — reset."];
 const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen.", "A bit close to the screen — ease back.", "Crept toward the monitor — give it room.", "Pull back a little from the screen."];
+const SINK_PHRASES = ["You've slid down in the seat — sit back up.", "Slipping low in the chair — scoot back and sit tall.", "You've sunk down — reposition and sit up.", "Chair's swallowing you — sit up in it.", "Settle back up in your seat."];
 const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it.", "Good time for a stretch — up you get.", "Your body could use a change of scenery.", "Stand, shake it out, then carry on."];
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
 const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Nice long break — welcome back.", "That was a proper break — good stuff.", "Well rested — good to have you back."];
 const BREAK_RETURN_SHORT_PHRASES = ["Good break — that was a nice stretch.", "Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet."];
 const GLARE_LEFT_PHRASES = ["Strong light on your left — worth adjusting the blind.", "It's gotten bright on your left side.", "Left side's quite bright now — check the light."];
 const GLARE_RIGHT_PHRASES = ["Strong light on your right — worth adjusting the blind.", "It's gotten bright on your right side.", "Right side's quite bright now — check the light."];
-let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0, glareLeftIdx = 0, glareRightIdx = 0;
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, sinkIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0, glareLeftIdx = 0, glareRightIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
 function drawPoseDots(points, color) {
@@ -1066,18 +1076,25 @@ function lateralDeviation(earMid, shMid, lSh, rSh) {
   const sw = shoulderWidthOf(lSh, rSh);
   return (earMid.x - shMid.x) / sw;
 }
-function leanInRatio(lSh, rSh, baselineSw) {
-  if (!baselineSw) return 0;
+// Sinking down in the chair is a different physical motion from neck
+// compression above: compression is the head drooping toward the shoulders
+// while the torso stays put; this is the whole head+shoulder line dropping
+// in frame as you slide down the seat. Nose y-position (not ear/shoulder) is
+// the cleaner signal for that -- normalized by *current* shoulder width, same
+// as neckCompressionRatio/lateralDeviation, so it stays camera-distance-
+// invariant rather than comparing against a baseline distance.
+function sinkRatio(nose, baselineY, lSh, rSh) {
+  if (baselineY === null) return 0;
   const sw = shoulderWidthOf(lSh, rSh);
-  return (sw - baselineSw) / baselineSw;
+  return (nose.y - baselineY) / sw;
 }
 
-// ---- Experimental face-point signals (eye-line tilt, inter-eye distance,
-// nose offset) -- not wired into calibration, thresholds, nudges, or
-// Supabase yet. Just drawn + printed live so they can be eyeballed against
-// real movement before deciding if/how to turn any of them into a real
-// signal. Landmark indices per BlazePose topology: 0 = nose, 2/5 = left/
-// right eye centers.
+// Landmark indices per BlazePose topology: 0 = nose, 2/5 = left/right eye
+// centers. eyeTiltDegrees/noseOffset are still just drawn/printed (head-tilt
+// and raw offset aren't wired into any nudge yet); interEyeDistanceRatio
+// now drives lean-in detection below -- it isolates the face moving toward
+// the camera from shoulder rotation/hunching, which the old shoulder-width-
+// based signal couldn't tell apart.
 function eyeTiltDegrees(leftEye, rightEye) {
   return Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * (180 / Math.PI);
 }
@@ -1088,6 +1105,22 @@ function interEyeDistanceRatio(leftEye, rightEye, lSh, rSh) {
 function noseOffset(nose, shMid, lSh, rSh) {
   const sw = shoulderWidthOf(lSh, rSh);
   return { x: (nose.x - shMid.x) / sw, y: (nose.y - shMid.y) / sw };
+}
+
+// A confident-looking shoulder/hip guess doesn't mean a person is actually
+// there -- BlazePose will still fit a plausible skeleton onto furniture (a
+// chair back is roughly shoulder-shaped), which is why presence used to be
+// "landmarks.length > 0" alone. Nothing else in frame has a face, so
+// requiring the eyes and nose specifically to be confidently visible is a
+// much sharper "is this really a person" check.
+// Defensive to missing data: if this MediaPipe build doesn't populate
+// .visibility on normalized landmarks, every point passes and presence
+// detection behaves exactly as it did before -- verify against a real
+// chair-vs-person test rather than trusting this blind.
+const FACE_VISIBILITY_MIN = 0.5;
+function hasVisibleFace(lm) {
+  const points = [lm[0], lm[2], lm[5]]; // nose, left eye, right eye
+  return points.every(p => typeof p.visibility !== 'number' || p.visibility >= FACE_VISIBILITY_MIN);
 }
 function drawExperimentalReadout(eyeTilt, eyeDist, noseOff) {
   ctx.font = '11px Karla, sans-serif';
@@ -1585,25 +1618,30 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   dzRing.style.r = (dotR + 5) + 'px';
 }
 
-function updateLiveMetrics(lateral, compression, lean, calibrated) {
+function updateLiveMetrics(lateral, compression, lean, sink, calibrated) {
   if (!calibrated) {
     lmLateral.textContent = '—';
     lmSlump.textContent = '—';
     lmLean.textContent = '—';
+    lmSink.textContent = '—';
     lmLateral.classList.remove('over');
     lmSlump.classList.remove('over');
     lmLean.classList.remove('over');
+    lmSink.classList.remove('over');
     return;
   }
   const latTol = Number(toleranceSlider.value);
   const compTol = Number(compressionToleranceSlider.value);
   const leanTol = Number(leanToleranceSlider.value);
+  const sinkTol = Number(sinkToleranceSlider.value);
   lmLateral.textContent = lateral.toFixed(2);
   lmSlump.textContent = compression.toFixed(2);
   lmLean.textContent = lean.toFixed(2);
+  lmSink.textContent = sink.toFixed(2);
   lmLateral.classList.toggle('over', Math.abs(lateral) > latTol);
   lmSlump.classList.toggle('over', compression > compTol);
   lmLean.classList.toggle('over', lean > leanTol);
+  lmSink.classList.toggle('over', sink > sinkTol);
 }
 
 let lastCheckedDate = today();
@@ -1696,6 +1734,7 @@ const CATEGORY_COLORS = {
   right: '#E4C1A0',
   slump: '#C1622E',
   lean: '#2E7D6B',
+  sink: '#8C5B72',
   break: '#C9C2B3',
   away: '#9FB0B5',
   not_tracking: '#F0EDE6',
@@ -1705,13 +1744,14 @@ const CATEGORY_LABELS = {
   good: 'good posture',
   left: 'leaning left',
   right: 'leaning right',
-  slump: 'slumping',
+  slump: 'neck dropping',
   lean: 'leaning in',
+  sink: 'sitting low',
   break: 'break',
   away: 'away',
   not_tracking: 'not tracking'
 };
-const SLOUCH_TYPE_KEY = { lateral_left: 'left', lateral_right: 'right', compression: 'slump', lean_in: 'lean' };
+const SLOUCH_TYPE_KEY = { lateral_left: 'left', lateral_right: 'right', compression: 'slump', lean_in: 'lean', sitting_low: 'sink' };
 
 // Classifies every minute of `referenceDate` into a base state (good/break/
 // away/not_tracking/future) from raw events, plus -- for "good" minutes --
@@ -1771,7 +1811,7 @@ function computeMinuteData(events, referenceDate) {
   // combined "slouch" bucket) is what lets the strip use the same
   // left/right/slump/lean colors as the totals bar instead of a single
   // generic orange for all four.
-  const slouchSecondsByType = { left: new Array(1440).fill(0), right: new Array(1440).fill(0), slump: new Array(1440).fill(0), lean: new Array(1440).fill(0) };
+  const slouchSecondsByType = { left: new Array(1440).fill(0), right: new Array(1440).fill(0), slump: new Array(1440).fill(0), lean: new Array(1440).fill(0), sink: new Array(1440).fill(0) };
   events.forEach(e => {
     const key = SLOUCH_TYPE_KEY[e.type];
     if (!key) return;
@@ -1795,7 +1835,7 @@ function computeMinuteData(events, referenceDate) {
   const slouchType = new Array(1440).fill(null);
   for (let m = 0; m < 1440; m++) {
     let total = 0, bestKey = null, bestSec = 0;
-    for (const key of ['left', 'right', 'slump', 'lean']) {
+    for (const key of ['left', 'right', 'slump', 'lean', 'sink']) {
       const sec = slouchSecondsByType[key][m];
       total += sec;
       if (sec > bestSec) { bestSec = sec; bestKey = key; }
@@ -1807,7 +1847,7 @@ function computeMinuteData(events, referenceDate) {
   return { states, slouchFrac, slouchType, isToday, nowMinute, midnight };
 }
 
-const CATEGORY_ORDER = ['good', 'left', 'right', 'slump', 'lean', 'break', 'away', 'not_tracking'];
+const CATEGORY_ORDER = ['good', 'left', 'right', 'slump', 'lean', 'sink', 'break', 'away', 'not_tracking'];
 
 // Paints the timeline as flat, single-color horizontal bands: one solid
 // color per physical pixel column, decided by majority vote of whatever
@@ -1828,7 +1868,7 @@ function drawPixelBands(ctx2, x0, y0, width, height, minuteData) {
   for (let px = 0; px < cols; px++) {
     const m0 = Math.floor((px / cols) * 1440);
     const m1 = Math.max(m0 + 1, Math.floor(((px + 1) / cols) * 1440));
-    const secs = { good: 0, left: 0, right: 0, slump: 0, lean: 0, break: 0, away: 0, not_tracking: 0 };
+    const secs = { good: 0, left: 0, right: 0, slump: 0, lean: 0, sink: 0, break: 0, away: 0, not_tracking: 0 };
     let any = false;
     for (let m = m0; m < m1 && m < 1440; m++) {
       const state = states[m];
@@ -1907,10 +1947,10 @@ function drawTotalsBar(canvas, bucket, maxSeconds) {
   ctx2.fillStyle = 'rgba(10,38,38,0.06)';
   ctx2.fillRect(0, 0, width, height);
 
-  const good = Math.max(0, bucket.sessionSeconds - bucket.left - bucket.right - bucket.slump - bucket.lean);
+  const good = Math.max(0, bucket.sessionSeconds - bucket.left - bucket.right - bucket.slump - bucket.lean - bucket.sink);
   const segs = [
     ['good', good], ['left', bucket.left], ['right', bucket.right],
-    ['slump', bucket.slump], ['lean', bucket.lean], ['break', bucket.break], ['away', bucket.away]
+    ['slump', bucket.slump], ['lean', bucket.lean], ['sink', bucket.sink], ['break', bucket.break], ['away', bucket.away]
   ];
   const total = totalsBarSeconds(bucket);
   if (total <= 0 || maxSeconds <= 0) return;
@@ -1996,7 +2036,7 @@ function renderWeekDayRows(dates, dateMap, eventsByDate, hydrationByDate) {
     const meta = document.createElement('div');
     meta.className = 'day-row-meta';
     const trackedMin = Math.round((bucket.sessionSeconds + bucket.break) / 60);
-    const daySlouchSec = bucket.left + bucket.right + bucket.slump + bucket.lean;
+    const daySlouchSec = bucket.left + bucket.right + bucket.slump + bucket.lean + bucket.sink;
     const daySlouchPct = bucket.sessionSeconds ? Math.round(daySlouchSec / bucket.sessionSeconds * 100) : 0;
     meta.textContent = trackedMin > 0 ? `${formatMinutes(trackedMin)} · ${daySlouchPct}%` : '—';
     row.appendChild(meta);
@@ -2275,7 +2315,7 @@ async function showReport(range) {
   panelNumeric.classList.add('active');
   panelAi.classList.remove('active');
 
-  const emptyBucket = () => ({ break: 0, left: 0, right: 0, slump: 0, lean: 0, away: 0, breaks: 0, sessionSeconds: 0 });
+  const emptyBucket = () => ({ break: 0, left: 0, right: 0, slump: 0, lean: 0, sink: 0, away: 0, breaks: 0, sessionSeconds: 0 });
   function addToBucket(bucket, type, dur, count) {
     if (type === 'break') { bucket.break += dur; bucket.breaks += count; }
     else if (type === 'away') bucket.away += dur;
@@ -2283,6 +2323,7 @@ async function showReport(range) {
     else if (type === 'lateral_right') bucket.right += dur;
     else if (type === 'compression') bucket.slump += dur;
     else if (type === 'lean_in') bucket.lean += dur;
+    else if (type === 'sitting_low') bucket.sink += dur;
     // 'presence' events cover every continuous tracked block (across however many
     // devices were used that day) and sum correctly since each is its own inserted
     // row. This replaces the old posture_logs.session_seconds read, which was a
@@ -2352,14 +2393,15 @@ async function showReport(range) {
   const rightMin = dates.map(ds => Math.round(dateMap[ds].right / 60));
   const slumpMin = dates.map(ds => Math.round(dateMap[ds].slump / 60));
   const leanMin = dates.map(ds => Math.round(dateMap[ds].lean / 60));
+  const sinkMin = dates.map(ds => Math.round(dateMap[ds].sink / 60));
   const awayMin = dates.map(ds => Math.round(dateMap[ds].away / 60));
-  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean) / 60)));
+  const goodMin = dates.map(ds => Math.max(0, Math.round((dateMap[ds].sessionSeconds - dateMap[ds].left - dateMap[ds].right - dateMap[ds].slump - dateMap[ds].lean - dateMap[ds].sink) / 60)));
 
   let totalBreak = 0, totalSession = 0, totalSlouch = 0, totalBreaks = 0, totalAway = 0;
   Object.values(dateMap).forEach(day => {
     totalBreak += day.break;
     totalSession += day.sessionSeconds;
-    totalSlouch += day.left + day.right + day.slump + day.lean;
+    totalSlouch += day.left + day.right + day.slump + day.lean + day.sink;
     totalBreaks += day.breaks;
     totalAway += day.away;
   });
@@ -2425,6 +2467,7 @@ async function showReport(range) {
           { label: CATEGORY_LABELS.right, data: rightMin, backgroundColor: CATEGORY_COLORS.right, stack: 's' },
           { label: CATEGORY_LABELS.slump, data: slumpMin, backgroundColor: CATEGORY_COLORS.slump, stack: 's' },
           { label: CATEGORY_LABELS.lean, data: leanMin, backgroundColor: CATEGORY_COLORS.lean, stack: 's' },
+          { label: CATEGORY_LABELS.sink, data: sinkMin, backgroundColor: CATEGORY_COLORS.sink, stack: 's' },
           { label: CATEGORY_LABELS.break, data: breakMin, backgroundColor: CATEGORY_COLORS.break, stack: 's' },
           { label: CATEGORY_LABELS.away, data: awayMin, backgroundColor: CATEGORY_COLORS.away, stack: 's' }
         ]
@@ -2602,6 +2645,8 @@ calibrateBtn.addEventListener('click', () => {
     baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
     baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
     baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
+    baselineEyeDistanceRatio = interEyeDistanceRatio(lm[2], lm[5], lm[11], lm[12]);
+    baselineNoseY = lm[0].y;
     stillnessRef = null;
     lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
@@ -2644,16 +2689,18 @@ function loop() {
   const result = landmarker.detectForVideo(video, now);
   ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-  if (result.landmarks && result.landmarks.length > 0) {
-    const lm = result.landmarks[0];
+  const lm = result.landmarks && result.landmarks.length > 0 ? result.landmarks[0] : null;
+  if (lm && hasVisibleFace(lm)) {
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
     drawPoseDots([leftEar, rightEar, leftSh, rightSh]);
 
     const earMid = midpoint(leftEar, rightEar);
     const shMid = midpoint(leftSh, rightSh);
 
-    // Experimental only (see comment above the helpers) -- drawn/printed for
-    // now, not fed into calibration, slouch detection, or storage.
+    // eyeDistance feeds lean-in, nose.y feeds the sink ("sitting low") signal
+    // below -- both real signals now, not just the debug readout. eyeTilt
+    // and raw noseOffset are still just drawn/printed (see comment above
+    // the helpers).
     const leftEye = lm[2], rightEye = lm[5], nose = lm[0];
     drawPoseDots([leftEye, rightEye, nose], 'rgba(193,98,46,0.85)');
     drawExperimentalReadout(
@@ -2713,7 +2760,7 @@ function loop() {
     if (breakActive) {
       setStatus('idle', 'on a break', 'back in a few');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
-      updateLiveMetrics(0, 0, 0, false);
+      updateLiveMetrics(0, 0, 0, 0, false);
       stillnessRef = null;
       lastMovementAt = null;
       nextFrame();
@@ -2723,13 +2770,16 @@ function loop() {
     const lateral = baselineLateral !== null ? lateralDeviation(earMid, shMid, leftSh, rightSh) - baselineLateral : 0;
     const neckRatio = neckCompressionRatio(earMid, shMid, leftSh, rightSh);
     const compression = baselineNeckRatio !== null ? baselineNeckRatio - neckRatio : 0;
-    const lean = leanInRatio(leftSh, rightSh, baselineShoulderWidth);
-    const calibrated = baselineLateral !== null && baselineNeckRatio !== null && baselineShoulderWidth !== null;
-    updateLiveMetrics(lateral, compression, lean, calibrated);
+    const eyeDist = interEyeDistanceRatio(leftEye, rightEye, leftSh, rightSh);
+    const lean = baselineEyeDistanceRatio !== null ? (eyeDist - baselineEyeDistanceRatio) / baselineEyeDistanceRatio : 0;
+    const sink = sinkRatio(nose, baselineNoseY, leftSh, rightSh);
+    const calibrated = baselineLateral !== null && baselineNeckRatio !== null && baselineShoulderWidth !== null && baselineEyeDistanceRatio !== null && baselineNoseY !== null;
+    updateLiveMetrics(lateral, compression, lean, sink, calibrated);
 
     displayLateral += (lateral - displayLateral) * 0.08;
     displayCompression += (compression - displayCompression) * 0.08;
     displayLean += (lean - displayLean) * 0.08;
+    displaySink += (sink - displaySink) * 0.08;
 
     if (!calibrated) {
       setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
@@ -2738,25 +2788,32 @@ function loop() {
       const latTol = Number(toleranceSlider.value);
       const compTol = Number(compressionToleranceSlider.value);
       const leanTol = Number(leanToleranceSlider.value);
+      const sinkTol = Number(sinkToleranceSlider.value);
       const sus = Number(sustainSlider.value) * 1000;
       const leftLean = lateral > latTol;
       const rightLean = lateral < -latTol;
       const comp = compression > compTol;
       const leaningIn = lean > leanTol;
-      const isSlouching = leftLean || rightLean || comp || leaningIn;
-      const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : leaningIn ? 'lean_in' : null;
+      const sinking = sink > sinkTol;
+      const isSlouching = leftLean || rightLean || comp || leaningIn || sinking;
+      // Priority order when more than one crosses tolerance at once: left/
+      // right lean first (most visually obvious), then neck compression,
+      // then sitting low, then lean-in -- arbitrary but consistent, same as
+      // the original three-way chain.
+      const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : sinking ? 'sitting_low' : leaningIn ? 'lean_in' : null;
 
       updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
 
       if (!stillnessRef) {
-        stillnessRef = { lateral, compression, lean };
+        stillnessRef = { lateral, compression, lean, sink };
         lastMovementAt = Date.now();
       } else {
         const moved = Math.abs(lateral - stillnessRef.lateral) > STILLNESS_MOVE_THRESHOLD
           || Math.abs(compression - stillnessRef.compression) > STILLNESS_MOVE_THRESHOLD
-          || Math.abs(lean - stillnessRef.lean) > STILLNESS_MOVE_THRESHOLD;
+          || Math.abs(lean - stillnessRef.lean) > STILLNESS_MOVE_THRESHOLD
+          || Math.abs(sink - stillnessRef.sink) > STILLNESS_MOVE_THRESHOLD;
         if (moved) {
-          stillnessRef = { lateral, compression, lean };
+          stillnessRef = { lateral, compression, lean, sink };
           lastMovementAt = Date.now();
         }
       }
@@ -2768,7 +2825,7 @@ function loop() {
         speak(p);
         addAlertToFeed('stillness_prompt', p);
         lastStillnessNudgeAt = Date.now();
-        stillnessRef = { lateral, compression, lean };
+        stillnessRef = { lateral, compression, lean, sink };
         lastMovementAt = Date.now();
       }
 
@@ -2780,16 +2837,23 @@ function loop() {
         }
         slouchAccumulatedMs += dt * 1000;
         const dur = Date.now() - slouchStartedAt;
-        const label = currentType === 'compression' ? 'slumping'
+        const label = currentType === 'compression' ? 'neck dropping'
           : currentType === 'lateral_left' ? 'leaning left'
           : currentType === 'lateral_right' ? 'leaning right'
+          : currentType === 'sitting_low' ? 'sitting low'
           : 'leaning in';
         setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur / 1000)}s and counting`);
-        if (dur > sus && Date.now() - lastPostureNudgeAt > 5000) {
+        // At least POSTURE_NUDGE_COOLDOWN_MS between repeated posture nudges --
+        // this used to be 5000ms, which read as relentless nagging every 5s
+        // while a sustained slouch held (the user's own words: "keeps
+        // rolling"). Break (60s) and stillness (60s) nudges were already
+        // fine; this was the one actually out of step with the rest.
+        if (dur > sus && Date.now() - lastPostureNudgeAt > POSTURE_NUDGE_COOLDOWN_MS) {
           let phrase;
           if (currentType === 'compression') { phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length]; slumpIdx++; }
           else if (currentType === 'lateral_left') { phrase = LEFT_PHRASES[leftIdx % LEFT_PHRASES.length]; leftIdx++; }
           else if (currentType === 'lateral_right') { phrase = RIGHT_PHRASES[rightIdx % RIGHT_PHRASES.length]; rightIdx++; }
+          else if (currentType === 'sitting_low') { phrase = SINK_PHRASES[sinkIdx % SINK_PHRASES.length]; sinkIdx++; }
           else { phrase = LEAN_PHRASES[leanIdx % LEAN_PHRASES.length]; leanIdx++; }
           speak(phrase);
           addAlertToFeed(currentType, phrase);
@@ -2833,7 +2897,7 @@ function loop() {
       breakStartedAt = null;
       setStatus('idle', 'no one detected', 'step into frame to resume');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
-      updateLiveMetrics(0, 0, 0, false);
+      updateLiveMetrics(0, 0, 0, 0, false);
       stillnessRef = null;
       lastMovementAt = null;
     }
@@ -2911,6 +2975,7 @@ function loadTuning() {
     if (saved.tolerance !== undefined) toleranceSlider.value = saved.tolerance;
     if (saved.compression !== undefined) compressionToleranceSlider.value = saved.compression;
     if (saved.lean !== undefined) leanToleranceSlider.value = saved.lean;
+    if (saved.sink !== undefined) sinkToleranceSlider.value = saved.sink;
     if (saved.sustain !== undefined) sustainSlider.value = saved.sustain;
     if (saved.breakInterval !== undefined) breakSlider.value = saved.breakInterval;
     if (saved.stillness !== undefined) stillnessSlider.value = saved.stillness;
@@ -2922,6 +2987,7 @@ function saveTuning() {
     tolerance: toleranceSlider.value,
     compression: compressionToleranceSlider.value,
     lean: leanToleranceSlider.value,
+    sink: sinkToleranceSlider.value,
     sustain: sustainSlider.value,
     breakInterval: breakSlider.value,
     stillness: stillnessSlider.value
@@ -2949,6 +3015,7 @@ async function pushAppSettings() {
         tolerance: Number(toleranceSlider.value),
         compression: Number(compressionToleranceSlider.value),
         lean: Number(leanToleranceSlider.value),
+        sink: Number(sinkToleranceSlider.value),
         sustain: Number(sustainSlider.value),
         break_interval: Number(breakSlider.value),
         stillness: Number(stillnessSlider.value),
@@ -2976,6 +3043,7 @@ async function fetchAndApplyAppSettings() {
     if (s.tolerance != null) toleranceSlider.value = s.tolerance;
     if (s.compression != null) compressionToleranceSlider.value = s.compression;
     if (s.lean != null) leanToleranceSlider.value = s.lean;
+    if (s.sink != null) sinkToleranceSlider.value = s.sink;
     if (s.sustain != null) sustainSlider.value = s.sustain;
     if (s.break_interval != null) breakSlider.value = s.break_interval;
     if (s.stillness != null) stillnessSlider.value = s.stillness;
@@ -2987,18 +3055,19 @@ async function fetchAndApplyAppSettings() {
     localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
     localStorage.setItem(TUNING_KEY, JSON.stringify({
       tolerance: toleranceSlider.value, compression: compressionToleranceSlider.value, lean: leanToleranceSlider.value,
-      sustain: sustainSlider.value, breakInterval: breakSlider.value, stillness: stillnessSlider.value
+      sink: sinkToleranceSlider.value, sustain: sustainSlider.value, breakInterval: breakSlider.value, stillness: stillnessSlider.value
     }));
     // Repaint everything that reads these values so a remote-newer setting shows immediately.
     toleranceVal.textContent = toleranceSlider.value;
     compressionToleranceVal.textContent = compressionToleranceSlider.value;
     leanToleranceVal.textContent = leanToleranceSlider.value;
+    sinkToleranceVal.textContent = sinkToleranceSlider.value;
     sustainVal.textContent = `${sustainSlider.value}s`;
     breakVal.textContent = `${breakSlider.value} min`;
     stillnessVal.textContent = `${stillnessSlider.value} min`;
     hydrationTargetInput.value = hydrationTargetMl;
     Object.entries(hydrationSizeInputs).forEach(([key, input]) => { input.value = hydrationSizes[key]; hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`; });
-    [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
+    [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
     renderHydration();
   } catch (err) { console.warn('fetchAndApplyAppSettings:', err); }
 }
@@ -3007,11 +3076,12 @@ loadTuning();
 toleranceVal.textContent = toleranceSlider.value;
 compressionToleranceVal.textContent = compressionToleranceSlider.value;
 leanToleranceVal.textContent = leanToleranceSlider.value;
+sinkToleranceVal.textContent = sinkToleranceSlider.value;
 sustainVal.textContent = `${sustainSlider.value}s`;
 breakVal.textContent = `${breakSlider.value} min`;
 stillnessVal.textContent = `${stillnessSlider.value} min`;
 
-[toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
+[toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
 toleranceSlider.addEventListener('input', () => {
   toleranceVal.textContent = toleranceSlider.value;
@@ -3026,6 +3096,11 @@ compressionToleranceSlider.addEventListener('input', () => {
 leanToleranceSlider.addEventListener('input', () => {
   leanToleranceVal.textContent = leanToleranceSlider.value;
   paintSliderTrack(leanToleranceSlider);
+  saveTuning();
+});
+sinkToleranceSlider.addEventListener('input', () => {
+  sinkToleranceVal.textContent = sinkToleranceSlider.value;
+  paintSliderTrack(sinkToleranceSlider);
   saveTuning();
 });
 sustainSlider.addEventListener('input', () => {
@@ -3056,15 +3131,21 @@ const RESEARCH_INFO = {
     source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
   },
   compression: {
-    title: 'slump tolerance',
+    title: 'neck tolerance',
     short: "Same principle as side-to-side: no single ideal angle, measured against your own baseline.",
-    long: "Neck/shoulder compression (slumping) is tracked relative to how you sat when you calibrated, not a fixed universal target \u2014 consistent with research suggesting movement and variability matter more than any one \u201ccorrect\u201d posture.",
+    long: "Neck/shoulder compression \u2014 your head drooping toward your shoulders \u2014 is tracked relative to how you sat when you calibrated, not a fixed universal target \u2014 consistent with research suggesting movement and variability matter more than any one \u201ccorrect\u201d posture. Separate from sitting low in the chair (see that tolerance below), which is a different movement that used to share this same \"slumping\" label.",
     source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
   },
   lean: {
     title: 'lean-in tolerance',
     short: "Same principle again \u2014 measured against your own calibrated baseline, not a fixed ideal distance from the screen.",
-    long: "Leaning in is tracked as drift away from your own baseline position, in line with research suggesting sustained fixed positions (of any kind) are the more consistent concern, rather than any single distance being inherently wrong.",
+    long: "Leaning in is tracked as drift away from your own baseline position, in line with research suggesting sustained fixed positions (of any kind) are the more consistent concern, rather than any single distance being inherently wrong. Measured from how far apart your eyes appear relative to your shoulders, not shoulder width alone \u2014 isolates the face moving toward the camera from shoulder rotation or hunching, which read as \"leaning in\" before even though the head hadn't moved.",
+    source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
+  },
+  sink: {
+    title: 'sitting-low tolerance',
+    short: "Same principle again \u2014 measured against your own calibrated baseline, not a fixed ideal seat height.",
+    long: "Sliding down in the chair is tracked separately from neck tolerance above: neck tolerance is your head drooping toward your shoulders while your torso stays put; this is your head+shoulder line dropping in frame as you slide down the seat. They're different physical movements that used to share one \"slumping\" label and one number, which is why sitting low specifically wasn't being caught before.",
     source: 'Source: sitting-posture biomechanics literature (e.g. Roman-Liu et al., 2024 review) \u2014 general synthesis, not one definitive study.'
   },
   sustain: {
