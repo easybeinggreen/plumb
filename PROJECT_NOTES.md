@@ -484,6 +484,40 @@ load/interaction." The presence-visibility assumption, the felt sensitivity
 of the new lean-in signal, the sitting-low default, and the retuned lateral
 default all need the user's own live testing before this merges to `main`.
 
+**First live-test round (same day), from the user's real webcam:** overall
+"pretty good" and "accurate." Three follow-ups, all addressed same session:
+- Left/right lean needed "a lot" of real movement vs. lean-in measuring
+  well -- confirmed the two metrics scale very differently for equivalent
+  physical movement (eye-distance grows fast with forward motion; ear-to-
+  shoulder x-offset grows slowly with sideways lean). Lateral default
+  lowered again, 0.12 -> 0.07.
+- Tracking felt "laggier," and the PiP popup didn't appear. PiP not
+  opening is almost certainly unrelated pre-existing flakiness (two-phase
+  gesture requirement, see "Decisions" above) -- this branch never touches
+  that code. The lag's more likely cause: a single low-confidence frame
+  could flip the new face-visibility presence check off and back on every
+  other frame, each flip finalizing/reopening tracking blocks. Added a
+  1.5s grace period (`FACE_VISIBILITY_GRACE_MS`) before a low-confidence
+  read counts as a real absence. **Both fixes pushed but not yet
+  re-verified live as of this writing.**
+- Also fixed same round: the light box's blur/resolution (see roadmap
+  item 1 below) and the "who's using this?" modal copy, which said stats
+  stay separate "on this device" -- backwards, since the whole point of
+  the shared name is that it merges across devices, not separates by one.
+
+**Device tracking, added same session, user's own idea:** "we've made this
+collect data across devices... interesting to track which device to help
+identify when posture is better or worse." New, separate axis from user
+identity: an auto-generated `device_label` (e.g. `device-i81l`), editable
+in Settings -> device -> "device name," tagged onto every `posture_events`
+row via the single shared `flushEvents()` upload point. Report gets a
+device filter for today/week. **Deliberately not available for month** --
+`posture_daily_summary` (the nightly rollup) groups by date/user/type only,
+not device, so anything older than 2 days has no device info to filter on;
+surfaced as a disabled control with an explanatory tooltip rather than
+silently blending devices together. Only tags data going forward; nothing
+to backfill since the concept didn't exist before today.
+
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
@@ -579,6 +613,12 @@ Listed in the order the user raised them, not priority.
    voice) — likely pairs with the cached-phrase approach, since nudge text
    is a small fixed set, so each voice's full phrase set could be
    pre-generated once rather than synthesized live per nudge.
+   **Explicitly deferred to last, user's own call (2026-09-18):** "leave
+   ElevenLabs to the end when we know all the nudges" -- generating/caching
+   voice lines for a phrase set that's still actively changing (see the
+   eye/nose posture-signal work above, which already touched several
+   phrase arrays) would mean redoing that work every time a nudge's
+   wording changes. Don't start this until the nudge phrases have settled.
 6. **"My best self" / "call ready" self-check button.** Refined
    2026-09-17: not just a one-off check against a fixed prompt -- capture
    and save a reference "best self" photo (hair brushed, sitting up,
