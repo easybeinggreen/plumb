@@ -1766,53 +1766,44 @@ function computeMinuteData(events, referenceDate) {
 
 const CATEGORY_ORDER = ['good', 'left', 'right', 'slump', 'lean', 'break', 'away', 'not_tracking'];
 
-// Groups consecutive minutes into `bucketMinutes`-wide buckets and draws
-// each as a small vertical stack -- good on top, everything else stacked
-// below it in proportion to how much of that bucket it actually took up --
-// using the exact same category order and colors as the totals bar. This
-// replaced a true one-column-per-minute renderer: at full-day scale, 1440
-// individual minute-columns (many real but brief, ~8s average per the
-// 2026-09-14 finding) read as a chaotic barcode rather than a shape you
-// could glance at and interpret. Bucketing trades that precision away
-// visually -- it's still there in the underlying minuteData for the hover
-// tooltip and the day-drilldown -- for "rough patches vs. clean stretches"
-// at a glance, which is what this view is actually for.
-function drawBucketedTrack(ctx2, x0, y0, width, height, minuteData, bucketMinutes) {
+// Paints the timeline as flat, single-color horizontal bands: one solid
+// color per physical pixel column, decided by majority vote of whatever
+// state actually made up most of that pixel's span of minutes -- never a
+// blend, never a partial fill, never more than one color in a column. This
+// is deliberately NOT a composition chart (that's what the totals bar is
+// for) -- it's a timeline, and a timeline reads as bands or it isn't one.
+//
+// A pixel spans multiple real minutes (canvas width varies with window
+// size -- typically 1.5-3 min/px for this view), so a brief slouch
+// correction that's a minority of its pixel's span stays correctly
+// invisible at this zoom level without needing opacity or stacking to
+// represent it "honestly" -- majority vote already does that, for free,
+// as a side effect of just picking one color like a timeline should.
+function drawPixelBands(ctx2, x0, y0, width, height, minuteData) {
   const { states, slouchFrac, slouchType } = minuteData;
-  for (let startM = 0; startM < 1440; startM += bucketMinutes) {
-    const endM = Math.min(1440, startM + bucketMinutes);
+  const cols = Math.max(1, Math.round(width));
+  for (let px = 0; px < cols; px++) {
+    const m0 = Math.floor((px / cols) * 1440);
+    const m1 = Math.max(m0 + 1, Math.floor(((px + 1) / cols) * 1440));
     const secs = { good: 0, left: 0, right: 0, slump: 0, lean: 0, break: 0, away: 0, not_tracking: 0 };
-    let accounted = 0;
-    for (let m = startM; m < endM; m++) {
+    let any = false;
+    for (let m = m0; m < m1 && m < 1440; m++) {
       const state = states[m];
       if (state === 'future') continue;
+      any = true;
       if (state === 'good') {
         const frac = slouchFrac[m] || 0;
         const type = slouchType[m];
-        if (frac > 0 && type) {
-          secs[type] += 60 * frac;
-          secs.good += 60 * (1 - frac);
-        } else {
-          secs.good += 60;
-        }
+        secs[(frac > 0.5 && type) ? type : 'good'] += 1;
       } else {
-        secs[state] += 60;
+        secs[state] += 1;
       }
-      accounted += 60;
     }
-    if (accounted <= 0) continue; // bucket is entirely future (or empty)
-
-    const x = x0 + (startM / 1440) * width;
-    const bucketW = x0 + (endM / 1440) * width - x;
-    let y = y0;
-    CATEGORY_ORDER.forEach(key => {
-      const val = secs[key];
-      if (val <= 0) return;
-      const h = (val / accounted) * height;
-      ctx2.fillStyle = CATEGORY_COLORS[key];
-      ctx2.fillRect(x, y, bucketW, h);
-      y += h;
-    });
+    if (!any) continue;
+    let bestKey = 'good', bestVal = -1;
+    CATEGORY_ORDER.forEach(key => { if (secs[key] > bestVal) { bestVal = secs[key]; bestKey = key; } });
+    ctx2.fillStyle = CATEGORY_COLORS[bestKey];
+    ctx2.fillRect(x0 + px, y0, 1, height);
   }
 }
 
@@ -1831,7 +1822,7 @@ function drawDayStrip(canvas, minuteData) {
   const ctx2 = canvas.getContext('2d');
   ctx2.scale(dpr, dpr);
   ctx2.clearRect(0, 0, width, height);
-  drawBucketedTrack(ctx2, 0, 0, width, height, minuteData, 20);
+  drawPixelBands(ctx2, 0, 0, width, height, minuteData);
 }
 
 // Total tracked seconds (everything drawTotalsBar actually stacks) for one
@@ -2022,10 +2013,10 @@ function renderTodayTimeline(events, canvas, referenceDate) {
   const colors = CATEGORY_COLORS;
   const labels = { ...CATEGORY_LABELS, break: 'break (1–60m)', away: 'away (60m+)' };
 
-  drawBucketedTrack(ctx2, 0, 0, width, timelineHeight, minuteData, 10);
+  drawPixelBands(ctx2, 0, 0, width, timelineHeight, minuteData);
 
   // Contiguous runs of the same base state, for the hover tooltip below --
-  // the fill itself no longer needs these (drawMinuteTrack paints
+  // the fill itself no longer needs these (drawPixelBands paints
   // per-minute), but "sitting well, 09:14-11:40" reads better on hover than
   // a single minute would.
   const segments = [];
