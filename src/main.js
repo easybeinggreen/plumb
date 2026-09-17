@@ -173,6 +173,14 @@ const POSTURE_NUDGE_COOLDOWN_MS = 30 * 1000; // was 5000ms -- see comment at its
 // posture (every ~10s, piggybacked on the existing housekeeping interval)
 // -- brightness doesn't change frame-to-frame the way posture does, and
 // getImageData on every rAF tick would be a real, pointless cost.
+// Sample resolution for the light box -- kept separate from the *rendered*
+// detail (see LIGHT_BLUR_PX in drawLightPattern): sampling finer gives a
+// more accurate brightness/skew number, but rendering that raw detail
+// straight to screen reads as a recognizable low-res photo (clothing
+// texture, etc.), not an abstract "where's the light" glow. Heavy blur on
+// render is what actually fixes that, independent of sample resolution.
+const LIGHT_SAMPLE_W = 56;
+const LIGHT_SAMPLE_H = 42;
 const LIGHT_TREND_WINDOW_MS = 6 * 60 * 1000; // how far back "dimming/brightening" looks
 const LIGHT_TREND_THRESHOLD = 0.05; // brightness delta over that window to call it a trend
 const LIGHT_SKEW_TOLERANCE = 0.12; // signed left/right imbalance before it counts as "glare on one side"
@@ -794,6 +802,7 @@ function resetLightWidget() {
 // standing in for it. Mirrored horizontally on the way in, same as the
 // video/overlay elements already are, since the raw camera frame isn't
 // mirrored but everything else you see of yourself in this app is.
+const LIGHT_BLUR_PX = 10; // silhouette/glow, not a recognizable mini photo -- see comment above LIGHT_SAMPLE_W
 function drawLightPattern(canvas, data, srcW, srcH) {
   const tmp = document.createElement('canvas');
   tmp.width = srcW;
@@ -819,7 +828,13 @@ function drawLightPattern(canvas, data, srcW, srcH) {
   ctx.save();
   ctx.translate(cw, 0);
   ctx.scale(-1, 1);
+  // Blurred on the way in specifically so fine texture (clothing patterns,
+  // recognizable shapes) washes out into a soft brightness gradient --
+  // "silhouette, not mini screen" was the direct ask. Reset after so this
+  // context's filter never leaks into some other draw call on it.
+  ctx.filter = `blur(${LIGHT_BLUR_PX}px)`;
   ctx.drawImage(tmp, 0, 0, cw, ch);
+  ctx.filter = 'none';
   ctx.restore();
 }
 
@@ -901,22 +916,23 @@ function sampleLight() {
   if (!running || !video.videoWidth) return;
   if (!lightSampleCanvas) {
     lightSampleCanvas = document.createElement('canvas');
-    lightSampleCanvas.width = 40;
-    lightSampleCanvas.height = 30;
+    lightSampleCanvas.width = LIGHT_SAMPLE_W;
+    lightSampleCanvas.height = LIGHT_SAMPLE_H;
     lightSampleCtx = lightSampleCanvas.getContext('2d', { willReadFrequently: true });
   }
   let data;
   try {
-    lightSampleCtx.drawImage(video, 0, 0, 40, 30);
-    data = lightSampleCtx.getImageData(0, 0, 40, 30).data;
+    lightSampleCtx.drawImage(video, 0, 0, LIGHT_SAMPLE_W, LIGHT_SAMPLE_H);
+    data = lightSampleCtx.getImageData(0, 0, LIGHT_SAMPLE_W, LIGHT_SAMPLE_H).data;
   } catch (e) { return; }
 
+  const midX = LIGHT_SAMPLE_W / 2;
   let leftSum = 0, leftN = 0, rightSum = 0, rightN = 0;
-  for (let y = 0; y < 30; y++) {
-    for (let x = 0; x < 40; x++) {
-      const i = (y * 40 + x) * 4;
+  for (let y = 0; y < LIGHT_SAMPLE_H; y++) {
+    for (let x = 0; x < LIGHT_SAMPLE_W; x++) {
+      const i = (y * LIGHT_SAMPLE_W + x) * 4;
       const lum = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
-      if (x < 20) { rightSum += lum; rightN++; } else { leftSum += lum; leftN++; }
+      if (x < midX) { rightSum += lum; rightN++; } else { leftSum += lum; leftN++; }
     }
   }
   const leftAvg = leftSum / leftN;
@@ -928,7 +944,7 @@ function sampleLight() {
   const cutoff = Date.now() - LIGHT_TREND_WINDOW_MS;
   while (lightBrightnessHistory.length && lightBrightnessHistory[0].t < cutoff) lightBrightnessHistory.shift();
 
-  drawLightPattern(lightBox, data, 40, 30);
+  drawLightPattern(lightBox, data, LIGHT_SAMPLE_W, LIGHT_SAMPLE_H);
   updateLightWidget(leftAvg, rightAvg);
   maybeNudgeGlare(skew);
   logLightReading(brightness, skew);
