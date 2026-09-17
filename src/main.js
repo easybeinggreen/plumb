@@ -50,6 +50,7 @@ const cameraToggleBtn = document.getElementById('cameraToggleBtn');
 const cameraSelect = document.getElementById('cameraSelect');
 const deviceLabelInput = document.getElementById('deviceLabelInput');
 const calibrateBtn = document.getElementById('calibrateBtn');
+const ergoWizardBtn = document.getElementById('ergoWizardBtn');
 const breakToggleBtn = document.getElementById('breakToggleBtn');
 const testVoiceBtn = document.getElementById('testVoiceBtn');
 const muteBtn = document.getElementById('muteBtn');
@@ -1400,6 +1401,7 @@ async function startCamera() {
     // because it was still genuinely disabled. Moving it earlier removes
     // that dead window instead of just disguising it.
     calibrateBtn.disabled = false;
+    ergoWizardBtn.disabled = false;
     if (baselineLateral === null) {
       calibrateBtn.textContent = 'calibrate posture';
       calibrateBtn.classList.add('needs-calibration');
@@ -1536,6 +1538,7 @@ function stopCamera(reason = 'manual') {
   cameraToggleBtn.disabled = false;
 
   calibrateBtn.disabled = true;
+  ergoWizardBtn.disabled = true;
   breakToggleBtn.disabled = true;
   // A calibrated baseline persists across a stop/restart in this tab (no
   // need to redo it every time you toggle the camera), so reflect that in
@@ -2710,17 +2713,15 @@ breakToggleBtn.addEventListener('click', () => {
   else startBreak(true);
 });
 
-calibrateBtn.addEventListener('click', () => {
-  // Belt-and-braces on top of the startCamera reordering above -- if this
-  // somehow still fires before the model/video are actually ready, say so
-  // instead of doing nothing. A click that appears to do nothing, with no
-  // feedback either way, is what made this feel broken rather than slow.
-  // Deliberately NOT gated on `running` -- calibration is meant to work
-  // during the pre-running alignment countdown too (see startCamera), only
-  // on the model/video actually being live.
+// Pulled out of the click handler so the ergonomic setup wizard's final
+// step can trigger the exact same calibration, not a reimplementation of
+// it. Deliberately NOT gated on `running` -- calibration is meant to work
+// during the pre-running alignment countdown too (see startCamera), only
+// on the model/video actually being live.
+function performCalibration() {
   if (!landmarker || !video.srcObject) {
     addAlertToFeed('calibration', 'Camera not ready yet — try again in a moment');
-    return;
+    return false;
   }
   const result = landmarker.detectForVideo(video, performance.now());
   if (result.landmarks && result.landmarks.length > 0) {
@@ -2742,9 +2743,113 @@ calibrateBtn.addEventListener('click', () => {
     calibrateBtn.classList.remove('needs-calibration');
     calibrateBtn.classList.add('is-confirmed');
     calibrateFlash.hidden = true;
+    return true;
   } else {
     addAlertToFeed('calibration', "No person detected — make sure you're in frame, then try again");
+    return false;
   }
+}
+calibrateBtn.addEventListener('click', () => {
+  // Belt-and-braces on top of the startCamera reordering above -- if this
+  // somehow still fires before the model/video are actually ready, say so
+  // instead of doing nothing. A click that appears to do nothing, with no
+  // feedback either way, is what made this feel broken rather than slow.
+  performCalibration();
+});
+
+// ---- Ergonomic setup wizard ----
+// Deliberately one-shot ("check now") rather than a continuous live loop
+// for the camera-distance step: alignPreviewFrame() already runs its own
+// continuous detectForVideo() loop during the pre-calibration countdown,
+// and MediaPipe's VIDEO mode requires strictly increasing timestamps
+// across calls -- two independent rAF loops both calling detectForVideo
+// risk colliding. A button-triggered single call has no such risk and is
+// perfectly adequate for a setup step (you're not moving fast while
+// checking your desk).
+const ERGO_STEP_COUNT = 5;
+let ergoStep = 0;
+let ergoLightInterval = null;
+
+const ergoWizardOverlay = document.getElementById('ergoWizardOverlay');
+const ergoWizardClose = document.getElementById('ergoWizardClose');
+const ergoStepIndicator = document.getElementById('ergoStepIndicator');
+const ergoBackBtn = document.getElementById('ergoBackBtn');
+const ergoNextBtn = document.getElementById('ergoNextBtn');
+const ergoCheckCameraBtn = document.getElementById('ergoCheckCameraBtn');
+const ergoCameraReadout = document.getElementById('ergoCameraReadout');
+const ergoLightPct = document.getElementById('ergoLightPct');
+const ergoLightReadout = document.getElementById('ergoLightReadout');
+const ergoLightAdvice = document.getElementById('ergoLightAdvice');
+const ergoCalibrateBtn = document.getElementById('ergoCalibrateBtn');
+const ergoCalibrateResult = document.getElementById('ergoCalibrateResult');
+
+function renderErgoStep() {
+  document.querySelectorAll('.ergo-step').forEach(el => {
+    el.hidden = Number(el.dataset.ergoStep) !== ergoStep;
+  });
+  ergoStepIndicator.textContent = `step ${ergoStep + 1} of ${ERGO_STEP_COUNT}`;
+  ergoBackBtn.style.visibility = ergoStep === 0 ? 'hidden' : 'visible';
+  ergoNextBtn.hidden = ergoStep === ERGO_STEP_COUNT - 1;
+
+  clearInterval(ergoLightInterval);
+  ergoLightInterval = null;
+  if (ergoStep === 2) {
+    // Mirrors the existing ambient-brightness box's own live text rather
+    // than sampling anything itself -- sampleLight() already runs on its
+    // own housekeeping interval regardless of this wizard being open.
+    const tick = () => {
+      ergoLightPct.textContent = lightPctEl.textContent;
+      ergoLightReadout.textContent = lightReadoutEl.textContent;
+      const pct = parseInt(lightPctEl.textContent, 10);
+      if (isNaN(pct)) { ergoLightAdvice.textContent = ''; return; }
+      const skewLabel = lightReadoutEl.textContent;
+      if (pct < 30) ergoLightAdvice.textContent = 'On the dim side -- worth a lamp or opening a curtain before settling in.';
+      else if (skewLabel && skewLabel !== 'evenly lit' && skewLabel !== 'no camera yet') ergoLightAdvice.textContent = `Noticeably ${skewLabel} -- worth adjusting a blind if that's glare rather than just how the room is.`;
+      else ergoLightAdvice.textContent = 'Looks reasonable.';
+    };
+    tick();
+    ergoLightInterval = setInterval(tick, 1000);
+  }
+}
+
+function openErgoWizard() {
+  ergoStep = 0;
+  ergoCameraReadout.textContent = 'no reading yet';
+  ergoCalibrateResult.textContent = '';
+  renderErgoStep();
+  ergoWizardOverlay.classList.add('open');
+}
+function closeErgoWizard() {
+  ergoWizardOverlay.classList.remove('open');
+  clearInterval(ergoLightInterval);
+  ergoLightInterval = null;
+}
+
+ergoWizardBtn.addEventListener('click', openErgoWizard);
+ergoWizardClose.addEventListener('click', closeErgoWizard);
+ergoBackBtn.addEventListener('click', () => { if (ergoStep > 0) { ergoStep--; renderErgoStep(); } });
+ergoNextBtn.addEventListener('click', () => { if (ergoStep < ERGO_STEP_COUNT - 1) { ergoStep++; renderErgoStep(); } });
+
+ergoCheckCameraBtn.addEventListener('click', () => {
+  if (!landmarker || !video.srcObject) {
+    ergoCameraReadout.textContent = 'camera not ready';
+    return;
+  }
+  const result = landmarker.detectForVideo(video, performance.now());
+  if (!result.landmarks || result.landmarks.length === 0) {
+    ergoCameraReadout.textContent = 'no person detected';
+    return;
+  }
+  const lm = result.landmarks[0];
+  const tilt = eyeTiltDegrees(lm[2], lm[5]);
+  const dist = interEyeDistanceRatio(lm[2], lm[5], lm[11], lm[12]);
+  ergoCameraReadout.textContent = `eye tilt ${tilt.toFixed(1)}° · eye distance ${dist.toFixed(3)}`;
+});
+
+ergoCalibrateBtn.addEventListener('click', () => {
+  const ok = performCalibration();
+  ergoCalibrateResult.textContent = ok ? "Calibrated -- you're all set." : 'Could not calibrate -- make sure you\'re visible in frame and try again.';
+  if (ok) setTimeout(closeErgoWizard, 1400);
 });
 
 // ---- Main loop ----

@@ -114,6 +114,20 @@
   #calibrateBtn.needs-calibration { background: var(--accent); border-color: var(--accent); color: #fff; animation: needs-calibration-pulse 1.8s ease-in-out infinite; }
   @keyframes needs-calibration-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(46,125,107,0.45); } 50% { box-shadow: 0 0 0 6px rgba(46,125,107,0); } }
 
+  #ergoWizardBtn { border-color: var(--ink-faint-2); font-size: 13px; font-weight: 500; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
+  #ergoWizardBtn:hover:not(:disabled) { border-color: var(--ink); }
+  #ergoWizardBtn:disabled { opacity: 0.4; }
+
+  .ergo-step-indicator { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; margin: -8px 0 16px; }
+  .ergo-step h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+  .ergo-step p { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0 0 12px; }
+  .ergo-live-row { display: flex; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
+  .ergo-readout { font-family: var(--mono); font-size: 13px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); border-radius: 8px; padding: 8px 12px; }
+  .ergo-checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .ergo-checklist li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--ink); }
+  .ergo-checklist input { margin-top: 3px; }
+  .ergo-nav { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ink-faint); }
+
   .btn-compact { font-size: 12.5px; font-weight: 500; padding: 7px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink); white-space: nowrap; }
   .btn-compact:hover:not(:disabled) { border-color: var(--ink); }
   .btn-compact:disabled { opacity: 0.4; }
@@ -412,6 +426,7 @@
         <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
         <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
+        <button id="ergoWizardBtn" disabled title="a short guided walkthrough: camera height, screen distance, lighting, desk basics -- then calibrate">set up your desk</button>
 
         <div class="switch-group">
           <div class="switch-item">
@@ -578,6 +593,75 @@
     <div class="hydration-size-row">
       <label>background nudges</label>
       <button id="bgAudioBtn" class="switch" aria-pressed="false" title="keep nudges running when this tab is hidden"></button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="ergoWizardOverlay">
+  <div class="modal" style="max-width: 480px;">
+    <button class="modal-close" id="ergoWizardClose">&times;</button>
+    <h2 class="modal-title">set up your desk</h2>
+    <div class="ergo-step-indicator" id="ergoStepIndicator">step 1 of 5</div>
+
+    <div class="ergo-step" data-ergo-step="0">
+      <p>A short walkthrough before calibrating: camera position and screen
+        distance, lighting, then a few desk basics a webcam can't measure
+        for you. Sit the way you'd normally work, then click next.</p>
+    </div>
+
+    <div class="ergo-step" data-ergo-step="1" hidden>
+      <h3>camera &amp; screen distance</h3>
+      <p>Camera lens roughly level with your eyes, monitor's top edge at or
+        slightly below eye level, screen at a comfortable arm's-length
+        distance. Sit naturally, then check a live reading:</p>
+      <div class="ergo-live-row">
+        <button id="ergoCheckCameraBtn" class="btn-compact" type="button">check now</button>
+        <span class="ergo-readout" id="ergoCameraReadout">no reading yet</span>
+      </div>
+      <p style="font-size:11.5px;">Eye tilt near 0&deg; means your head's
+        level (not a camera-height measurement by itself). Eye distance is
+        the same signal lean-in tolerance uses -- higher means closer to
+        the screen; there's no universal "correct" number, just a
+        comfortable working distance for you.</p>
+    </div>
+
+    <div class="ergo-step" data-ergo-step="2" hidden>
+      <h3>lighting</h3>
+      <p>Same live reading as the ambient brightness box on the home
+        screen -- worth checking before you settle in for the day.</p>
+      <div class="ergo-live-row">
+        <span class="ergo-readout" id="ergoLightPct">—</span>
+        <span class="ergo-readout" id="ergoLightReadout">no camera yet</span>
+      </div>
+      <p id="ergoLightAdvice" style="font-size:12px;"></p>
+    </div>
+
+    <div class="ergo-step" data-ergo-step="3" hidden>
+      <h3>desk &amp; chair basics</h3>
+      <p style="font-size:11.5px;">Not camera-measurable -- standard
+        workplace ergonomics guidance (e.g. HSE/OSHA display screen
+        equipment guidance), worth a quick self-check rather than a
+        pass/fail score.</p>
+      <ul class="ergo-checklist">
+        <li><label><input type="checkbox" /> Feet flat on the floor (or a footrest), knees roughly level with your hips</label></li>
+        <li><label><input type="checkbox" /> Lower back supported -- by the chair or a cushion, not unsupported/hunched</label></li>
+        <li><label><input type="checkbox" /> Elbows roughly 90&deg;&ndash;110&deg; at the keyboard, wrists straight, not bent up or down</label></li>
+        <li><label><input type="checkbox" /> Monitor top edge at or just below eye level, roughly an arm's length away</label></li>
+        <li><label><input type="checkbox" /> Shoulders relaxed, not hunched up toward your ears</label></li>
+      </ul>
+    </div>
+
+    <div class="ergo-step" data-ergo-step="4" hidden>
+      <h3>calibrate</h3>
+      <p>Sit the way you just set everything up for, then calibrate --
+        this is what everything else in Plumb measures against.</p>
+      <button id="ergoCalibrateBtn" class="btn" type="button">calibrate now</button>
+      <p id="ergoCalibrateResult" style="font-size:12px;"></p>
+    </div>
+
+    <div class="ergo-nav">
+      <button id="ergoBackBtn" class="btn-compact" type="button">back</button>
+      <button id="ergoNextBtn" class="btn-compact" type="button">next</button>
     </div>
   </div>
 </div>
