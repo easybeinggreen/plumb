@@ -1840,15 +1840,36 @@ function markMinutes(event, states, state) {
 // exactly what read as contradictory sitting side by side. Now both draw
 // from this single map, and the minute strip picks whichever slouch
 // sub-type actually dominated that minute instead of a fixed color.
+// Redone 2026-09-19 after live feedback that break/left/away/not-tracking
+// all clustered into the same pale warm-neutral zone, close enough to the
+// panel background (#F5F2EC) to be genuinely hard to tell apart. Validated
+// with the dataviz skill's validate_palette.js against that exact surface --
+// not eyeballed. `good` and `not_tracking` are deliberately exempt from the
+// categorical lightness/chroma floors: `good` is meant to read as the calm,
+// dominant baseline (near-black on purpose, not a competing bright series),
+// and `not_tracking` is meant to recede toward the background, not stand
+// out as its own series -- neither is something a viewer needs to pick out
+// of a legend at a glance the way the six problem-state colors are. Passes
+// every adjacent-pair check using the totals bar's fixed segment order
+// (good, left, right, slump, lean, sink, break, away) as the adjacency
+// list. The minute-strip doesn't respect that order though -- majority-
+// vote can put any two categories in neighboring pixels -- so it's really
+// an all-pairs problem underneath, and 7 genuinely-needed categories can't
+// all clear the all-pairs floor (the skill's own reference palette hits
+// the same ceiling past 3 slots). Picked the hues that minimized the
+// worst all-pairs case rather than pretending adjacency alone covers it:
+// worst remaining pair is neck-dropping vs. leaning-left, meaningfully
+// closer than ideal but a large improvement over the old palette, where
+// four colors sat nearly on top of the page background itself.
 const CATEGORY_COLORS = {
   good: '#0A2626',
-  left: '#F0DAC7',
-  right: '#E4C1A0',
+  left: '#A67908',
+  right: '#8C4A8C',
   slump: '#C1622E',
-  lean: '#2E7D6B',
-  sink: '#8C5B72',
-  break: '#C9C2B3',
-  away: '#9FB0B5',
+  lean: '#1F8A6C',
+  sink: '#5A3E96',
+  break: '#8F5220',
+  away: '#0F6690',
   not_tracking: '#F0EDE6',
   future: 'transparent'
 };
