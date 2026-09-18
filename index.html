@@ -522,6 +522,20 @@
         </div>
       </div>
 
+      <div class="panel" id="weeklyGoalsPanel" hidden>
+        <div class="section-title" style="cursor:default;">this week</div>
+        <p id="weeklyPatterns" style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin-top:0;"></p>
+        <ul id="weeklyGoalsList" style="margin:0 0 12px;padding-left:18px;font-size:13px;line-height:1.5;"></ul>
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px;" id="weeklyQuestion"></div>
+        <div id="weeklyResponseRow" style="display:flex;gap:6px;">
+          <input type="text" id="weeklyResponseInput" placeholder="your reply" maxlength="300"
+            style="flex:1;font-family:var(--sans);font-size:13px;padding:8px 10px;border-radius:8px;border:1.5px solid var(--ink-faint-2);background:var(--paper);color:var(--ink);" />
+          <button id="weeklyResponseBtn" class="btn-compact" type="button">save</button>
+        </div>
+        <div id="weeklyResponseSaved" style="font-size:12px;color:var(--ink-soft);margin-top:8px;" hidden></div>
+        <p style="font-size:11.5px;color:var(--ink-soft);margin:14px 0 0;" id="weeklyTrackerReminder"></p>
+      </div>
+
       <div class="panel">
         <div class="section-title" style="cursor:default;">alert feed</div>
         <div id="alertFeed" class="alert-feed"><div style="color:var(--ink-soft);">no alerts yet</div></div>

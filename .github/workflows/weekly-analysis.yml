@@ -1,0 +1,27 @@
+name: Weekly pattern analysis
+
+on:
+  schedule:
+    # 20:00 UTC Sunday = 6am Monday Brisbane (UTC+10, no DST) -- covers the
+    # week that just ended, analyzed first thing Monday.
+    - cron: '0 20 * * 0'
+  workflow_dispatch: {}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate weekly pattern analysis and goals
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: node scripts/generate-weekly-analysis.cjs

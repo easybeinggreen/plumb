@@ -3276,10 +3276,84 @@ function loop() {
   }
 }
 
+// ---- Weekly pattern analysis (generate-weekly-analysis.cjs writes these) ----
+const weeklyGoalsPanel = document.getElementById('weeklyGoalsPanel');
+const weeklyPatternsEl = document.getElementById('weeklyPatterns');
+const weeklyGoalsList = document.getElementById('weeklyGoalsList');
+const weeklyQuestionEl = document.getElementById('weeklyQuestion');
+const weeklyResponseRow = document.getElementById('weeklyResponseRow');
+const weeklyResponseInput = document.getElementById('weeklyResponseInput');
+const weeklyResponseBtn = document.getElementById('weeklyResponseBtn');
+const weeklyResponseSaved = document.getElementById('weeklyResponseSaved');
+const weeklyTrackerReminderEl = document.getElementById('weeklyTrackerReminder');
+let currentWeeklyGoalId = null;
+
+async function loadWeeklyGoals() {
+  if (!SYNC_CONFIGURED) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/weekly_goals?user_id=eq.${encodeURIComponent(currentUserId)}&order=week_start.desc&limit=1`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const rows = await res.json();
+    const row = rows[0];
+    if (!row) { weeklyGoalsPanel.hidden = true; return; }
+
+    currentWeeklyGoalId = row.id;
+    weeklyPatternsEl.textContent = row.patterns || '';
+    weeklyGoalsList.innerHTML = '';
+    (row.goals || []).forEach((g) => {
+      const li = document.createElement('li');
+      li.textContent = g;
+      weeklyGoalsList.appendChild(li);
+    });
+    weeklyQuestionEl.textContent = row.question || '';
+    weeklyTrackerReminderEl.textContent = row.tracker_reminder || '';
+
+    // Already answered this week -- show the reply instead of asking again,
+    // rather than silently letting a second answer overwrite the first.
+    if (row.user_response) {
+      weeklyResponseRow.hidden = true;
+      weeklyResponseSaved.hidden = false;
+      weeklyResponseSaved.textContent = `you said: "${row.user_response}"`;
+    } else {
+      weeklyResponseRow.hidden = false;
+      weeklyResponseSaved.hidden = true;
+      weeklyResponseInput.value = '';
+    }
+    weeklyGoalsPanel.hidden = false;
+  } catch (err) { console.warn('loadWeeklyGoals:', err); }
+}
+
+weeklyResponseBtn.addEventListener('click', async () => {
+  const reply = weeklyResponseInput.value.trim();
+  if (!reply || !currentWeeklyGoalId || !SYNC_CONFIGURED) return;
+  weeklyResponseBtn.disabled = true;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/weekly_goals?id=eq.${currentWeeklyGoalId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        Prefer: 'return=minimal'
+      },
+      body: JSON.stringify({ user_response: reply, responded_at: new Date().toISOString() })
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    weeklyResponseRow.hidden = true;
+    weeklyResponseSaved.hidden = false;
+    weeklyResponseSaved.textContent = `you said: "${reply}"`;
+  } catch (err) {
+    console.warn('save weekly response:', err);
+  } finally {
+    weeklyResponseBtn.disabled = false;
+  }
+});
+
 // ---- Init ----
 maybeSwitchDay();
 fetchAndApplyAppSettings();
 reconcileTodayFromCloud();
+loadWeeklyGoals();
 setInterval(() => {
   if (running) {
     localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());
