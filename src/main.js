@@ -202,8 +202,14 @@ const LIGHT_SAMPLE_H = 42;
 const LIGHT_TREND_WINDOW_MS = 6 * 60 * 1000; // how far back "dimming/brightening" looks
 const LIGHT_TREND_THRESHOLD = 0.05; // brightness delta over that window to call it a trend
 const LIGHT_SKEW_TOLERANCE = 0.12; // signed left/right imbalance before it counts as "glare on one side"
-const LIGHT_SUSTAIN_MS = 90 * 1000; // how long the skew must hold before nudging
+const LIGHT_SUSTAIN_MS = 90 * 1000; // how long the skew (or dim/bright level) must hold before nudging
 const LIGHT_LOG_INTERVAL_MS = 5 * 60 * 1000; // how often a reading gets persisted to Supabase
+// Overall (not left/right) brightness -- separate concern from skew above.
+// First-guess defaults, not backed by real data yet: worth retuning once
+// there's a live sense of what "too dim"/"too bright" actually reads as on
+// the 0-1 scale in practice.
+const LIGHT_DIM_THRESHOLD = 0.25;
+const LIGHT_BRIGHT_THRESHOLD = 0.80;
 const LIGHT_DIM_RGB = [23, 46, 44];
 const LIGHT_BRIGHT_RGB = [232, 178, 92];
 let lightSampleCanvas = null;
@@ -211,7 +217,10 @@ let lightSampleCtx = null;
 let lightBrightnessHistory = []; // [{t, brightness}], trimmed to LIGHT_TREND_WINDOW_MS
 let lightSkewStartedAt = null;
 let lightSkewSide = null; // 'left' | 'right'
+let lightLevelStartedAt = null;
+let lightLevelSide = null; // 'dim' | 'bright'
 let lastGlareNudgeAt = 0;
+let lastLightLevelNudgeAt = 0;
 let lastLightLogAt = 0;
 
 let presenceStartedAt = null;
@@ -906,6 +915,33 @@ function maybeNudgeGlare(skew) {
   lastGlareNudgeAt = Date.now();
 }
 
+// Separate from maybeNudgeGlare above: that one is about imbalance between
+// the two halves (a window on one side), this is about overall brightness
+// regardless of balance -- the two can coexist (evenly dim, or brightly
+// skewed) and are tracked independently.
+function maybeNudgeLightLevel(brightness) {
+  const level = brightness < LIGHT_DIM_THRESHOLD ? 'dim' : brightness > LIGHT_BRIGHT_THRESHOLD ? 'bright' : null;
+  if (!level) {
+    lightLevelStartedAt = null;
+    lightLevelSide = null;
+    return;
+  }
+  if (lightLevelSide !== level) {
+    lightLevelStartedAt = Date.now();
+    lightLevelSide = level;
+    return;
+  }
+  if (Date.now() - lightLevelStartedAt < LIGHT_SUSTAIN_MS) return;
+  if (Date.now() - lastLightLevelNudgeAt < 10 * 60 * 1000) return; // once per 10 min, not every tick
+  if (!voiceNudgesEnabled) return;
+  let phrase;
+  if (level === 'dim') { phrase = DIM_LIGHT_PHRASES[dimLightIdx % DIM_LIGHT_PHRASES.length]; dimLightIdx++; }
+  else { phrase = BRIGHT_LIGHT_PHRASES[brightLightIdx % BRIGHT_LIGHT_PHRASES.length]; brightLightIdx++; }
+  speak(phrase);
+  addAlertToFeed('light_level', phrase);
+  lastLightLevelNudgeAt = Date.now();
+}
+
 async function logLightReading(brightness, skew) {
   if (!SYNC_CONFIGURED) return;
   if (Date.now() - lastLightLogAt < LIGHT_LOG_INTERVAL_MS) return;
@@ -966,6 +1002,7 @@ function sampleLight() {
   drawLightPattern(lightBox, data, LIGHT_SAMPLE_W, LIGHT_SAMPLE_H);
   updateLightWidget(leftAvg, rightAvg);
   maybeNudgeGlare(skew);
+  maybeNudgeLightLevel(brightness);
   logLightReading(brightness, skew);
 }
 
@@ -1102,7 +1139,14 @@ const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Ni
 const BREAK_RETURN_SHORT_PHRASES = ["Good break — that was a nice stretch.", "Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet."];
 const GLARE_LEFT_PHRASES = ["Strong light on your left — worth adjusting the blind.", "It's gotten bright on your left side.", "Left side's quite bright now — check the light."];
 const GLARE_RIGHT_PHRASES = ["Strong light on your right — worth adjusting the blind.", "It's gotten bright on your right side.", "Right side's quite bright now — check the light."];
-let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, sinkIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0, glareLeftIdx = 0, glareRightIdx = 0;
+// Eye-comfort framing, not appearance -- deliberately not "you look washed
+// out" (that's the separate, not-yet-built "ready for your close-up"
+// concern). This is specifically about a screen fighting a much darker or
+// much brighter surrounding, which is the actual glare-related eye strain
+// mechanism (see RESEARCH_INFO.brightness).
+const DIM_LIGHT_PHRASES = ["Pretty dim in here — a lamp on would ease the strain of a bright screen against a dark room.", "Room's gone dark around you — worth turning on a light nearby.", "Low light — your eyes work harder with the screen this much brighter than the room."];
+const BRIGHT_LIGHT_PHRASES = ["Bright in here — worth dimming the room or turning your screen up so they're not fighting each other.", "Strong light overall — easing it back, or bumping screen brightness, is easier on your eyes.", "Quite bright now — worth the blind or a brighter screen so the contrast isn't straining your eyes."];
+let leftIdx = 0, rightIdx = 0, slumpIdx = 0, leanIdx = 0, sinkIdx = 0, breakIdx = 0, stillIdx = 0, breakReturnLongIdx = 0, breakReturnShortIdx = 0, glareLeftIdx = 0, glareRightIdx = 0, dimLightIdx = 0, brightLightIdx = 0;
 
 function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 }; }
 function drawPoseDots(points, color) {
@@ -1164,11 +1208,25 @@ function noseOffset(nose, shMid, lSh, rSh) {
 // .visibility on normalized landmarks, every point passes and presence
 // detection behaves exactly as it did before -- verify against a real
 // chair-vs-person test rather than trusting this blind.
-const FACE_VISIBILITY_MIN = 0.5;
+const FACE_VISIBILITY_MIN = 0.75; // was 0.5 -- raised after live testing showed a chair still got through; see comment on checkFaceVisibility
 const FACE_VISIBILITY_GRACE_MS = 1500;
-function hasVisibleFace(lm) {
-  const points = [lm[0], lm[2], lm[5]]; // nose, left eye, right eye
-  return points.every(p => typeof p.visibility !== 'number' || p.visibility >= FACE_VISIBILITY_MIN);
+// Returns the raw values too (not just pass/fail) so a presence-transition
+// can log exactly what MediaPipe reported -- needed after live testing
+// showed a chair still got accepted as "present" even with this check in
+// place. Likely explanation: `visibility` is the model's own confidence
+// that a landmark is real AND unoccluded, but BlazePose was never trained
+// to output "there is no person at all" -- given a chair-shaped blob, it
+// extrapolates plausible face-landmark positions from learned human-body
+// priors and can be confidently (if wrongly) high on that extrapolation,
+// same failure mode neural nets generally show on out-of-distribution
+// input. A higher threshold may or may not be enough on its own; logging
+// the real numbers when this happens again is what actually lets this get
+// tuned correctly instead of guessed at twice.
+function checkFaceVisibility(lm) {
+  const nose = lm[0].visibility, leftEye = lm[2].visibility, rightEye = lm[5].visibility;
+  const values = [nose, leftEye, rightEye];
+  const ok = values.every(v => typeof v !== 'number' || v >= FACE_VISIBILITY_MIN);
+  return { ok, nose, leftEye, rightEye };
 }
 function drawExperimentalReadout(eyeTilt, eyeDist, noseOff) {
   ctx.font = '11px Karla, sans-serif';
@@ -1182,6 +1240,12 @@ function drawExperimentalReadout(eyeTilt, eyeDist, noseOff) {
   ctx.fillRect(6, 6, boxW, lines.length * lineH + pad * 2 - 4);
   ctx.fillStyle = '#F0DAC7';
   lines.forEach((line, i) => ctx.fillText(line, 6 + pad, 6 + pad + lineH * (i + 1) - 4));
+  // Both callers of this (alignPreviewFrame during the pre-tracking
+  // countdown, and the main loop once tracking's live) already compute
+  // these values every frame -- feeding the wizard's diagram from here
+  // means it updates continuously without a second detectForVideo loop
+  // competing with whichever of those two is currently running.
+  updateErgoLiveReading(eyeTilt, eyeDist);
 }
 
 async function initModel() {
@@ -1401,7 +1465,6 @@ async function startCamera() {
     // because it was still genuinely disabled. Moving it earlier removes
     // that dead window instead of just disguising it.
     calibrateBtn.disabled = false;
-    ergoWizardBtn.disabled = false;
     if (baselineLateral === null) {
       calibrateBtn.textContent = 'calibrate posture';
       calibrateBtn.classList.add('needs-calibration');
@@ -1538,7 +1601,6 @@ function stopCamera(reason = 'manual') {
   cameraToggleBtn.disabled = false;
 
   calibrateBtn.disabled = true;
-  ergoWizardBtn.disabled = true;
   breakToggleBtn.disabled = true;
   // A calibrated baseline persists across a stop/restart in this tab (no
   // need to redo it every time you toggle the camera), so reflect that in
@@ -2758,30 +2820,58 @@ calibrateBtn.addEventListener('click', () => {
 });
 
 // ---- Ergonomic setup wizard ----
-// Deliberately one-shot ("check now") rather than a continuous live loop
-// for the camera-distance step: alignPreviewFrame() already runs its own
-// continuous detectForVideo() loop during the pre-calibration countdown,
-// and MediaPipe's VIDEO mode requires strictly increasing timestamps
-// across calls -- two independent rAF loops both calling detectForVideo
-// risk colliding. A button-triggered single call has no such risk and is
-// perfectly adequate for a setup step (you're not moving fast while
-// checking your desk).
+// Camera/distance step is genuinely live now, not one-shot -- but via a
+// second detectForVideo() *caller*, not a second detection *loop*.
+// alignPreviewFrame() (pre-calibration countdown) and the main loop()
+// (once tracking's live) already run one continuous rAF loop between them
+// -- exactly one is ever active at a time -- and both already compute eye
+// tilt/distance every frame for the old debug readout. updateErgoLiveReading()
+// below just taps those existing calls (see drawExperimentalReadout) rather
+// than starting a competing loop, which is what a naive "make it live"
+// implementation would risk: MediaPipe's VIDEO mode needs strictly
+// increasing timestamps across calls, and two independent rAF loops both
+// calling detectForVideo can collide.
 const ERGO_STEP_COUNT = 5;
 let ergoStep = 0;
 let ergoLightInterval = null;
+let ergoWizardIsOpen = false;
+
+// First-guess range for the distance bar, not measured against real data --
+// worth retuning once there's a live sense of what interEyeDistanceRatio
+// actually reads as up close vs. arm's length.
+const ERGO_DIST_NEAR = 0.15;
+const ERGO_DIST_FAR = 0.45;
 
 const ergoWizardOverlay = document.getElementById('ergoWizardOverlay');
 const ergoWizardClose = document.getElementById('ergoWizardClose');
 const ergoStepIndicator = document.getElementById('ergoStepIndicator');
 const ergoBackBtn = document.getElementById('ergoBackBtn');
 const ergoNextBtn = document.getElementById('ergoNextBtn');
-const ergoCheckCameraBtn = document.getElementById('ergoCheckCameraBtn');
+const ergoCameraNeedsStart = document.getElementById('ergoCameraNeedsStart');
+const ergoCameraLive = document.getElementById('ergoCameraLive');
+const ergoStartCameraBtn = document.getElementById('ergoStartCameraBtn');
+const ergoTiltGroup = document.getElementById('ergoTiltGroup');
+const ergoDistFill = document.getElementById('ergoDistFill');
 const ergoCameraReadout = document.getElementById('ergoCameraReadout');
 const ergoLightPct = document.getElementById('ergoLightPct');
 const ergoLightReadout = document.getElementById('ergoLightReadout');
 const ergoLightAdvice = document.getElementById('ergoLightAdvice');
 const ergoCalibrateBtn = document.getElementById('ergoCalibrateBtn');
 const ergoCalibrateResult = document.getElementById('ergoCalibrateResult');
+
+// Called from drawExperimentalReadout() every frame the pre-tracking
+// preview or the main loop is running -- a no-op unless the wizard is open
+// on the camera step. No new detection call happens here, just reading
+// values someone else already computed this frame.
+function updateErgoLiveReading(tilt, dist) {
+  if (!ergoWizardIsOpen || ergoStep !== 1) return;
+  ergoCameraNeedsStart.hidden = true;
+  ergoCameraLive.hidden = false;
+  ergoTiltGroup.style.transform = `rotate(${tilt}deg)`;
+  const pct = Math.max(0, Math.min(100, ((dist - ERGO_DIST_NEAR) / (ERGO_DIST_FAR - ERGO_DIST_NEAR)) * 100));
+  ergoDistFill.style.width = `${pct}%`;
+  ergoCameraReadout.textContent = `eye tilt ${tilt.toFixed(1)}° · eye distance ${dist.toFixed(3)}`;
+}
 
 function renderErgoStep() {
   document.querySelectorAll('.ergo-step').forEach(el => {
@@ -2791,12 +2881,20 @@ function renderErgoStep() {
   ergoBackBtn.style.visibility = ergoStep === 0 ? 'hidden' : 'visible';
   ergoNextBtn.hidden = ergoStep === ERGO_STEP_COUNT - 1;
 
+  if (ergoStep === 1) {
+    const ready = !!(landmarker && video.srcObject);
+    ergoCameraNeedsStart.hidden = ready;
+    ergoCameraLive.hidden = !ready;
+  }
+
   clearInterval(ergoLightInterval);
   ergoLightInterval = null;
   if (ergoStep === 2) {
     // Mirrors the existing ambient-brightness box's own live text rather
     // than sampling anything itself -- sampleLight() already runs on its
-    // own housekeeping interval regardless of this wizard being open.
+    // own housekeeping interval regardless of this wizard being open. Same
+    // silhouette-not-photo treatment as the main viewer applies here too,
+    // since this only ever reads that box's numbers, never its own frame.
     const tick = () => {
       ergoLightPct.textContent = lightPctEl.textContent;
       ergoLightReadout.textContent = lightReadoutEl.textContent;
@@ -2814,13 +2912,15 @@ function renderErgoStep() {
 
 function openErgoWizard() {
   ergoStep = 0;
-  ergoCameraReadout.textContent = 'no reading yet';
+  ergoWizardIsOpen = true;
+  ergoCameraReadout.textContent = 'reading live…';
   ergoCalibrateResult.textContent = '';
   renderErgoStep();
   ergoWizardOverlay.classList.add('open');
 }
 function closeErgoWizard() {
   ergoWizardOverlay.classList.remove('open');
+  ergoWizardIsOpen = false;
   clearInterval(ergoLightInterval);
   ergoLightInterval = null;
 }
@@ -2830,20 +2930,23 @@ ergoWizardClose.addEventListener('click', closeErgoWizard);
 ergoBackBtn.addEventListener('click', () => { if (ergoStep > 0) { ergoStep--; renderErgoStep(); } });
 ergoNextBtn.addEventListener('click', () => { if (ergoStep < ERGO_STEP_COUNT - 1) { ergoStep++; renderErgoStep(); } });
 
-ergoCheckCameraBtn.addEventListener('click', () => {
-  if (!landmarker || !video.srcObject) {
-    ergoCameraReadout.textContent = 'camera not ready';
-    return;
-  }
-  const result = landmarker.detectForVideo(video, performance.now());
-  if (!result.landmarks || result.landmarks.length === 0) {
-    ergoCameraReadout.textContent = 'no person detected';
-    return;
-  }
-  const lm = result.landmarks[0];
-  const tilt = eyeTiltDegrees(lm[2], lm[5]);
-  const dist = interEyeDistanceRatio(lm[2], lm[5], lm[11], lm[12]);
-  ergoCameraReadout.textContent = `eye tilt ${tilt.toFixed(1)}° · eye distance ${dist.toFixed(3)}`;
+ergoStartCameraBtn.addEventListener('click', () => {
+  ergoStartCameraBtn.disabled = true;
+  ergoStartCameraBtn.textContent = 'starting…';
+  startCamera();
+  // Camera being live and a person actually being detected are different
+  // moments -- updateErgoLiveReading() only fires once a frame has a real
+  // landmark set, which could leave this stuck on "start camera" if you
+  // haven't sat back down into frame yet. Poll the cheap readiness check
+  // directly so the panel swaps over regardless, showing "no one detected
+  // yet" until a real reading arrives.
+  const readyPoll = setInterval(() => {
+    if (!landmarker || !video.srcObject) return;
+    clearInterval(readyPoll);
+    ergoCameraNeedsStart.hidden = true;
+    ergoCameraLive.hidden = false;
+    ergoCameraReadout.textContent = 'no one detected yet — sit into frame';
+  }, 300);
 });
 
 ergoCalibrateBtn.addEventListener('click', () => {
@@ -2891,8 +2994,10 @@ function loop() {
   // to the "no landmarks at all" case below, which is the pre-existing,
   // already-noise-filtered path.
   let faceOk = false;
+  let faceCheck = null;
   if (lm) {
-    if (hasVisibleFace(lm)) {
+    faceCheck = checkFaceVisibility(lm);
+    if (faceCheck.ok) {
       faceMissingSince = null;
       faceOk = true;
     } else if (faceMissingSince && now - faceMissingSince < FACE_VISIBILITY_GRACE_MS) {
@@ -2950,6 +3055,14 @@ function loop() {
       }
 
       isPersonPresent = true;
+      // Diagnostic, not a real feature: if presence keeps getting confirmed
+      // on something that isn't actually a person (a chair, reportedly,
+      // even with the visibility check in place), this is what lets that
+      // get diagnosed with real numbers next time instead of guessed at
+      // again -- see the long comment on checkFaceVisibility.
+      if (faceCheck) {
+        addAlertToFeed('presence_debug', `Presence confirmed — visibility nose ${faceCheck.nose?.toFixed(2) ?? 'n/a'}, L-eye ${faceCheck.leftEye?.toFixed(2) ?? 'n/a'}, R-eye ${faceCheck.rightEye?.toFixed(2) ?? 'n/a'}`);
+      }
       setPresenceStart(Date.now());
       stillnessRef = null;
       lastMovementAt = null;

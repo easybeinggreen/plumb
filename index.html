@@ -127,6 +127,9 @@
   .ergo-checklist li { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--ink); }
   .ergo-checklist input { margin-top: 3px; }
   .ergo-nav { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ink-faint); }
+  .ergo-dist-bar { width: 100%; height: 14px; border-radius: 7px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); overflow: hidden; }
+  .ergo-dist-fill { height: 100%; width: 0%; background: var(--accent); transition: width .15s ease; }
+  #ergoTiltGroup { transform-origin: 60px 60px; transition: transform .1s ease; }
 
   .btn-compact { font-size: 12.5px; font-weight: 500; padding: 7px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink); white-space: nowrap; }
   .btn-compact:hover:not(:disabled) { border-color: var(--ink); }
@@ -426,7 +429,7 @@
         <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
         <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
-        <button id="ergoWizardBtn" disabled title="a short guided walkthrough: camera height, screen distance, lighting, desk basics -- then calibrate">set up your desk</button>
+        <button id="ergoWizardBtn" title="a short guided walkthrough: camera height, screen distance, lighting, desk basics -- then calibrate">set up your desk</button>
 
         <div class="switch-group">
           <div class="switch-item">
@@ -581,6 +584,7 @@
 
     <h3 class="settings-section-title">ambient light</h3>
     <div class="hydration-size-row"><label>glare nudge <button class="info-icon" type="button" data-info="brightness" aria-label="why this default">i</button></label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&gt;12% imbalance, held 90s</span></div>
+    <div class="hydration-size-row"><label>dim/bright nudge</label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&lt;25% or &gt;80% overall, held 90s</span></div>
 
     <h3 class="settings-section-title">device</h3>
     <div class="hydration-size-row"><label for="deviceLabelInput" title="lets reports tell devices apart, e.g. laptop vs. desk rig -- separate from your name above">device name</label><input type="text" id="deviceLabelInput" placeholder="e.g. laptop" maxlength="40" /></div>
@@ -613,16 +617,40 @@
       <h3>camera &amp; screen distance</h3>
       <p>Camera lens roughly level with your eyes, monitor's top edge at or
         slightly below eye level, screen at a comfortable arm's-length
-        distance. Sit naturally, then check a live reading:</p>
-      <div class="ergo-live-row">
-        <button id="ergoCheckCameraBtn" class="btn-compact" type="button">check now</button>
-        <span class="ergo-readout" id="ergoCameraReadout">no reading yet</span>
+        distance. Sit naturally and watch the diagram update as you move.</p>
+
+      <div id="ergoCameraNeedsStart">
+        <button id="ergoStartCameraBtn" class="btn" type="button">start camera</button>
+        <p style="font-size:12px;color:var(--ink-soft);">Camera needs to be
+          on for a live reading -- nothing's recorded, same as everywhere
+          else in Plumb.</p>
       </div>
-      <p style="font-size:11.5px;">Eye tilt near 0&deg; means your head's
-        level (not a camera-height measurement by itself). Eye distance is
-        the same signal lean-in tolerance uses -- higher means closer to
-        the screen; there's no universal "correct" number, just a
-        comfortable working distance for you.</p>
+
+      <div id="ergoCameraLive" hidden>
+        <div class="ergo-live-row" style="justify-content:center;">
+          <svg width="120" height="120" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="56" fill="none" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
+            <line x1="60" y1="8" x2="60" y2="18" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
+            <g id="ergoTiltGroup">
+              <line x1="14" y1="60" x2="106" y2="60" stroke="var(--accent)" stroke-width="5" stroke-linecap="round"/>
+              <circle cx="14" cy="60" r="6" fill="var(--accent)"/>
+              <circle cx="106" cy="60" r="6" fill="var(--accent)"/>
+            </g>
+          </svg>
+          <div style="flex:1;min-width:110px;">
+            <div style="font-size:11px;color:var(--ink-soft);margin-bottom:4px;">distance from screen</div>
+            <div class="ergo-dist-bar"><div class="ergo-dist-fill" id="ergoDistFill"></div></div>
+          </div>
+        </div>
+        <div class="ergo-live-row">
+          <span class="ergo-readout" id="ergoCameraReadout">reading live…</span>
+        </div>
+        <p style="font-size:11.5px;">The line levels out when your head's
+          level (not a camera-height measurement by itself -- that still
+          needs your own eye). The bar fills as you move closer to the
+          screen; there's no universal "correct" length, just a comfortable
+          working distance for you.</p>
+      </div>
     </div>
 
     <div class="ergo-step" data-ergo-step="2" hidden>
