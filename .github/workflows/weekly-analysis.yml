@@ -2,9 +2,12 @@ name: Weekly pattern analysis
 
 on:
   schedule:
-    # 20:00 UTC Sunday = 6am Monday Brisbane (UTC+10, no DST) -- covers the
-    # week that just ended, analyzed first thing Monday.
-    - cron: '0 20 * * 0'
+    # 06:00 UTC Friday = 4pm Friday Brisbane (UTC+10, no DST) -- user's own
+    # preference, ahead of the weekend rather than Monday morning. The
+    # script's own date math is unchanged (always "the 7 days ending
+    # yesterday"), so this just moves when that rolling window gets read,
+    # not what it covers.
+    - cron: '0 6 * * 5'
   workflow_dispatch: {}
 
 jobs:
