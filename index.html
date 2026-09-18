@@ -616,8 +616,9 @@
     <div class="ergo-step" data-ergo-step="1" hidden>
       <h3>camera &amp; screen distance</h3>
       <p>Camera lens roughly level with your eyes, monitor's top edge at or
-        slightly below eye level, screen at a comfortable arm's-length
-        distance. Sit naturally and watch the diagram update as you move.</p>
+        slightly below eye level, screen about 50&ndash;70cm away (roughly
+        20&ndash;28 inches -- a bit less than a full arm's reach). Sit
+        naturally and watch the diagram update as you move.</p>
 
       <div id="ergoCameraNeedsStart">
         <button id="ergoStartCameraBtn" class="btn" type="button">start camera</button>
@@ -627,29 +628,33 @@
       </div>
 
       <div id="ergoCameraLive" hidden>
+        <p style="font-size:11.5px;">The line below joins your two eyes, as
+          the camera sees them -- not the screen or anything physical. It
+          tilts only if your head tilts.</p>
         <div class="ergo-live-row" style="justify-content:center;">
-          <svg width="120" height="120" viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="56" fill="none" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
-            <line x1="60" y1="8" x2="60" y2="18" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
+          <svg width="130" height="120" viewBox="0 0 130 120">
+            <line x1="65" y1="8" x2="65" y2="18" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
             <g id="ergoTiltGroup">
-              <line x1="14" y1="60" x2="106" y2="60" stroke="var(--accent)" stroke-width="5" stroke-linecap="round"/>
-              <circle cx="14" cy="60" r="6" fill="var(--accent)"/>
-              <circle cx="106" cy="60" r="6" fill="var(--accent)"/>
+              <line x1="19" y1="60" x2="111" y2="60" stroke="var(--accent)" stroke-width="5" stroke-linecap="round"/>
+              <circle cx="19" cy="60" r="9" fill="var(--accent)"/>
+              <circle cx="111" cy="60" r="9" fill="var(--accent)"/>
+              <text x="19" y="64" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">L</text>
+              <text x="111" y="64" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">R</text>
             </g>
           </svg>
-          <div style="flex:1;min-width:110px;">
-            <div style="font-size:11px;color:var(--ink-soft);margin-bottom:4px;">distance from screen</div>
+        </div>
+        <div class="ergo-live-row" style="justify-content:center;">
+          <span class="ergo-readout" id="ergoTiltVerdict">—</span>
+        </div>
+        <div class="ergo-live-row">
+          <div style="flex:1;">
+            <div style="font-size:11px;color:var(--ink-soft);margin-bottom:4px;">distance from screen -- closer is further right, no fixed "correct" spot</div>
             <div class="ergo-dist-bar"><div class="ergo-dist-fill" id="ergoDistFill"></div></div>
           </div>
         </div>
         <div class="ergo-live-row">
           <span class="ergo-readout" id="ergoCameraReadout">reading live…</span>
         </div>
-        <p style="font-size:11.5px;">The line levels out when your head's
-          level (not a camera-height measurement by itself -- that still
-          needs your own eye). The bar fills as you move closer to the
-          screen; there's no universal "correct" length, just a comfortable
-          working distance for you.</p>
       </div>
     </div>
 

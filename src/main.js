@@ -2838,9 +2838,14 @@ let ergoWizardIsOpen = false;
 
 // First-guess range for the distance bar, not measured against real data --
 // worth retuning once there's a live sense of what interEyeDistanceRatio
-// actually reads as up close vs. arm's length.
+// actually reads as up close vs. 50-70cm away.
 const ERGO_DIST_NEAR = 0.15;
 const ERGO_DIST_FAR = 0.45;
+// Also a first guess, not validated -- some head tilt is normal even when
+// you'd call yourself "level," so this isn't 0 exactly. Worth tightening or
+// loosening once there's a live sense of what your own level actually reads
+// as.
+const ERGO_TILT_LEVEL_DEG = 5;
 
 const ergoWizardOverlay = document.getElementById('ergoWizardOverlay');
 const ergoWizardClose = document.getElementById('ergoWizardClose');
@@ -2851,6 +2856,7 @@ const ergoCameraNeedsStart = document.getElementById('ergoCameraNeedsStart');
 const ergoCameraLive = document.getElementById('ergoCameraLive');
 const ergoStartCameraBtn = document.getElementById('ergoStartCameraBtn');
 const ergoTiltGroup = document.getElementById('ergoTiltGroup');
+const ergoTiltVerdict = document.getElementById('ergoTiltVerdict');
 const ergoDistFill = document.getElementById('ergoDistFill');
 const ergoCameraReadout = document.getElementById('ergoCameraReadout');
 const ergoLightPct = document.getElementById('ergoLightPct');
@@ -2868,6 +2874,9 @@ function updateErgoLiveReading(tilt, dist) {
   ergoCameraNeedsStart.hidden = true;
   ergoCameraLive.hidden = false;
   ergoTiltGroup.style.transform = `rotate(${tilt}deg)`;
+  ergoTiltVerdict.textContent = Math.abs(tilt) <= ERGO_TILT_LEVEL_DEG
+    ? 'looks level'
+    : tilt > 0 ? `tilted right ~${Math.abs(tilt).toFixed(0)}°` : `tilted left ~${Math.abs(tilt).toFixed(0)}°`;
   const pct = Math.max(0, Math.min(100, ((dist - ERGO_DIST_NEAR) / (ERGO_DIST_FAR - ERGO_DIST_NEAR)) * 100));
   ergoDistFill.style.width = `${pct}%`;
   ergoCameraReadout.textContent = `eye tilt ${tilt.toFixed(1)}° · eye distance ${dist.toFixed(3)}`;
@@ -3276,9 +3285,33 @@ function renderMuteBtn() {
   muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
   muteBtn.classList.toggle('is-on', voiceNudgesEnabled);
 }
+// Muting only silences speak() (see its own !voiceNudgesEnabled check) --
+// it doesn't pause the sustain/cooldown tracking underneath. Glare and
+// light-level nudges specifically only advance their cooldown timestamp
+// on the branch that actually speaks, which never runs while muted -- so
+// a condition that's been true the whole time you were muted (bad lighting
+// through a whole call, say) reads as "cooldown already expired" the
+// instant you unmute, and fires immediately. Resetting cooldowns (and the
+// sustain-start clocks, so a still-true condition needs to hold again
+// before counting as "sustained") on unmute gives you a clean window
+// instead of an instant catch-up nudge -- this is almost certainly the
+// "doesn't come back neat" behavior reported after muting through a call.
+function resetNudgeCooldownsOnUnmute() {
+  const now = Date.now();
+  lastGlareNudgeAt = now;
+  lastLightLevelNudgeAt = now;
+  lastPostureNudgeAt = now;
+  lastStillnessNudgeAt = now;
+  lastBreakNudgeAt = now;
+  lightSkewStartedAt = null;
+  lightSkewSide = null;
+  lightLevelStartedAt = null;
+  lightLevelSide = null;
+}
 renderMuteBtn();
 muteBtn.addEventListener('click', () => {
   voiceNudgesEnabled = !voiceNudgesEnabled;
+  if (voiceNudgesEnabled) resetNudgeCooldownsOnUnmute();
   renderMuteBtn();
 });
 bgAudioBtn.addEventListener('click', () => {
