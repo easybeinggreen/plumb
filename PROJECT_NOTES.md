@@ -543,6 +543,72 @@ claims to measure:
 **Not yet tested live** -- same camera-access limitation as everything
 else built this session.
 
+**Weekly pattern analysis, 2026-09-18 -- OpenRouter's first real use case.**
+User's own spec: identify how posture drifts across the day, when hydration
+happens and stops, and flag the afternoon brightness pattern, then turn
+that into concrete goals for the week ahead, ask a reflective question, and
+remind them to keep tracking. Built and tested against real production
+data (Paul, week of Sep 12-18) *before* wiring up the schedule, not after --
+each design decision below came from an actual failure seen in that
+testing, not anticipated in advance:
+- **Model is pinned, not routed.** `openrouter/free` picks a different
+  underlying model every call; comparing several on this exact task found
+  real quality swings -- one draft (`google/gemma-4-26b-a4b-it:free`)
+  called an afternoon brightness *peak* a "dip" and built a goal on that
+  backwards premise. Pinned to `deepseek/deepseek-v4-flash-0731:free`,
+  the most reliable of those tested (see git history on
+  `scripts/generate-weekly-analysis.cjs` for the comparison). Free-tier
+  availability shifts over time -- if this model disappears, re-run the
+  same kind of comparison before picking a replacement, don't just grab
+  whatever's newest.
+- **Even pinned, one run produced genuinely malformed JSON** (forgot to
+  close the `goals` array before `question`) -- a per-call reliability
+  glitch, not a prompt-wording problem. Added `response_format:
+  {type:"json_object"}` plus a one-time retry on parse failure, since no
+  prompt tweak reliably prevents this.
+- **A draft described "lean_in" as recovering into "a more upright
+  lean"** -- treating one of the five slouch states as if returning to it
+  from another were an improvement, when all five (lateral_left/right,
+  compression, lean_in, sitting_low) are equally "bad." Prompt now says
+  this explicitly.
+- **Free-tier latency is real**: the OpenRouter call itself took ~3.5
+  minutes in the actual GitHub Action run (vs. a few seconds testing
+  locally) -- comfortably inside the job's timeout, but worth knowing
+  before assuming a slow run means something's stuck.
+- **Found and fixed the same recurring grant bug a fourth time**:
+  `service_role` had never been granted `SELECT` on `hydration_events` or
+  `light_readings` (creating a table doesn't grant service_role anything
+  beyond Postgres defaults -- see the `hydration_events`/
+  `posture_daily_summary` entries above, 2026-08-26 and 2026-09-16/17,
+  for the first three times this exact class of bug hit). Only caught
+  because the new workflow was actually run via `workflow_dispatch` and
+  failed with a real 403, not because anyone remembered to check grants
+  proactively. **The general rule keeps proving itself: after adding any
+  new table OR pointing a new script at an existing one, verify that
+  role's actual grants and run the real thing once, in CI, before trusting
+  it's wired correctly.**
+- Schema: new `weekly_goals` table (`user_id`, `week_start`/`week_end`,
+  `patterns`, `goals` jsonb, `question`, `tracker_reminder`, `model`,
+  `user_response`/`responded_at`), unique on `(user_id, week_start)`,
+  upserted so a re-run replaces that week rather than duplicating, and
+  never clobbers a saved `user_response` since that column isn't in the
+  upsert payload. RLS mirrors `app_settings` (anon gets select/insert/
+  update, not just insert) since the browser needs to both read it and
+  write the reply.
+- Runs Monday 6am Brisbane (`.github/workflows/weekly-analysis.yml`,
+  same cron-timezone approach as `rollup.yml`). New home-page panel
+  ("this week") shows the narrative, the 3 goals, the question with a
+  reply box, and the tracker reminder -- hidden until a real row exists
+  for the signed-in user.
+- **Deliberately scoped down for this pass**: only the *weekly* piece
+  was built. The user's original spec also wanted a **daily** summary
+  that references the current week's goal -- not built yet, and not the
+  same thing as the weekly LLM call run more often. A lightweight,
+  non-LLM daily blurb (today's real numbers + a line referencing the
+  active weekly goal, computed client-side from data already fetched)
+  is the likely right shape when this gets picked up, rather than a
+  second scheduled LLM call every day.
+
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
@@ -611,10 +677,11 @@ Listed in the order the user raised them, not priority.
      touch the OS/monitor's actual brightness, only the page's own
      rendering (see the original brightness-scoping conversation for what
      that leaves on the table).
-2. **Connect OpenRouter for basic AI analysis.** Distinct from the
+2. ~~Connect OpenRouter for basic AI analysis~~ -- **done 2026-09-18**,
+   see "Weekly pattern analysis" below. Distinct from the
    already-built-but-dormant `generate-summary.cjs` (which calls the
-   Anthropic API directly). Natural first use case once connected: item 6
-   below, which needs a vision-capable model.
+   Anthropic API directly, still untouched). Item 6 below (which needs a
+   vision-capable model) is still open and can now reuse this connection.
 3. **Google Calendar integration** — correlate posture/slouch patterns
    against calendar events, specifically interested in whether posture
    changes during calls. Would need: OAuth to read the user's calendar
