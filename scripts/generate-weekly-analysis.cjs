@@ -122,7 +122,16 @@ function buildLightByHour(rows) {
   Object.entries(sums).forEach(([uid, byHour]) => {
     out[uid] = {};
     Object.entries(byHour).forEach(([hour, { b, s, n }]) => {
-      out[uid][hour] = { brightness: round3(b / n), skew: round3(s / n) };
+      // n is included deliberately -- an hour averaged from 1-2 readings
+      // (camera briefly covered, a transient reading right as tracking
+      // started/stopped) can produce an extreme average that looks like a
+      // real pattern next to hours backed by 20+ readings. Confirmed on
+      // real data 2026-09-19: hour 17 averaged to 0.063 brightness (vs.
+      // ~0.4-0.6 in neighboring hours) off a single reading, and the model
+      // built a whole goal around it as "the one clear light pattern."
+      // Same class of bug as the posture weekly-sum issue -- the model
+      // needs the sample count to tell noise from signal itself.
+      out[uid][hour] = { brightness: round3(b / n), skew: round3(s / n), n };
     });
   });
   return out;
@@ -133,13 +142,15 @@ function buildSystemPrompt() {
 
 Critical: the posture data is summed across the whole week, which can make one unusually bad (or good) day look like a recurring pattern. A separate "daily peaks" list shows which hour was actually worst on each individual day for each state. Before claiming any hour is "the" peak or "worst" time for a state, check that list -- if the peak hour is genuinely similar across most of the days, it's a real pattern and you can say so plainly (with the shared hour). If it jumps around day to day, say that instead ("this varies a lot day to day, no single hour stands out") rather than picking one hour from the weekly sum and presenting it as consistent. Do not average or split the difference between different days' peak hours into a fake middle hour either.
 
+Critical: the ambient-light data includes "n", the number of readings that hour's average is built from. An hour with only 1-2 readings can average out to an extreme value purely by chance (one reading taken right as the camera started, or briefly covered) and look like a dramatic standout next to hours built from 15-25 readings -- that is noise, not a lighting pattern, no matter how extreme the number looks. Only treat an hour's brightness/skew as meaningful if it has a reasonable sample count roughly in line with neighboring hours (as a rule of thumb, treat anything under 5 readings as too sparse to draw a conclusion from) -- otherwise leave that hour out of the light pattern entirely rather than naming it as "the" bright or dark hour.
+
 Style for the "patterns" field: write it in plain, concrete, everyday language -- like explaining it to a friend over coffee, not a report and not a poem. State what happened and roughly when, directly. Do not invent casual-sounding metaphors, slang, or filler phrases to sound relatable (e.g. never write things like "stacks into a long hunchy block," "gets sticky," "rolls in," "a quiet pocket") -- if a sentence would only make sense as a vibe rather than a literal description, rewrite it as a literal description instead. Reference at most one specific number per sentence, and only when it actually strengthens the point -- do not recite the data back as a list of stats with times and figures in parentheses either.
 
 Respond with strict JSON only, matching the schema given, no markdown fencing, no other text.`;
 }
 
 function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, lastWeek }) {
-  const dataBlock = `Posture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are slouch/problem states -- none of them is good posture, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright) and average left/right skew (positive=brighter on right), by hour of day:\n${JSON.stringify(lightByHour)}`;
+  const dataBlock = `Posture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are slouch/problem states -- none of them is good posture, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
 
   const continuity = lastWeek
     ? `\n\nLast week's goals were: ${JSON.stringify(lastWeek.goals)}. They were asked: "${lastWeek.question}" and replied: "${lastWeek.user_response || '(no reply logged)'}"​. Take that into account if it's relevant -- don't repeat a goal they already addressed or rejected without acknowledging it.`
