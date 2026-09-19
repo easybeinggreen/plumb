@@ -119,6 +119,12 @@
   #ergoWizardBtn:disabled { opacity: 0.4; }
   #closeupBtn { border-color: var(--ink-faint-2); font-size: 13px; font-weight: 500; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
   #closeupBtn:hover:not(:disabled) { border-color: var(--ink); }
+  .closeup-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; }
+  .closeup-stage video, .closeup-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover; }
+  .closeup-mic { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
+  .closeup-meter { height: 10px; border-radius: 5px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); overflow: hidden; margin: 10px 0 6px; }
+  #closeupMeterFill { height: 100%; width: 0%; background: var(--accent); transition: width .08s linear; }
+  .closeup-mic-status { font-size: 12px; color: var(--ink-soft); margin-bottom: 8px; min-height: 16px; }
   .closeup-summary { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
   .closeup-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .closeup-results li { display: flex; gap: 8px; font-size: 13px; line-height: 1.4; }
@@ -139,7 +145,6 @@
   .ergo-nav { display: flex; justify-content: space-between; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--ink-faint); }
   .ergo-dist-bar { width: 100%; height: 14px; border-radius: 7px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); overflow: hidden; }
   .ergo-dist-fill { height: 100%; width: 0%; background: var(--accent); transition: width .15s ease; }
-  #ergoTiltGroup { transform-origin: 60px 60px; transition: transform .1s ease; }
 
   .btn-compact { font-size: 12.5px; font-weight: 500; padding: 7px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink); white-space: nowrap; }
   .btn-compact:hover:not(:disabled) { border-color: var(--ink); }
@@ -655,23 +660,25 @@
       </div>
 
       <div id="ergoCameraLive" hidden>
-        <p style="font-size:11.5px;">The line below joins your two eyes, as
-          the camera sees them -- not the screen or anything physical. It
-          tilts only if your head tilts.</p>
+        <p style="font-size:11.5px;">Most webcams sit at the top edge of the
+          screen, so where your eyes land in the picture tells you how your
+          eyes compare to the top of the screen. Assumes the camera faces
+          straight out -- if you've tilted it, the reading shifts. Raise or
+          lower yourself or the screen and watch the dots move.</p>
         <div class="ergo-live-row" style="justify-content:center;">
-          <svg width="130" height="120" viewBox="0 0 130 120">
-            <line x1="65" y1="8" x2="65" y2="18" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
-            <g id="ergoTiltGroup">
-              <line x1="19" y1="60" x2="111" y2="60" stroke="var(--accent)" stroke-width="5" stroke-linecap="round"/>
-              <circle cx="19" cy="60" r="9" fill="var(--accent)"/>
-              <circle cx="111" cy="60" r="9" fill="var(--accent)"/>
-              <text x="19" y="64" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">L</text>
-              <text x="111" y="64" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">R</text>
+          <svg width="150" height="120" viewBox="0 0 150 120" role="img" aria-label="where your eyes sit in the camera picture">
+            <rect x="10" y="4" width="130" height="112" rx="6" fill="var(--paper)" stroke="var(--ink-faint-2)" stroke-width="1.5"/>
+            <rect id="ergoEyeBand" x="11" y="32" width="128" height="28" fill="var(--accent)" opacity="0.14"/>
+            <line x1="11" y1="60" x2="139" y2="60" stroke="var(--ink-soft)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <text x="14" y="72" font-size="8" fill="var(--ink-soft)">camera height (top of screen)</text>
+            <g id="ergoEyeDots">
+              <circle cx="55" cy="46" r="6" fill="var(--accent)"/>
+              <circle cx="95" cy="46" r="6" fill="var(--accent)"/>
             </g>
           </svg>
         </div>
         <div class="ergo-live-row" style="justify-content:center;">
-          <span class="ergo-readout" id="ergoTiltVerdict">—</span>
+          <span class="ergo-readout" id="ergoEyeVerdict">—</span>
         </div>
         <div class="ergo-live-row">
           <div style="flex:1;">
@@ -730,14 +737,23 @@
   <div class="modal" style="max-width: 480px;">
     <button class="modal-close" id="closeupClose">&times;</button>
     <h2 class="modal-title">ready for my close-up</h2>
-    <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A quick check of your framing and lighting before a call. It looks at one frame, on this device &mdash; nothing is saved or sent anywhere. Hair, outfit and what's in your background aren't checked yet.</p>
+    <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A live mirror plus a quick check of your framing, lighting and microphone before a call. Everything happens on this device &mdash; nothing is saved or sent anywhere. Hair, outfit and what's in your background aren't checked yet.</p>
     <div id="closeupNeedsCamera">
       <button id="closeupStartCameraBtn" class="btn" type="button">start camera</button>
     </div>
     <div id="closeupLive" hidden>
-      <button id="closeupCheckBtn" class="btn" type="button">check me now</button>
+      <div class="closeup-stage">
+        <video id="closeupPreview" autoplay muted playsinline></video>
+        <canvas id="closeupGuides" width="320" height="240"></canvas>
+      </div>
       <div id="closeupSummary" class="closeup-summary" hidden></div>
       <ul id="closeupResults" class="closeup-results"></ul>
+      <div class="closeup-mic">
+        <button id="closeupMicBtn" class="btn-compact" type="button">test my microphone</button>
+        <div class="closeup-meter"><div id="closeupMeterFill"></div></div>
+        <div id="closeupMicStatus" class="closeup-mic-status"></div>
+        <ul id="closeupMicResults" class="closeup-results"></ul>
+      </div>
     </div>
   </div>
 </div>

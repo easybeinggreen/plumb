@@ -23,7 +23,7 @@ export const CLOSEUP_THRESHOLDS = {
   eyeLineLow: 0.5,         // eye line below this = lots of empty space above the head
   eyeDistFar: 0.08,        // inter-eye distance / frame width below this = too far away
   eyeDistNear: 0.22,       // above this = too close
-  tiltDeg: 5,              // matches ERGO_TILT_LEVEL_DEG
+  tiltDeg: 5,              // head roll before "tilted" -- how you look on a call, not a desk-setup issue
   faceDim: 0.25,           // mean face luminance (0-1)
   faceBright: 0.8,
   faceSkew: 0.12,          // matches LIGHT_SKEW_TOLERANCE
@@ -32,6 +32,53 @@ export const CLOSEUP_THRESHOLDS = {
   glareFraction: 0.04,     // fraction of face pixels blown out before flagging
   shoulderVisibility: 0.5
 };
+
+// Mic check: `rmsDb` is one dBFS reading per short frame over a few seconds of
+// the person speaking; `clippedFrames` counts frames with samples at full
+// scale. Measured with the browser's echo-cancel/noise-suppress/auto-gain
+// switched OFF so it reflects the raw device level -- call apps process the
+// signal, so treat this as "is the hardware/OS level sensible", not a
+// prediction of exactly how it sounds on a call. Thresholds are first guesses
+// (typical laptop-mic speech sits roughly -30 to -20 dBFS, a quiet room
+// roughly -60 to -50), not validated on real hardware.
+export const MIC_THRESHOLDS = {
+  silent: -60,       // p90 below this = basically nothing heard
+  quiet: -40,        // p90 below this = too quiet
+  loud: -8,          // p90 above this = too loud
+  clipFrames: 3,
+  noisyFloor: -45,   // p10 above this = noisy room
+  minSnrDb: 20       // p90 - p10 below this = voice not clearly above background
+};
+
+function percentile(sorted, p) {
+  if (!sorted.length) return -Infinity;
+  const i = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))));
+  return sorted[i];
+}
+
+export function analyzeMic({ rmsDb, clippedFrames = 0 }) {
+  const T = MIC_THRESHOLDS;
+  const sorted = rmsDb.filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length < 10) return [{ id: 'mic-data', label: 'microphone', status: 'unknown', msg: "Didn't get enough audio -- try again." }];
+  const voice = percentile(sorted, 0.9), floor = percentile(sorted, 0.1);
+  const out = [];
+  const add = (id, label, status, msg) => out.push({ id, label, status, msg });
+
+  if (voice < T.silent) {
+    add('mic-level', 'mic level', 'fix', "Couldn't hear anything -- check the right microphone is selected and not muted.");
+  } else if (voice < T.quiet) {
+    add('mic-level', 'mic level', 'fix', "You're coming through quietly -- move closer or raise the input volume in your system settings.");
+  } else if (clippedFrames >= T.clipFrames || voice > T.loud) {
+    add('mic-level', 'mic level', 'fix', "You're very loud or clipping -- lower the input volume or move back a little.");
+  } else add('mic-level', 'mic level', 'ok', 'Voice level looks healthy.');
+
+  if (voice >= T.silent) {
+    if (floor > T.noisyFloor || voice - floor < T.minSnrDb) {
+      add('mic-noise', 'background noise', 'fix', 'Your voice is not standing clearly above the background -- fans, traffic or a distant mic can do that.');
+    } else add('mic-noise', 'background noise', 'ok', 'Background is quiet enough.');
+  }
+  return out;
+}
 
 function boxMean(lum, w, h, x0, y0, x1, y1) {
   const xa = Math.max(0, Math.floor(x0)), xb = Math.min(w, Math.ceil(x1));

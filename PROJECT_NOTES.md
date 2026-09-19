@@ -837,6 +837,28 @@ Listed in the order the user raised them, not priority.
    eye/nose posture-signal work above, which already touched several
    phrase arrays) would mean redoing that work every time a nudge's
    wording changes. Don't start this until the nudge phrases have settled.
+   **Update, same day, after the user's first real try:** they couldn't see
+   themselves in the modal, so it now has a live **mirrored preview**
+   (second `<video>` on the same MediaStream -- the main `#video` is moved
+   off-screen once tracking starts) with centre/thirds guides and eye/nose
+   dots, and the checks auto-refresh every ~0.8s instead of a button. Added
+   a **mic test** (5s, echo-cancel/noise-suppress/auto-gain off so it
+   reflects the raw device level; level, clipping, noise floor -- pure
+   `analyzeMic()`, synthetic-tested, thresholds unvalidated, mic never
+   connected to speakers, tracks stopped after). The **setup wizard had a
+   real bug**: `eyeTiltDegrees` measured left->right eye in the raw
+   (un-mirrored) frame, where the "left" eye is on the image's right, so a
+   level head read ~180deg and the diagram rendered upside down with L/R
+   swapped. Fixed (mirrored, folded to -90..90). The user also pointed out
+   head roll isn't a setup property -- correct -- so the wizard's tilt
+   diagram was replaced with an **eye-height-in-frame indicator**
+   (`ERGO_EYE_HIGH/LOW`, 0.25-0.5 down the picture ~ "top of screen at or
+   just below eye level", assuming the camera faces straight out). This
+   resolves the earlier "can't tell which direction" worry only in theory:
+   **the direction/thresholds still need a real-camera check** (raise/lower
+   yourself and watch the dots). Head tilt stays in the close-up check only,
+   as "how you look on a call".
+
    **Phase 1 built 2026-09-19 ("ready for my close-up" button, local
    checks only, no LLM, nothing saved or sent):** `src/closeup.js` is a pure
    `analyzeCloseup({lm, lum, w, h})` -- framing (centred, headroom,

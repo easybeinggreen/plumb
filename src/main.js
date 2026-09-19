@@ -1,6 +1,6 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
-import { analyzeCloseup } from './closeup.js';
+import { analyzeCloseup, analyzeMic } from './closeup.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -1187,8 +1187,15 @@ function sinkRatio(nose, baselineY, lSh, rSh) {
 // now drives lean-in detection below -- it isolates the face moving toward
 // the camera from shoulder rotation/hunching, which the old shoulder-width-
 // based signal couldn't tell apart.
+// The raw frame isn't mirrored, so BlazePose's "left" eye sits on the image's
+// right and the naive left->right angle reads ~180deg on a level head (this
+// flipped the setup wizard's diagram upside down). Measured here in the
+// mirrored self-view instead, folded into -90..90: positive = the eye on the
+// right of what you see of yourself is lower.
 function eyeTiltDegrees(leftEye, rightEye) {
-  return Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * (180 / Math.PI);
+  const [a, b] = leftEye.x >= rightEye.x ? [leftEye, rightEye] : [rightEye, leftEye];
+  const w = video.videoWidth || 1, h = video.videoHeight || 1;
+  return Math.atan2((b.y - a.y) * h, (a.x - b.x) * w) * (180 / Math.PI);
 }
 function interEyeDistanceRatio(leftEye, rightEye, lSh, rSh) {
   const sw = shoulderWidthOf(lSh, rSh);
@@ -2865,11 +2872,13 @@ let ergoWizardIsOpen = false;
 // actually reads as up close vs. 50-70cm away.
 const ERGO_DIST_NEAR = 0.15;
 const ERGO_DIST_FAR = 0.45;
-// Also a first guess, not validated -- some head tilt is normal even when
-// you'd call yourself "level," so this isn't 0 exactly. Worth tightening or
-// loosening once there's a live sense of what your own level actually reads
-// as.
-const ERGO_TILT_LEVEL_DEG = 5;
+// Eye line as a fraction down the picture. Top of screen at or just below eye
+// level (standard display-screen guidance) means eyes at or slightly above the
+// camera, which sits at the picture's vertical centre if it faces straight
+// out. First guess, not validated on a real camera -- the live dots let you
+// check the direction yourself by raising/lowering the screen.
+const ERGO_EYE_HIGH = 0.25;
+const ERGO_EYE_LOW = 0.5;
 
 const ergoWizardOverlay = document.getElementById('ergoWizardOverlay');
 const ergoWizardClose = document.getElementById('ergoWizardClose');
@@ -2879,8 +2888,8 @@ const ergoNextBtn = document.getElementById('ergoNextBtn');
 const ergoCameraNeedsStart = document.getElementById('ergoCameraNeedsStart');
 const ergoCameraLive = document.getElementById('ergoCameraLive');
 const ergoStartCameraBtn = document.getElementById('ergoStartCameraBtn');
-const ergoTiltGroup = document.getElementById('ergoTiltGroup');
-const ergoTiltVerdict = document.getElementById('ergoTiltVerdict');
+const ergoEyeDots = document.getElementById('ergoEyeDots');
+const ergoEyeVerdict = document.getElementById('ergoEyeVerdict');
 const ergoDistFill = document.getElementById('ergoDistFill');
 const ergoCameraReadout = document.getElementById('ergoCameraReadout');
 const ergoLightPct = document.getElementById('ergoLightPct');
@@ -2897,13 +2906,28 @@ function updateErgoLiveReading(tilt, dist) {
   if (!ergoWizardIsOpen || ergoStep !== 1) return;
   ergoCameraNeedsStart.hidden = true;
   ergoCameraLive.hidden = false;
-  ergoTiltGroup.style.transform = `rotate(${tilt}deg)`;
-  ergoTiltVerdict.textContent = Math.abs(tilt) <= ERGO_TILT_LEVEL_DEG
-    ? 'looks level'
-    : tilt > 0 ? `tilted right ~${Math.abs(tilt).toFixed(0)}°` : `tilted left ~${Math.abs(tilt).toFixed(0)}°`;
+
+  // Head roll (tilt) is deliberately NOT shown here -- it's not a desk-setup
+  // property. What setup controls is camera height vs. your eyes, read from
+  // where the eye line lands in the picture (y=0 top, 1 bottom).
+  const lm = lastPose && Date.now() - lastPose.t < 1000 ? lastPose.lm : null;
+  if (lm) {
+    const eyeY = (lm[2].y + lm[5].y) / 2;
+    const midX = 1 - (lm[2].x + lm[5].x) / 2; // mirrored, like the self-view
+    const half = Math.max(8, Math.min(40, Math.hypot(lm[2].x - lm[5].x, 0) * 130 / 2));
+    const y = 4 + 112 * Math.max(0, Math.min(1, eyeY));
+    const cx = 10 + 130 * midX;
+    const dots = ergoEyeDots.children;
+    dots[0].setAttribute('cx', cx - half); dots[0].setAttribute('cy', y);
+    dots[1].setAttribute('cx', cx + half); dots[1].setAttribute('cy', y);
+    ergoEyeVerdict.textContent =
+      eyeY < ERGO_EYE_HIGH ? 'eyes well above the camera -- screen looks too low; raise it (or sit lower)'
+      : eyeY > ERGO_EYE_LOW ? 'eyes below the camera -- screen looks too high; lower it (or sit higher)'
+      : 'eyes about level with the top of the screen -- good';
+  }
   const pct = Math.max(0, Math.min(100, ((dist - ERGO_DIST_NEAR) / (ERGO_DIST_FAR - ERGO_DIST_NEAR)) * 100));
   ergoDistFill.style.width = `${pct}%`;
-  ergoCameraReadout.textContent = `eye tilt ${tilt.toFixed(1)}° · eye distance ${dist.toFixed(3)}`;
+  ergoCameraReadout.textContent = `eye height ${lm ? (((lm[2].y + lm[5].y) / 2) * 100).toFixed(0) + '% down the picture' : '--'} · eye distance ${dist.toFixed(3)}`;
 }
 
 function renderErgoStep() {
@@ -2989,33 +3013,62 @@ ergoCalibrateBtn.addEventListener('click', () => {
 });
 
 // ---- "Ready for my close-up" ----
-// Reads the most recent landmark set the alignment preview or main loop
-// already computed (no second detectForVideo call -- same timestamp-collision
-// concern as the ergo wizard) plus one downscaled frame, and hands both to
-// the pure analyzeCloseup(). Nothing is stored or sent anywhere.
+// Live mirrored preview (a second <video> on the same MediaStream -- the main
+// #video gets moved off-screen once tracking starts, so it can't be the
+// mirror) with guide lines and pose dots, plus auto-refreshing framing/
+// lighting checks and an on-demand mic test. Reads the latest landmark set the
+// alignment preview or main loop already computed (no second detectForVideo
+// call -- same timestamp-collision concern as the ergo wizard) plus one
+// downscaled frame, and hands both to the pure analyzeCloseup(). Nothing is
+// stored or sent anywhere.
 let lastPose = null;
 const CLOSEUP_W = 160, CLOSEUP_H = 120;
 const CLOSEUP_POSE_MAX_AGE_MS = 1500;
+const CLOSEUP_REFRESH_MS = 800;
+const MIC_TEST_MS = 5000;
 const closeupOverlay = document.getElementById('closeupOverlay');
 const closeupNeedsCamera = document.getElementById('closeupNeedsCamera');
 const closeupLive = document.getElementById('closeupLive');
 const closeupStartCameraBtn = document.getElementById('closeupStartCameraBtn');
-const closeupCheckBtn = document.getElementById('closeupCheckBtn');
+const closeupPreview = document.getElementById('closeupPreview');
+const closeupGuides = document.getElementById('closeupGuides');
 const closeupSummary = document.getElementById('closeupSummary');
 const closeupResults = document.getElementById('closeupResults');
+const closeupMicBtn = document.getElementById('closeupMicBtn');
+const closeupMeterFill = document.getElementById('closeupMeterFill');
+const closeupMicStatus = document.getElementById('closeupMicStatus');
+const closeupMicResults = document.getElementById('closeupMicResults');
 let closeupCanvas = null, closeupCtx = null;
+let closeupOpen = false, closeupLastRefresh = 0, micTestRunning = false;
 
 function closeupCameraReady() { return !!(landmarker && video.srcObject); }
 
-function renderCloseupState() {
-  const ready = closeupCameraReady();
-  closeupNeedsCamera.hidden = ready;
-  closeupLive.hidden = !ready;
+function renderResultRows(listEl, results) {
+  listEl.innerHTML = '';
+  results.forEach((r) => {
+    const li = document.createElement('li');
+    const mark = document.createElement('span');
+    mark.className = `mark ${r.status === 'ok' ? 'ok' : 'fix'}`;
+    mark.textContent = r.status === 'ok' ? '✓' : '!';
+    const text = document.createElement('span');
+    const lbl = document.createElement('span');
+    lbl.className = 'lbl';
+    lbl.textContent = r.label + ' ';
+    const msg = document.createElement('span');
+    msg.className = 'msg';
+    msg.textContent = r.msg;
+    text.append(lbl, msg);
+    li.append(mark, text);
+    listEl.appendChild(li);
+  });
 }
 
-function runCloseupCheck() {
-  closeupResults.innerHTML = '';
-  const pose = lastPose && Date.now() - lastPose.t <= CLOSEUP_POSE_MAX_AGE_MS ? lastPose.lm : null;
+function currentCloseupPose() {
+  return lastPose && Date.now() - lastPose.t <= CLOSEUP_POSE_MAX_AGE_MS ? lastPose.lm : null;
+}
+
+function refreshCloseupResults() {
+  const pose = currentCloseupPose();
   let lum = null;
   if (video.videoWidth) {
     if (!closeupCanvas) {
@@ -3037,34 +3090,119 @@ function runCloseupCheck() {
   const fixes = results.filter(r => r.status !== 'ok').length;
   closeupSummary.hidden = false;
   closeupSummary.textContent = results.length === 1 && results[0].status === 'unknown'
-    ? "Couldn't check yet"
+    ? "Can't see you yet -- sit into frame"
     : fixes === 0 ? `All ${results.length} checks look good -- you're ready.` : `${fixes} of ${results.length} worth a look`;
-  results.forEach((r) => {
-    const li = document.createElement('li');
-    const mark = document.createElement('span');
-    mark.className = `mark ${r.status === 'ok' ? 'ok' : 'fix'}`;
-    mark.textContent = r.status === 'ok' ? '✓' : '!';
-    const text = document.createElement('span');
-    const lbl = document.createElement('span');
-    lbl.className = 'lbl';
-    lbl.textContent = r.label + ' ';
-    const msg = document.createElement('span');
-    msg.className = 'msg';
-    msg.textContent = r.msg;
-    text.append(lbl, msg);
-    li.append(mark, text);
-    closeupResults.appendChild(li);
-  });
+  renderResultRows(closeupResults, results);
 }
 
-document.getElementById('closeupBtn').addEventListener('click', () => {
+// Guides are drawn in raw-frame coordinates; the canvas (like the preview
+// video) is flipped with CSS, so they line up with the mirrored picture.
+function drawCloseupGuides() {
+  const c = closeupGuides, g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  g.strokeStyle = 'rgba(255,255,255,0.45)';
+  g.lineWidth = 1;
+  g.setLineDash([6, 5]);
+  g.beginPath();
+  g.moveTo(c.width / 2, 0); g.lineTo(c.width / 2, c.height);
+  g.moveTo(0, c.height / 3); g.lineTo(c.width, c.height / 3);
+  g.stroke();
+  g.setLineDash([]);
+  const lm = currentCloseupPose();
+  if (lm) {
+    g.fillStyle = 'rgba(193,98,46,0.95)';
+    [lm[0], lm[2], lm[5]].forEach((p) => { g.beginPath(); g.arc(p.x * c.width, p.y * c.height, 4, 0, Math.PI * 2); g.fill(); });
+  }
+}
+
+function closeupTick(ts) {
+  if (!closeupOpen) return;
+  const ready = closeupCameraReady();
+  closeupNeedsCamera.hidden = ready;
+  closeupLive.hidden = !ready;
+  if (ready) {
+    if (closeupPreview.srcObject !== video.srcObject) {
+      closeupPreview.srcObject = video.srcObject;
+      closeupPreview.play().catch(() => {});
+    }
+    drawCloseupGuides();
+    if (ts - closeupLastRefresh >= CLOSEUP_REFRESH_MS) {
+      closeupLastRefresh = ts;
+      refreshCloseupResults();
+    }
+  }
+  requestAnimationFrame(closeupTick);
+}
+
+function openCloseup() {
   closeupSummary.hidden = true;
   closeupResults.innerHTML = '';
-  renderCloseupState();
+  closeupMicResults.innerHTML = '';
+  closeupMicStatus.textContent = '';
+  closeupMeterFill.style.width = '0%';
   closeupOverlay.classList.add('open');
-});
-document.getElementById('closeupClose').addEventListener('click', () => closeupOverlay.classList.remove('open'));
-closeupCheckBtn.addEventListener('click', runCloseupCheck);
+  closeupOpen = true;
+  closeupLastRefresh = 0;
+  requestAnimationFrame(closeupTick);
+}
+function closeCloseup() {
+  closeupOpen = false;
+  closeupOverlay.classList.remove('open');
+  closeupPreview.srcObject = null;
+}
+
+async function runMicTest() {
+  if (micTestRunning) return;
+  micTestRunning = true;
+  closeupMicBtn.disabled = true;
+  closeupMicResults.innerHTML = '';
+  closeupMicStatus.textContent = 'asking for microphone access…';
+  let stream = null, audioCtx = null;
+  try {
+    // Processing off so this reflects the raw device level (see MIC_THRESHOLDS).
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser); // deliberately NOT connected to speakers -- no echo
+    const buf = new Float32Array(analyser.fftSize);
+    const rmsDb = [];
+    let clippedFrames = 0;
+    const start = performance.now();
+    closeupMicStatus.textContent = 'say a sentence out loud, as you would on a call…';
+    await new Promise((resolve) => {
+      const step = () => {
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0, peak = 0;
+        for (let i = 0; i < buf.length; i++) { sum += buf[i] * buf[i]; peak = Math.max(peak, Math.abs(buf[i])); }
+        const rms = Math.sqrt(sum / buf.length);
+        const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+        rmsDb.push(db);
+        if (peak >= 0.99) clippedFrames++;
+        closeupMeterFill.style.width = `${Math.max(0, Math.min(100, ((db + 70) / 70) * 100))}%`;
+        if (performance.now() - start < MIC_TEST_MS && closeupOpen) requestAnimationFrame(step); else resolve();
+      };
+      step();
+    });
+    closeupMicStatus.textContent = '';
+    renderResultRows(closeupMicResults, analyzeMic({ rmsDb, clippedFrames }));
+  } catch (err) {
+    closeupMicStatus.textContent = err && err.name === 'NotAllowedError'
+      ? "Microphone access was blocked -- allow it in the browser's site settings and try again."
+      : "Couldn't open a microphone.";
+  } finally {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (audioCtx) audioCtx.close().catch(() => {});
+    closeupMeterFill.style.width = '0%';
+    closeupMicBtn.disabled = false;
+    micTestRunning = false;
+  }
+}
+
+document.getElementById('closeupBtn').addEventListener('click', openCloseup);
+document.getElementById('closeupClose').addEventListener('click', closeCloseup);
+closeupMicBtn.addEventListener('click', runMicTest);
 closeupStartCameraBtn.addEventListener('click', () => {
   closeupStartCameraBtn.disabled = true;
   closeupStartCameraBtn.textContent = 'starting…';
@@ -3074,7 +3212,6 @@ closeupStartCameraBtn.addEventListener('click', () => {
     clearInterval(readyPoll);
     closeupStartCameraBtn.disabled = false;
     closeupStartCameraBtn.textContent = 'start camera';
-    renderCloseupState();
   }, 300);
 });
 
