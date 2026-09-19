@@ -32,8 +32,8 @@ export function estimateDistanceCm(eyeFrac) {
 
 export const CLOSEUP_THRESHOLDS = {
   centreOffset: 0.12,      // |screen x of nose - 0.5| before "off centre"
-  eyeLineHigh: 0.28,       // eye line above this fraction of frame height = head near top edge (also the top of the shaded guide band)
-  eyeLineLow: 0.5,         // eye line below this = lots of empty space above the head (bottom of the guide band)
+  eyeLineHigh: 0.25,       // eye line above this fraction of frame height = head near top edge (drawn as a dotted guide line)
+  eyeLineLow: 0.5,         // eye line below this = lots of empty space above the head (drawn as a dotted guide line)
   eyeDistFar: 0.06,        // inter-eye distance / frame width below this (~80cm+) = too far away
   eyeDistNear: 0.14,       // above this (~35cm or closer) = too close
   tiltDeg: 5,              // head roll before "tilted" -- how you look on a call, not a desk-setup issue
@@ -127,7 +127,7 @@ export function analyzeCloseup({ lm, lum, w, h }) {
     add('headroom', 'eye height', 'fix', 'Your eyes are too high in the picture (head near the top edge) -- lower the camera or sit a little lower.');
   } else if (eyeMidY > T.eyeLineLow) {
     add('headroom', 'eye height', 'fix', 'Your eyes are too low in the picture (lots of empty space above your head) -- raise the camera or sit up a little.');
-  } else add('headroom', 'eye height', 'ok', 'Eyes are in the shaded band -- good.');
+  } else add('headroom', 'eye height', 'ok', 'Eye height looks good.');
 
   const eyeFrac = eyeDistPx / w;
   const shouldersOk = [lSh, rSh].every(p => p && (typeof p.visibility !== 'number' || p.visibility >= T.shoulderVisibility) && p.y < 0.98);

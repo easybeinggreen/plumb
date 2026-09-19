@@ -121,8 +121,6 @@
   #closeupBtn:hover:not(:disabled) { border-color: var(--ink); }
   .closeup-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; }
   .closeup-stage video, .closeup-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover; }
-  .closeup-band { position: absolute; left: 0; right: 0; background: rgba(255,255,255,0.14); border-top: 1px dashed rgba(255,255,255,0.6); border-bottom: 1px dashed rgba(255,255,255,0.6); pointer-events: none; }
-  .closeup-band span { position: absolute; right: 8px; top: 3px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,0.85); }
   .closeup-hint { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
   .closeup-mic { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
   .closeup-meter { height: 10px; border-radius: 5px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); overflow: hidden; margin: 10px 0 6px; }
@@ -755,10 +753,9 @@
     <div id="closeupLive" hidden>
       <div class="closeup-stage">
         <video id="closeupPreview" autoplay muted playsinline></video>
-        <div id="closeupBand" class="closeup-band"><span>eyes here</span></div>
         <canvas id="closeupGuides" width="320" height="240"></canvas>
       </div>
-      <div class="closeup-hint">Line up: your eyes inside the shaded band, your nose on the vertical centre line. The dots turn green when you're there.</div>
+      <div class="closeup-hint">Line up: your eyes between the two horizontal dotted lines, your nose on the vertical one.</div>
       <div id="closeupSummary" class="closeup-summary" hidden></div>
       <ul id="closeupResults" class="closeup-results"></ul>
       <div class="closeup-mic">

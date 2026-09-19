@@ -3118,19 +3118,15 @@ function drawCloseupGuides() {
   g.setLineDash([6, 5]);
   g.beginPath();
   g.moveTo(c.width / 2, 0); g.lineTo(c.width / 2, c.height);
+  // The two horizontal lines are exactly the eye-height range the check accepts.
+  g.moveTo(0, CLOSEUP_THRESHOLDS.eyeLineHigh * c.height); g.lineTo(c.width, CLOSEUP_THRESHOLDS.eyeLineHigh * c.height);
+  g.moveTo(0, CLOSEUP_THRESHOLDS.eyeLineLow * c.height); g.lineTo(c.width, CLOSEUP_THRESHOLDS.eyeLineLow * c.height);
   g.stroke();
   g.setLineDash([]);
   const lm = currentCloseupPose();
   if (lm) {
-    const eyeY = (lm[2].y + lm[5].y) / 2;
-    const T = CLOSEUP_THRESHOLDS;
-    const eyesOk = eyeY >= T.eyeLineHigh && eyeY <= T.eyeLineLow;
-    const centreOk = Math.abs((1 - lm[0].x) - 0.5) <= T.centreOffset;
     g.fillStyle = 'rgba(193,98,46,0.95)';
-    g.beginPath(); g.arc(lm[0].x * c.width, lm[0].y * c.height, 4, 0, Math.PI * 2); g.fill();
-    g.fillStyle = eyesOk ? 'rgba(80,190,120,0.95)' : 'rgba(193,98,46,0.95)';
-    [lm[2], lm[5]].forEach((p) => { g.beginPath(); g.arc(p.x * c.width, p.y * c.height, 4, 0, Math.PI * 2); g.fill(); });
-    if (centreOk) { g.fillStyle = 'rgba(80,190,120,0.95)'; g.beginPath(); g.arc(lm[0].x * c.width, lm[0].y * c.height, 4, 0, Math.PI * 2); g.fill(); }
+    [lm[0], lm[2], lm[5]].forEach((p) => { g.beginPath(); g.arc(p.x * c.width, p.y * c.height, 4, 0, Math.PI * 2); g.fill(); });
   }
 }
 
@@ -3154,9 +3150,6 @@ function closeupTick(ts) {
 }
 
 function openCloseup() {
-  const band = document.getElementById('closeupBand');
-  band.style.top = `${CLOSEUP_THRESHOLDS.eyeLineHigh * 100}%`;
-  band.style.height = `${(CLOSEUP_THRESHOLDS.eyeLineLow - CLOSEUP_THRESHOLDS.eyeLineHigh) * 100}%`;
   closeupSummary.hidden = true;
   closeupResults.innerHTML = '';
   closeupMicResults.innerHTML = '';
