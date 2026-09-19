@@ -8,6 +8,73 @@ what's still open. Update it when you make a decision worth remembering, not
 after every commit. Written for a reader who may have no chat history at all —
 if you're that reader, this file plus git log/PRs should be enough.
 
+## Handover — 2026-09-19
+
+Written because this file has grown into a long chronological log (useful
+for archaeology, slow for "what's true right now"). Read this section
+first; it points into the rest of the file for detail rather than
+repeating it. Everything below was current as of the session that ended
+2026-09-19 — a huge amount landed in a short span, so verify anything
+load-bearing rather than trusting it's still accurate by the time you
+read it.
+
+**Confirmed working, live-tested by the user on real hardware:**
+- Core posture detection (lateral lean, neck-drop, lean-in, sitting-low),
+  retuned twice from real feedback. Currently on `main`, not a branch.
+- Ambient brightness box (blurred to a silhouette, real resolution
+  bumped) and the light-level nudges (dim/bright + why, not just skew).
+- Device tracking, ergonomic setup wizard (now live-before-camera-start
+  with a real-time diagram, not the original one-shot version), weekly
+  pattern analysis + daily check-in, OpenRouter connectivity end to end
+  including in real CI.
+- The category color palette was redone 2026-09-19 using the `dataviz`
+  skill's `validate_palette.js` against the actual chart surface
+  (`#F5F2EC`) — not eyeballed. Passes every adjacent-pair check; some
+  non-adjacent pairs still fail the harshest "all-pairs" floor because 7
+  genuinely-needed categories can't all clear it (documented at the
+  `CATEGORY_COLORS` definition in `src/main.js`).
+
+**Confirmed still broken or unverified — check these before assuming
+they work:**
+1. **The chair-as-person presence bug is NOT resolved.** Two attempts
+   (a visibility-threshold check, then raising that threshold) did not
+   stop it per the user's own live report ("even the eye thing didn't
+   stop it seeing my chair as me"). Diagnostic logging was added
+   (`checkFaceVisibility`, logs real visibility numbers to the alert
+   feed on every presence transition) specifically so the *next*
+   occurrence gives real numbers to tune against instead of a third
+   guess. Current best theory: BlazePose was never trained to output
+   "no person," so it can extrapolate confident-but-wrong face-landmark
+   positions onto a chair-shaped blob — a model-confidence problem, not
+   a simple threshold miscalibration. Don't re-attempt a threshold tweak
+   blind; get the logged numbers from a real occurrence first.
+2. **Brightness sensitivity is an open question, not a bug fix.** User
+   reported the room got noticeably brighter mid-afternoon but the
+   number barely moved. Leading theory is webcam auto-exposure
+   compensating before Plumb ever sees the pixels (flagged as a risk
+   before this was ever built) — not something a software "sensitivity"
+   setting can fix on its own. Two real options were raised and not
+   built: locking camera exposure via `MediaTrackConstraints` (real API,
+   inconsistent device/browser support) or adaptive range-stretching
+   against the session's own observed min/max. Needs a decision, not
+   just another number tweak.
+3. Several 2026-09-18 fixes (face-visibility grace period, lateral
+   tolerance 0.07, ergo-wizard live diagram) were pushed but the specific
+   confirmation of "does this feel right now" from the user is mixed in
+   with the items above — re-read the dated entries below before
+   assuming any one of them is settled.
+
+**If picking this up cold, do these first:**
+- Read the "Still open, not yet fixed" list below in full — it's been
+  added to several times and mixes old low-priority items (name
+  normalization) with the two active bugs above.
+- Don't start any new posture-detection tuning without first asking
+  whether the chair-presence bug has recurred and what the logged
+  numbers showed.
+- The `feature/eye-nose-posture-signals` branch mentioned partway
+  through the dated log below **was merged to `main` the same day** —
+  ignore any note below that still calls it unmerged; `main` is current.
+
 ## What this is
 
 A personal, self-hosted posture and movement tracker. Runs entirely in the
@@ -426,7 +493,8 @@ that one upcoming phase. Don't start calibration changes on `main` without
 checking whether that branch already exists / was already started.
 
 **That phase started 2026-09-18, on branch `feature/eye-nose-posture-signals`
-(not merged to main).** Eyes/nose landmarks (already drawn since an earlier
+(merged to `main` the same day, after live-testing confirmed it was an
+improvement — see "First live-test round" below).** Eyes/nose landmarks (already drawn since an earlier
 pass but otherwise unused — see the "Experimental face-point signals"
 comment that used to sit above them in `src/main.js`) are now wired into
 real detection, prompted directly by the user's own account of what the app
@@ -642,23 +710,30 @@ testing, not anticipated in advance:
   sitting_low was introduced. Fixed.
 
 **Still open, not yet fixed**:
-1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
+1. **Chair-as-person presence bug, unresolved after two attempts** — see
+   "Handover — 2026-09-19" at the top of this file for the current
+   theory and what to do next. Don't guess a third threshold blind.
+2. **Brightness sensitivity to real ambient-light changes is weak**,
+   likely webcam auto-exposure compensating before Plumb sees the raw
+   pixels — see "Handover" at top for the two unbuilt options (exposure
+   lock vs. adaptive range-stretch).
+3. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
    trim, no case-folding. Fine solo; will silently split data once other
    real people type names. Cheap fix, not done.
-2. **`generate-summary.cjs` doesn't filter by user.** Once more than one
+4. **`generate-summary.cjs` doesn't filter by user.** Once more than one
    person's data exists in `posture_events`, the (still-dormant) weekly
    summary would blend everyone's stats into one narrative.
-3. **`posture_logs` table still exists in Supabase, fully unused by the
+5. **`posture_logs` table still exists in Supabase, fully unused by the
    app** (the write path was removed when per-user login was built — it
    only ever fed the old denormalized daily-total approach, which is why it
    was retired, see "Decisions" below). Safe to `drop table posture_logs;`
    whenever; not urgent.
-4. **RLS stays permissive at the database level** on every table
+6. **RLS stays permissive at the database level** on every table
    (`using (true)`). Per-user separation is enforced entirely client-side.
    Deliberate tradeoff (see "Decisions"), not an oversight — but it means
    "login" is a data-partitioning convenience, not a privacy boundary.
-5. **Cross-device session/slouch reconciliation and per-user data
+7. **Cross-device session/slouch reconciliation and per-user data
    isolation** are implemented and code-reviewed but still haven't been
    proven by actual simultaneous multi-device or multi-person use — only
    solo, sequential testing so far.
