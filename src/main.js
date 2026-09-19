@@ -1,5 +1,6 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
+import { analyzeCloseup } from './closeup.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -1408,6 +1409,7 @@ function alignPreviewFrame() {
   if (!alignPreviewActive) return;
   const result = landmarker.detectForVideo(video, performance.now());
   ctx.clearRect(0, 0, overlay.width, overlay.height);
+  lastPose = result.landmarks && result.landmarks.length > 0 ? { lm: result.landmarks[0], t: Date.now() } : null;
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
     drawPoseDots([lm[7], lm[8], lm[11], lm[12]]);
@@ -2986,6 +2988,96 @@ ergoCalibrateBtn.addEventListener('click', () => {
   if (ok) setTimeout(closeErgoWizard, 1400);
 });
 
+// ---- "Ready for my close-up" ----
+// Reads the most recent landmark set the alignment preview or main loop
+// already computed (no second detectForVideo call -- same timestamp-collision
+// concern as the ergo wizard) plus one downscaled frame, and hands both to
+// the pure analyzeCloseup(). Nothing is stored or sent anywhere.
+let lastPose = null;
+const CLOSEUP_W = 160, CLOSEUP_H = 120;
+const CLOSEUP_POSE_MAX_AGE_MS = 1500;
+const closeupOverlay = document.getElementById('closeupOverlay');
+const closeupNeedsCamera = document.getElementById('closeupNeedsCamera');
+const closeupLive = document.getElementById('closeupLive');
+const closeupStartCameraBtn = document.getElementById('closeupStartCameraBtn');
+const closeupCheckBtn = document.getElementById('closeupCheckBtn');
+const closeupSummary = document.getElementById('closeupSummary');
+const closeupResults = document.getElementById('closeupResults');
+let closeupCanvas = null, closeupCtx = null;
+
+function closeupCameraReady() { return !!(landmarker && video.srcObject); }
+
+function renderCloseupState() {
+  const ready = closeupCameraReady();
+  closeupNeedsCamera.hidden = ready;
+  closeupLive.hidden = !ready;
+}
+
+function runCloseupCheck() {
+  closeupResults.innerHTML = '';
+  const pose = lastPose && Date.now() - lastPose.t <= CLOSEUP_POSE_MAX_AGE_MS ? lastPose.lm : null;
+  let lum = null;
+  if (video.videoWidth) {
+    if (!closeupCanvas) {
+      closeupCanvas = document.createElement('canvas');
+      closeupCanvas.width = CLOSEUP_W;
+      closeupCanvas.height = CLOSEUP_H;
+      closeupCtx = closeupCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    try {
+      closeupCtx.drawImage(video, 0, 0, CLOSEUP_W, CLOSEUP_H);
+      const px = closeupCtx.getImageData(0, 0, CLOSEUP_W, CLOSEUP_H).data;
+      lum = new Float32Array(CLOSEUP_W * CLOSEUP_H);
+      for (let i = 0; i < lum.length; i++) {
+        lum[i] = (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) / 255;
+      }
+    } catch (e) { lum = null; }
+  }
+  const results = analyzeCloseup({ lm: pose, lum, w: CLOSEUP_W, h: CLOSEUP_H });
+  const fixes = results.filter(r => r.status !== 'ok').length;
+  closeupSummary.hidden = false;
+  closeupSummary.textContent = results.length === 1 && results[0].status === 'unknown'
+    ? "Couldn't check yet"
+    : fixes === 0 ? `All ${results.length} checks look good -- you're ready.` : `${fixes} of ${results.length} worth a look`;
+  results.forEach((r) => {
+    const li = document.createElement('li');
+    const mark = document.createElement('span');
+    mark.className = `mark ${r.status === 'ok' ? 'ok' : 'fix'}`;
+    mark.textContent = r.status === 'ok' ? '✓' : '!';
+    const text = document.createElement('span');
+    const lbl = document.createElement('span');
+    lbl.className = 'lbl';
+    lbl.textContent = r.label + ' ';
+    const msg = document.createElement('span');
+    msg.className = 'msg';
+    msg.textContent = r.msg;
+    text.append(lbl, msg);
+    li.append(mark, text);
+    closeupResults.appendChild(li);
+  });
+}
+
+document.getElementById('closeupBtn').addEventListener('click', () => {
+  closeupSummary.hidden = true;
+  closeupResults.innerHTML = '';
+  renderCloseupState();
+  closeupOverlay.classList.add('open');
+});
+document.getElementById('closeupClose').addEventListener('click', () => closeupOverlay.classList.remove('open'));
+closeupCheckBtn.addEventListener('click', runCloseupCheck);
+closeupStartCameraBtn.addEventListener('click', () => {
+  closeupStartCameraBtn.disabled = true;
+  closeupStartCameraBtn.textContent = 'starting…';
+  startCamera();
+  const readyPoll = setInterval(() => {
+    if (!closeupCameraReady()) return;
+    clearInterval(readyPoll);
+    closeupStartCameraBtn.disabled = false;
+    closeupStartCameraBtn.textContent = 'start camera';
+    renderCloseupState();
+  }, 300);
+});
+
 // ---- Main loop ----
 function loop() {
   if (trackingPipWindow && trackingPipWindow.closed) {
@@ -3014,6 +3106,7 @@ function loop() {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
 
   const lm = result.landmarks && result.landmarks.length > 0 ? result.landmarks[0] : null;
+  lastPose = lm ? { lm, t: Date.now() } : null;
   // A single low-confidence frame (a head turn, a bad angle, motion blur)
   // shouldn't immediately read as "gone" -- that flickers isPersonPresent
   // true/false every other frame, each flip finalizing/reopening presence

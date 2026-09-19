@@ -117,6 +117,16 @@
   #ergoWizardBtn { border-color: var(--ink-faint-2); font-size: 13px; font-weight: 500; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
   #ergoWizardBtn:hover:not(:disabled) { border-color: var(--ink); }
   #ergoWizardBtn:disabled { opacity: 0.4; }
+  #closeupBtn { border-color: var(--ink-faint-2); font-size: 13px; font-weight: 500; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
+  #closeupBtn:hover:not(:disabled) { border-color: var(--ink); }
+  .closeup-summary { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+  .closeup-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .closeup-results li { display: flex; gap: 8px; font-size: 13px; line-height: 1.4; }
+  .closeup-results .mark { flex: none; width: 16px; font-weight: 700; }
+  .closeup-results .mark.ok { color: var(--ink-soft); }
+  .closeup-results .mark.fix { color: var(--accent); }
+  .closeup-results .lbl { font-weight: 600; }
+  .closeup-results .msg { color: var(--ink-soft); }
 
   .ergo-step-indicator { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; margin: -8px 0 16px; }
   .ergo-step h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
@@ -430,6 +440,7 @@
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
         <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
         <button id="ergoWizardBtn" title="a short guided walkthrough: camera height, screen distance, lighting, desk basics -- then calibrate">set up your desk</button>
+        <button id="closeupBtn" title="a quick framing and lighting check before a video call">ready for my close-up</button>
 
         <div class="switch-group">
           <div class="switch-item">
@@ -711,6 +722,22 @@
     <div class="ergo-nav">
       <button id="ergoBackBtn" class="btn-compact" type="button">back</button>
       <button id="ergoNextBtn" class="btn-compact" type="button">next</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="closeupOverlay">
+  <div class="modal" style="max-width: 480px;">
+    <button class="modal-close" id="closeupClose">&times;</button>
+    <h2 class="modal-title">ready for my close-up</h2>
+    <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A quick check of your framing and lighting before a call. It looks at one frame, on this device &mdash; nothing is saved or sent anywhere. Hair, outfit and what's in your background aren't checked yet.</p>
+    <div id="closeupNeedsCamera">
+      <button id="closeupStartCameraBtn" class="btn" type="button">start camera</button>
+    </div>
+    <div id="closeupLive" hidden>
+      <button id="closeupCheckBtn" class="btn" type="button">check me now</button>
+      <div id="closeupSummary" class="closeup-summary" hidden></div>
+      <ul id="closeupResults" class="closeup-results"></ul>
     </div>
   </div>
 </div>

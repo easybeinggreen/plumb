@@ -837,6 +837,24 @@ Listed in the order the user raised them, not priority.
    eye/nose posture-signal work above, which already touched several
    phrase arrays) would mean redoing that work every time a nudge's
    wording changes. Don't start this until the nudge phrases have settled.
+   **Phase 1 built 2026-09-19 ("ready for my close-up" button, local
+   checks only, no LLM, nothing saved or sent):** `src/closeup.js` is a pure
+   `analyzeCloseup({lm, lum, w, h})` -- framing (centred, headroom,
+   distance/shoulders cut off), head tilt, face brightness, left/right
+   evenness across the face, backlight (background vs face), glare. Reads
+   `lastPose` (set by both `alignPreviewFrame` and `loop`, so no second
+   `detectForVideo` call) plus one 160x120 frame. Logic verified with
+   synthetic frames (good frame + each fault, including left/right
+   direction under the mirrored self-view); UI verified in a browser only
+   up to the no-camera state -- **never run against a real camera, and
+   every threshold in `CLOSEUP_THRESHOLDS` is an unvalidated first guess.**
+   Deliberately not checked: camera height/angle (direction can't be
+   verified without a real camera), sharpness/lens smudge (no validated
+   threshold). **Phase 2, not built:** hair, outfit, background contents,
+   and comparison against a saved "best self" photo -- needs a vision
+   model via a Supabase Edge Function (OpenRouter key can't go
+   client-side), opt-in per press, frame never stored. Mic level check was
+   floated, undecided.
 6. **"My best self" / "call ready" self-check button.** Refined
    2026-09-17: not just a one-off check against a fixed prompt -- capture
    and save a reference "best self" photo (hair brushed, sitting up,
