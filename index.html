@@ -445,8 +445,8 @@
         <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
         <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
-        <button id="ergoWizardBtn" title="a short guided walkthrough: camera height, screen distance, lighting, desk basics -- then calibrate">set up your desk</button>
-        <button id="closeupBtn" title="a quick framing and lighting check before a video call">ready for my close-up</button>
+        <button id="ergoWizardBtn" title="a one-off walkthrough of your desk: eye height against the screen, distance, lighting, desk basics -- then calibrate">workstation setup</button>
+        <button id="closeupBtn" title="a live mirror and quick check of how you look and sound to others, before a video call">are you camera ready?</button>
 
         <div class="switch-group">
           <div class="switch-item">
@@ -637,7 +637,7 @@
 <div class="modal-overlay" id="ergoWizardOverlay">
   <div class="modal" style="max-width: 480px;">
     <button class="modal-close" id="ergoWizardClose">&times;</button>
-    <h2 class="modal-title">set up your desk</h2>
+    <h2 class="modal-title">workstation setup</h2>
     <div class="ergo-step-indicator" id="ergoStepIndicator">step 1 of 5</div>
 
     <div class="ergo-step" data-ergo-step="0">
@@ -647,7 +647,7 @@
         good-posture baseline. Sit the way you'd normally work, then click next.</p>
       <p style="font-size:12px;">You don't need to start the camera first --
         the next step turns it on for you. (For a quick look before a
-        video call, use <b>ready for my close-up</b> instead.)</p>
+        video call, use <b>are you camera ready?</b> instead -- that one is about how you look to others, this one is about how the desk suits you.)</p>
     </div>
 
     <div class="ergo-step" data-ergo-step="1" hidden>
@@ -745,7 +745,7 @@
 <div class="modal-overlay" id="closeupOverlay">
   <div class="modal" style="max-width: 480px;">
     <button class="modal-close" id="closeupClose">&times;</button>
-    <h2 class="modal-title">ready for my close-up</h2>
+    <h2 class="modal-title">are you camera ready?</h2>
     <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A live mirror plus a quick check of your framing, lighting and microphone before a call. Everything happens on this device &mdash; nothing is saved or sent anywhere. Hair, outfit and what's in your background aren't checked yet.</p>
     <div id="closeupNeedsCamera">
       <button id="closeupStartCameraBtn" class="btn" type="button">start camera</button>

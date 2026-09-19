@@ -859,6 +859,16 @@ Listed in the order the user raised them, not priority.
    yourself and watch the dots). Head tilt stays in the close-up check only,
    as "how you look on a call".
 
+   **Renamed 2026-09-19 at the user's request:** "ready for my close-up" is
+   now **"are you camera ready?"** (how you look/sound to others: headroom,
+   framing, centring, face lighting, backlight, glare, mic) and "set up your
+   desk" is now **"workstation setup"** (how the desk suits you: eye height
+   vs top of screen, cm distance, lighting, desk checklist, calibrate). They
+   deliberately share measurements (same landmarks/frame code) but ask
+   different questions; camera-ready labels were reworded ("headroom",
+   "framing") so the two don't read as duplicates. Older entries below still
+   use the old names.
+
    **Phase 1 built 2026-09-19 ("ready for my close-up" button, local
    checks only, no LLM, nothing saved or sent):** `src/closeup.js` is a pure
    `analyzeCloseup({lm, lum, w, h})` -- framing (centred, headroom,

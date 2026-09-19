@@ -3025,7 +3025,7 @@ ergoCalibrateBtn.addEventListener('click', () => {
   if (ok) setTimeout(closeErgoWizard, 1400);
 });
 
-// ---- "Ready for my close-up" ----
+// ---- "Are you camera ready?" ----
 // Live mirrored preview (a second <video> on the same MediaStream -- the main
 // #video gets moved off-screen once tracking starts, so it can't be the
 // mirror) with guide lines and pose dots, plus auto-refreshing framing/

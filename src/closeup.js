@@ -1,4 +1,4 @@
-// "Ready for my close-up": one-frame, fully local checks on framing and
+// "Are you camera ready?": one-frame, fully local checks on framing and
 // lighting before a video call. Pure function of (pose landmarks, a small
 // grayscale luminance frame) so it can be tested without a camera.
 //
@@ -124,17 +124,17 @@ export function analyzeCloseup({ lm, lum, w, h }) {
   } else add('centre', 'centred', 'ok', 'Nicely centred.');
 
   if (eyeMidY < T.eyeLineHigh) {
-    add('headroom', 'eye height', 'fix', 'Your eyes are too high in the picture (head near the top edge) -- lower the camera or sit a little lower.');
+    add('headroom', 'headroom', 'fix', 'Too little space above your head -- lower the camera or sit a little lower.');
   } else if (eyeMidY > T.eyeLineLow) {
-    add('headroom', 'eye height', 'fix', 'Your eyes are too low in the picture (lots of empty space above your head) -- raise the camera or sit up a little.');
-  } else add('headroom', 'eye height', 'ok', 'Eye height looks good.');
+    add('headroom', 'headroom', 'fix', 'Too much empty space above your head -- raise the camera or sit up a little.');
+  } else add('headroom', 'headroom', 'ok', 'Good amount of space above your head.');
 
   const eyeFrac = eyeDistPx / w;
   const shouldersOk = [lSh, rSh].every(p => p && (typeof p.visibility !== 'number' || p.visibility >= T.shoulderVisibility) && p.y < 0.98);
-  if (eyeFrac < T.eyeDistFar) add('distance', 'distance', 'fix', "You look a long way from the camera -- sit a bit closer.");
-  else if (eyeFrac > T.eyeDistNear) add('distance', 'distance', 'fix', 'Quite close to the camera -- sit back a little.');
-  else if (!shouldersOk) add('distance', 'distance', 'fix', 'Your shoulders are cut off -- sit back a little so head and shoulders are both in view.');
-  else add('distance', 'distance', 'ok', 'Head-and-shoulders framing looks right.');
+  if (eyeFrac < T.eyeDistFar) add('distance', 'framing', 'fix', "You look small in the picture -- sit a bit closer so you fill more of it.");
+  else if (eyeFrac > T.eyeDistNear) add('distance', 'framing', 'fix', 'You fill too much of the picture -- sit back a little.');
+  else if (!shouldersOk) add('distance', 'framing', 'fix', 'Your shoulders are cut off -- sit back a little so head and shoulders are both in view.');
+  else add('distance', 'framing', 'ok', 'Head-and-shoulders framing looks right.');
 
   // Fold the eye-line angle into 0-90 so it doesn't matter which eye landmark
   // lands on which side of the raw frame.
