@@ -214,6 +214,14 @@
   .live-metrics b.over { color: var(--terracotta-dark); }
   .live-metrics i { font-style: normal; opacity: 0.6; }
 
+  /* On-screen alert: flashes over the whole status card (which is the popup
+     when tracking is running) for a few seconds, then fades. Lives inside
+     #statusCard so it travels into the PiP window with it. */
+  #statusCard { position: relative; }
+  .plumb-toast { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; background: rgba(10,38,38,0.95); color: #F0DAC7; font-size: 15px; font-weight: 600; line-height: 1.3; border-radius: inherit; opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+  .plumb-toast.show { opacity: 1; }
+  #statusCard.pip-mode .plumb-toast { font-size: 13px; padding: 10px; }
+
   /* compact layout used only when the card is popped into the PiP window */
  #statusCard.pip-mode {
   padding: 12px 10px 10px;
@@ -486,6 +494,7 @@
           <div class="status-value" id="statusValue">not started</div>
           <div class="status-caption" id="statusCaption">press start camera to begin</div>
         </div>
+        <div class="plumb-toast" id="plumbToast" role="status" aria-live="polite"></div>
       </div>
 
       <div class="panel hydration-card">

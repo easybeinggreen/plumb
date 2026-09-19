@@ -927,6 +927,29 @@ monitor itself -- but per the user's explicit instruction, that happens on
 its own branch, not on `main`. See the workflow note in "Fixed 2026-09-17/18"
 above before starting it.
 
+## Desk-companion roadmap, decided 2026-09-19 (user's calls)
+
+- **On-screen alerts: built.** `showToast()` flashes the message over the
+  status card (which *is* the popup while tracking runs) for 3s+, hooked
+  into `speak()` so every existing nudge gets it, muted or not. Decision:
+  the popup is always visible when Plumb is running, so it's the one place
+  for alerts -- no browser-notification fallback wanted.
+- **Approved, not built:** hydration *pacing* ("500ml behind pace for
+  2pm", not just a bare reminder); end-of-day wrap-up; Pomodoro/focus timer
+  layered on the existing 25-min break gauge; in-app reminders/alarms
+  (clock time or every N min, fire toast + voice while Plumb is open --
+  can't wake a closed laptop) with an "add as reminder" button on weekly
+  goals; coached 20-20-20 (user noted it's probably redundant with 25-min
+  breaks -- plan is to fold a 20s "look far away" step into the start of
+  each break rather than a separate timer).
+- **Stretch routines on demand:** ~5 seated office stretches x ~5 slow reps
+  with small animated visuals; general ergonomics guidance, not medical
+  advice. Not built.
+- **A Plumb character** (the plumb bob): user's idea that the app is
+  missing one; being designed, nothing built.
+- Still queued from before: camera picker (Brio), Google Calendar via a
+  private iCal link (would also give "mute nudges during calls").
+
 ## The presence/break/away/not-tracking state model
 
 This is the most conceptually tangled part of the app and worth understanding

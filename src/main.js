@@ -1086,7 +1086,21 @@ async function ensurePiperVoice(voiceId) {
   }
 }
 
+// On-screen alert shown over the status card (the popup, when tracking runs).
+// Independent of the voice: it shows even when nudges are muted, since sound
+// isn't always on. 3s minimum, a little longer for long messages.
+const plumbToast = document.getElementById('plumbToast');
+let plumbToastTimer = null;
+function showToast(text) {
+  if (!plumbToast || !text) return;
+  plumbToast.textContent = text;
+  plumbToast.classList.add('show');
+  clearTimeout(plumbToastTimer);
+  plumbToastTimer = setTimeout(() => plumbToast.classList.remove('show'), Math.max(3000, text.length * 45));
+}
+
 async function speak(text, force = false) {
+  showToast(text);
   // force=true (the test-voice button) bypasses mute -- deliberately
   // testing the voice is exactly the case where muted shouldn't apply, and
   // silently doing nothing on click was indistinguishable from "broken".
@@ -1567,6 +1581,7 @@ function handleCameraLost(reason) {
   console.warn('Plumb: camera lost —', reason);
   addAlertToFeed('camera_lost', `Camera feed lost (${reason}) — tracking stopped`);
   stopCamera('lost');
+  showToast('Camera lost — tracking stopped');
   handlingCameraLoss = false;
 }
 
