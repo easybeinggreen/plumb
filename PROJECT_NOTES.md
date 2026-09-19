@@ -949,11 +949,14 @@ above before starting it.
   (balancer, the "l" as the plumb line, eyes on the dot); user decided
   against it -- the app's tone is serious/professional and a mascot would
   feel gimmicky, and voices are about to change. Don't revive it unprompted.
-- **Popup glyph reworked 2026-09-19:** base dot 11 -> 13.2 (+20%), the loop
-  is now a fixed generous size (58x34) instead of shrinking with the
-  tolerance setting, and `GLYPH_GAIN` 1.25 means the dot touches the loop
-  edge at 80% of your tolerance and travels a little past it beyond that.
-  Smoothing untouched. **Found while doing this:** the synced `app_settings`
+- **Popup glyph reworked 2026-09-19:** base dot 11 -> 13.2 (+20%) and the
+  loop is now a fixed generous size (58x40) instead of shrinking with the
+  tolerance setting. **The loop marks the THRESHOLD** (dot exactly on it =
+  state flips good->mild and the sustain clock starts, ratio 1); it is not
+  a limit on movement -- the dot keeps travelling past it toward the edge
+  of the drawing. A first attempt added a visual gain that put the dot on
+  the loop at 80% of threshold; the user correctly rejected that because it
+  breaks the meaning of the loop, so it was removed. Smoothing untouched. **Found while doing this:** the synced `app_settings`
   row (last written 2026-08-22) still had lateral tolerance 0.20 and it
   overrides the 0.07 code default on every load, so the retuned default
   never applied to the user -- likely why lateral "needed a long way".

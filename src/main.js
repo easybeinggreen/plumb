@@ -1726,13 +1726,14 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-// The loop is a fixed, generous size (it used to shrink with the tolerance
-// setting, leaving most of the glyph empty). Dot travel is ratio-based: at
-// GLYPH_GAIN the dot touches the loop edge at 1/GLYPH_GAIN of the way to your
-// tolerance, and travels a little past the edge once you're over it -- more
-// visible movement without touching the smoothing.
-const DOT_CENTER = 85, LOOP_RX = 58, LOOP_RY = 34, GLYPH_EDGE = 83;
-const GLYPH_GAIN = 1.25, GLYPH_MAX_RATIO = 1.5;
+// The loop marks your THRESHOLD: the dot is exactly on it when the state flips
+// from good to mild and the sustain clock starts (ratio 1). It is NOT a limit
+// on movement -- the dot keeps travelling out past the loop, up to the edge of
+// the drawing, the further over threshold you are. The loop is a fixed,
+// generous size (it used to shrink with the tolerance setting, leaving most of
+// the drawing unused), so a given lean moves the dot further, without
+// distorting where the threshold sits.
+const DOT_CENTER = 85, LOOP_RX = 58, LOOP_RY = 40, GLYPH_EDGE = 83;
 const DOT_BASE_R = 13.2, DOT_LEAN_MAX_DELTA = 12, LEAN_CURVE_K = 8;
 
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
@@ -1742,13 +1743,11 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K);
   const dotR = DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA;
 
-  const clampRatio = (r) => Math.max(-GLYPH_MAX_RATIO, Math.min(GLYPH_MAX_RATIO, r * GLYPH_GAIN));
-  const latRatio = latTol > 0 ? clampRatio(lateral / latTol) : 0;
-  const compRatio = compTol > 0 ? clampRatio(compression / compTol) : 0;
+  const latRatio = latTol > 0 ? lateral / latTol : 0;
+  const compRatio = compTol > 0 ? compression / compTol : 0;
   const maxTravel = Math.max(0, GLYPH_EDGE - dotR); // keeps the whole dot inside the 170-unit drawing
-  const maxX = maxTravel, maxY = maxTravel;
-  const px = Math.max(-maxX, Math.min(maxX, -latRatio * LOOP_RX));
-  const py = Math.max(-maxY, Math.min(maxY, compRatio * LOOP_RY));
+  const px = Math.max(-maxTravel, Math.min(maxTravel, -latRatio * LOOP_RX));
+  const py = Math.max(-maxTravel, Math.min(maxTravel, compRatio * LOOP_RY));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
   dzRing.style.cx = (DOT_CENTER + px) + 'px';
