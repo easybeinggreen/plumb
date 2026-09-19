@@ -595,19 +595,51 @@ testing, not anticipated in advance:
   upsert payload. RLS mirrors `app_settings` (anon gets select/insert/
   update, not just insert) since the browser needs to both read it and
   write the reply.
-- Runs Monday 6am Brisbane (`.github/workflows/weekly-analysis.yml`,
-  same cron-timezone approach as `rollup.yml`). New home-page panel
-  ("this week") shows the narrative, the 3 goals, the question with a
-  reply box, and the tracker reminder -- hidden until a real row exists
-  for the signed-in user.
-- **Deliberately scoped down for this pass**: only the *weekly* piece
-  was built. The user's original spec also wanted a **daily** summary
-  that references the current week's goal -- not built yet, and not the
-  same thing as the weekly LLM call run more often. A lightweight,
-  non-LLM daily blurb (today's real numbers + a line referencing the
-  active weekly goal, computed client-side from data already fetched)
-  is the likely right shape when this gets picked up, rather than a
-  second scheduled LLM call every day.
+- Runs Friday 4pm Brisbane (`.github/workflows/weekly-analysis.yml`,
+  same cron-timezone approach as `rollup.yml`; moved from an original
+  Monday-6am guess per the user's actual preference, ahead of the
+  weekend). New home-page panel ("this week") shows the narrative, the
+  3 goals, the question with a reply box, and the tracker reminder --
+  hidden until a real row exists for the signed-in user.
+- **Two real problems found by the user questioning the output against
+  the actual data, not just reading it (2026-09-19), both fixed:**
+  1. Summing a whole week into one hour-of-day table hid whether a
+     "peak hour" was a real recurring pattern or one bad day dominating
+     the sum. Confirmed on real data: the week's compression summed to
+     a clean 11am peak, but the actual per-day worst hour was
+     11am/8am/3pm/noon on the four days with any -- no real pattern,
+     just one bad Monday. Added `dailyPeaksByUserType()`: each day's own
+     peak hour per type, fed alongside the weekly sums, with explicit
+     instructions to check cross-day agreement before claiming a
+     pattern exists.
+  2. The model invented vibe-y filler metaphors ("stacks into a long,
+     hunchy block," "gets sticky," "a quiet pocket") that sounded
+     relatable but described nothing concrete. Style instruction now
+     explicitly bans invented casual metaphor/slang.
+- **On demand**, requested but not built: a true self-serve trigger
+  from the app needs a Supabase Edge Function, since the OpenRouter and
+  Supabase service-role keys can't go client-side on a public static
+  site (same constraint as the "ready for your close-up" idea). For
+  now, re-running is a `gh workflow run weekly-analysis.yml` away, not
+  a button in the app.
+- **Daily check-in, built 2026-09-19.** Deliberately not an LLM call --
+  the weekly analysis already sets the week's direction; the daily
+  piece is today's real numbers (tracked time, slouch %, breaks) plus a
+  reference to the week's first goal, computed client-side from data
+  already fetched elsewhere. Shows nothing rather than a fabricated-
+  looking "0m tracked, 0% slouching" before the day's actually started.
+  "Brought to attention" two ways: the passive home-page panel, and a
+  one-time spoken line when tracking starts for the day ("This week,
+  keeping an eye on: <goal>"), gated per calendar day via localStorage.
+  Speech deliberately waits for `startCamera()`'s post-countdown point,
+  not page load -- browsers block audio autoplay without a user
+  gesture, and page load has none.
+- **Found while wiring the daily piece up**: `TS_SLOUCH_TYPES` (drives
+  the live "sitting well today" hero stat in the PiP panel) never got
+  `sitting_low` added when that category was built -- a real
+  regression, silently under-counting slouch time on that specific
+  stat (the report itself used the correct type list throughout) since
+  sitting_low was introduced. Fixed.
 
 **Still open, not yet fixed**:
 1. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
