@@ -684,6 +684,25 @@ testing, not anticipated in advance:
      hunchy block," "gets sticky," "a quiet pocket") that sounded
      relatable but described nothing concrete. Style instruction now
      explicitly bans invented casual metaphor/slang.
+- **Third problem, found 2026-09-19 by checking the output against raw
+  `light_readings`:** the "5pm is dark" claim came from a single reading
+  (n=1, avg 0.063) at hour 17 vs 20+ readings at neighbouring hours --
+  same class of bug as the weekly-sum posture issue, never applied to
+  light. `buildLightByHour()` now passes `n` per hour and the prompt tells
+  the model to treat hours under ~5 readings as noise. Re-run correctly
+  picked 9am (n=24, 0.28 vs ~0.39 at 8am/10am) instead.
+- **Format rework, same day:** user found the output long-winded. `patterns`
+  is now exactly three labelled lines (`posture:`/`hydration:`/`light:`,
+  no schema change -- still one text column, split client-side in
+  `loadWeeklyGoals()`, old-format rows fall back to plain lines), goals
+  are one short sentence each and labelled by index (order is mandated in
+  the prompt), and `trackerReminder` states real coverage (days/hours
+  computed from `presence` events, verified against raw: 5 days, 35.0h).
+  Known nit: the model still writes raw state names like `lateral_right`.
+  **The app cannot act on goals** -- they're display-only text; only the
+  first goal is spoken once per day at tracking start. No clock-time alarm
+  feature exists (break/stillness/hydration nudges are interval-based).
+  The new UI rendering hasn't been checked in a browser yet.
 - **On demand**, requested but not built: a true self-serve trigger
   from the app needs a Supabase Edge Function, since the OpenRouter and
   Supabase service-role keys can't go client-side on a public static
