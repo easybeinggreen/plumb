@@ -9,14 +9,15 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { SYSTEM_PROMPT, USER_PROMPT, CHECK_IDS } from './prompt.js';
 
-const MODEL = Deno.env.get('CAMERA_REVIEW_MODEL') || 'google/gemini-2.5-flash-lite';
+const MODEL = Deno.env.get('CAMERA_REVIEW_MODEL') || 'google/gemma-4-31b-it:free';
 // TEMPORARY: lets a model comparison run through the deployed function with
 // only the one Supabase secret. Only these named models are accepted; remove
 // once a model is chosen.
 const TEST_MODELS = new Set([
-  'google/gemini-2.5-flash-lite', 'google/gemini-2.5-flash', 'google/gemini-3.1-flash-lite',
-  'openai/gpt-4o-mini', 'openai/gpt-5-mini', 'qwen/qwen3-vl-32b-instruct',
-  'anthropic/claude-haiku-4.5', 'google/gemma-4-31b-it:free'
+  'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'qwen/qwen3.8-27b:free',
+  'inclusionai/ling-3.0-flash-vl:free', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+  'thinkingmachines/inkling-small:free', 'openrouter/free',
+  'google/gemini-2.5-flash-lite', 'qwen/qwen3-vl-32b-instruct'
 ]);
 const USER_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_USER_CAP') || 10);
 const GLOBAL_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_GLOBAL_CAP') || 150);
@@ -38,7 +39,7 @@ function json(body: unknown, status: number, origin: string | null) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) } });
 }
 
-async function askModel(apiKey: string, imageB64: string, model: string) {
+async function askModel(apiKey: string, imageB64: string, model: string, jsonMode: boolean) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), MODEL_TIMEOUT_MS);
   try {
@@ -50,7 +51,7 @@ async function askModel(apiKey: string, imageB64: string, model: string) {
         model,
         temperature: 0.2,
         max_tokens: 600,
-        response_format: { type: 'json_object' },
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: [
@@ -109,9 +110,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     let result;
-    try { result = await askModel(apiKey, image, model); } catch (e) {
-      if (String((e as Error).message).startsWith('model_http_4')) throw e; // a client-side error won't fix itself on retry
-      result = await askModel(apiKey, image, model);
+    try { result = await askModel(apiKey, image, model, true); } catch (e) {
+      const msg = String((e as Error).message);
+      // A timeout would just time out again (and blow the 150s platform limit); other 4xx errors won't fix
+      // themselves -- except 400, which some free models return when they don't support JSON mode.
+      if ((e as Error).name === 'AbortError' || (msg.startsWith('model_http_4') && msg !== 'model_http_400')) throw e;
+      result = await askModel(apiKey, image, model, false);
     }
     const { items, summary } = normalise(result.parsed);
     return json({ items, summary, model: result.model }, 200, origin);
