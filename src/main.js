@@ -1733,7 +1733,10 @@ function setStatus(mode, text, caption) {
 // generous size (it used to shrink with the tolerance setting, leaving most of
 // the drawing unused), so a given lean moves the dot further, without
 // distorting where the threshold sits.
-const DOT_CENTER = 85, LOOP_RX = 58, LOOP_RY = 40, GLYPH_EDGE = 83;
+// Rest position: horizontally centred (left/right lean is symmetric), but
+// vertically UP near the top -- neck-drop only ever moves the dot down, so a
+// centred rest wasted the whole upper half of the drawing.
+const DOT_CENTER = 85, REST_Y = 50, LOOP_RX = 58, LOOP_RY = 34, GLYPH_MIN = 2, GLYPH_MAX = 168;
 const DOT_BASE_R = 13.2, DOT_LEAN_MAX_DELTA = 12, LEAN_CURVE_K = 8;
 
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
@@ -1745,13 +1748,14 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
 
   const latRatio = latTol > 0 ? lateral / latTol : 0;
   const compRatio = compTol > 0 ? compression / compTol : 0;
-  const maxTravel = Math.max(0, GLYPH_EDGE - dotR); // keeps the whole dot inside the 170-unit drawing
-  const px = Math.max(-maxTravel, Math.min(maxTravel, -latRatio * LOOP_RX));
-  const py = Math.max(-maxTravel, Math.min(maxTravel, compRatio * LOOP_RY));
+  // Keep the whole dot inside the 170-unit drawing on every side.
+  const xLim = Math.max(0, DOT_CENTER - GLYPH_MIN - dotR);
+  const px = Math.max(-xLim, Math.min(xLim, -latRatio * LOOP_RX));
+  const py = Math.max(GLYPH_MIN + dotR - REST_Y, Math.min(GLYPH_MAX - dotR - REST_Y, compRatio * LOOP_RY));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
-  dzDot.style.cy = (DOT_CENTER + py) + 'px';
+  dzDot.style.cy = (REST_Y + py) + 'px';
   dzRing.style.cx = (DOT_CENTER + px) + 'px';
-  dzRing.style.cy = (DOT_CENTER + py) + 'px';
+  dzRing.style.cy = (REST_Y + py) + 'px';
   dzDot.style.r = dotR + 'px';
   dzRing.style.r = (dotR + 5) + 'px';
 }

@@ -949,8 +949,10 @@ above before starting it.
   (balancer, the "l" as the plumb line, eyes on the dot); user decided
   against it -- the app's tone is serious/professional and a mascot would
   feel gimmicky, and voices are about to change. Don't revive it unprompted.
-- **Popup glyph reworked 2026-09-19:** base dot 11 -> 13.2 (+20%) and the
-  loop is now a fixed generous size (58x40) instead of shrinking with the
+- **Popup glyph reworked 2026-09-19:** base dot 11 -> 13.2 (+20%); the dot
+  rests near the TOP of the drawing (y=50 of 170) because neck-drop only
+  moves it down, so a centred rest wasted the upper half; the loop is a
+  fixed generous size (58x34) instead of shrinking with the
   tolerance setting. **The loop marks the THRESHOLD** (dot exactly on it =
   state flips good->mild and the sustain clock starts, ratio 1); it is not
   a limit on movement -- the dot keeps travelling past it toward the edge
