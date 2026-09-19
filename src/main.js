@@ -3060,6 +3060,9 @@ const closeupMicBtn = document.getElementById('closeupMicBtn');
 const closeupMeterFill = document.getElementById('closeupMeterFill');
 const closeupMicStatus = document.getElementById('closeupMicStatus');
 const closeupMicResults = document.getElementById('closeupMicResults');
+const closeupAiBtn = document.getElementById('closeupAiBtn');
+const closeupAiStatus = document.getElementById('closeupAiStatus');
+const closeupAiResults = document.getElementById('closeupAiResults');
 let closeupCanvas = null, closeupCtx = null;
 let closeupOpen = false, closeupLastRefresh = 0, micTestRunning = false;
 
@@ -3163,6 +3166,8 @@ function openCloseup() {
   closeupResults.innerHTML = '';
   closeupMicResults.innerHTML = '';
   closeupMicStatus.textContent = '';
+  closeupAiResults.innerHTML = '';
+  closeupAiStatus.textContent = '';
   closeupMeterFill.style.width = '0%';
   closeupOverlay.classList.add('open');
   closeupOpen = true;
@@ -3235,9 +3240,56 @@ async function runMicTest() {
   }
 }
 
+// Sends ONE downscaled JPEG frame to the camera-review edge function (which
+// holds the OpenRouter key -- it can't live in this public page). Only ever
+// runs on a button press; the frame isn't stored anywhere.
+const AI_REVIEW_LABELS = { hair: 'hair', clothing: 'clothing', background: 'background', behind_head: 'behind your head' };
+let aiReviewRunning = false;
+async function runAiReview() {
+  if (aiReviewRunning) return;
+  closeupAiResults.innerHTML = '';
+  closeupAiStatus.style.fontWeight = '';
+  if (!SYNC_CONFIGURED) { closeupAiStatus.textContent = 'The AI review needs cloud sync to be set up.'; return; }
+  if (!closeupCameraReady() || !video.videoWidth) { closeupAiStatus.textContent = 'Start the camera first.'; return; }
+  aiReviewRunning = true;
+  closeupAiBtn.disabled = true;
+  closeupAiStatus.textContent = 'sending one picture for review -- this can take up to 20 seconds…';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60000);
+  try {
+    const w = 640, h = Math.round(640 * video.videoHeight / video.videoWidth);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(video, 0, 0, w, h);
+    const image = c.toDataURL('image/jpeg', 0.8).split(',')[1];
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/camera-review`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ user_id: currentUserId, image })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `The AI review failed (${res.status}).`);
+    const rows = (data.items || []).map(it => ({ label: AI_REVIEW_LABELS[it.id] || it.id, status: it.status, msg: it.msg }));
+    closeupAiStatus.style.fontWeight = '600';
+    closeupAiStatus.textContent = data.summary || 'Review complete.';
+    renderResultRows(closeupAiResults, rows);
+  } catch (err) {
+    closeupAiStatus.style.fontWeight = '600';
+    closeupAiStatus.textContent = err && err.name === 'AbortError'
+      ? 'The AI review took too long -- try again in a moment.'
+      : (err && err.message) || 'The AI review could not be completed.';
+  } finally {
+    clearTimeout(timer);
+    closeupAiBtn.disabled = false;
+    aiReviewRunning = false;
+  }
+}
+
 document.getElementById('closeupBtn').addEventListener('click', openCloseup);
 document.getElementById('closeupClose').addEventListener('click', closeCloseup);
 closeupMicBtn.addEventListener('click', runMicTest);
+closeupAiBtn.addEventListener('click', runAiReview);
 closeupStartCameraBtn.addEventListener('click', () => {
   closeupStartCameraBtn.disabled = true;
   closeupStartCameraBtn.textContent = 'starting…';

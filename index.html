@@ -122,6 +122,8 @@
   .closeup-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; }
   .closeup-stage video, .closeup-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover; }
   .closeup-hint { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
+  .closeup-ai { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
+  .closeup-ai .closeup-mic-status { margin-top: 8px; }
   .closeup-mic { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
   .closeup-meter { height: 10px; border-radius: 5px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); overflow: hidden; margin: 10px 0 6px; }
   #closeupMeterFill { height: 100%; width: 0%; background: var(--accent); transition: width .08s linear; }
@@ -746,7 +748,7 @@
   <div class="modal" style="max-width: 480px;">
     <button class="modal-close" id="closeupClose">&times;</button>
     <h2 class="modal-title">are you camera ready?</h2>
-    <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A live mirror plus a quick check of your framing, lighting and microphone before a call. Everything happens on this device &mdash; nothing is saved or sent anywhere. Hair, outfit and what's in your background aren't checked yet.</p>
+    <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A live mirror plus a quick check of your framing, lighting and microphone before a call. Those checks all happen on this device. The optional AI review below is the only part that sends anything, and only when you press its button.</p>
     <div id="closeupNeedsCamera">
       <button id="closeupStartCameraBtn" class="btn" type="button">start camera</button>
     </div>
@@ -758,6 +760,12 @@
       <div class="closeup-hint">Line up: your eyes between the two horizontal dotted lines, your nose on the vertical one.</div>
       <div id="closeupSummary" class="closeup-summary" hidden></div>
       <ul id="closeupResults" class="closeup-results"></ul>
+      <div class="closeup-ai">
+        <button id="closeupAiBtn" class="btn-compact" type="button">get a fuller AI review</button>
+        <div class="closeup-hint">Looks at your hair, clothing and what's behind you. Pressing this sends <b>one picture</b> to an AI service (via OpenRouter) to look at it. It isn't saved, and nothing is sent unless you press the button.</div>
+        <div id="closeupAiStatus" class="closeup-mic-status"></div>
+        <ul id="closeupAiResults" class="closeup-results"></ul>
+      </div>
       <div class="closeup-mic">
         <button id="closeupMicBtn" class="btn-compact" type="button">test my microphone</button>
         <div class="closeup-meter"><div id="closeupMeterFill"></div></div>
