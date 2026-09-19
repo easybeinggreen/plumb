@@ -1495,6 +1495,7 @@ async function startCamera() {
     }
     alignPreviewActive = false;
     alignBadge.hidden = true;
+    maybeSpeakDailyCheckin();
 
     const pipOpened = pipRequested && movePipContent();
     if (pipOpened) {
@@ -2393,7 +2394,7 @@ async function fetchDailySummaryForRange(start, end) {
   } catch (e) { console.warn(e); return []; }
 }
 
-const TS_SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in'];
+const TS_SLOUCH_TYPES = ['lateral_left', 'lateral_right', 'compression', 'lean_in', 'sitting_low'];
 
 // The ambient "how's today going" panel that replaces the dead video space
 // once PiP has taken the live feed. Reuses the real report timeline (hour
@@ -3286,7 +3287,62 @@ const weeklyResponseInput = document.getElementById('weeklyResponseInput');
 const weeklyResponseBtn = document.getElementById('weeklyResponseBtn');
 const weeklyResponseSaved = document.getElementById('weeklyResponseSaved');
 const weeklyTrackerReminderEl = document.getElementById('weeklyTrackerReminder');
+const dailyCheckinEl = document.getElementById('dailyCheckin');
 let currentWeeklyGoalId = null;
+
+// Not an LLM call -- the weekly analysis already set the direction for the
+// week, so the daily piece is just "here's today, against that direction,"
+// computed client-side from data already fetched elsewhere for the report.
+// Returns null (and hides the block) rather than a real number when the
+// day hasn't actually started tracking, which is the common case first
+// thing in the morning before "0m tracked, 0% slouching" reads as a stat
+// worth showing.
+async function computeDailyCheckinText(firstGoal) {
+  if (!SYNC_CONFIGURED) return null;
+  const d = today();
+  const events = await fetchEventsForRange(d, d);
+  if (presenceStartedAt) {
+    events.push({ type: 'presence', duration_seconds: Math.round((Date.now() - presenceStartedAt) / 1000) });
+  }
+  let session = 0, slouch = 0, breaks = 0;
+  events.forEach((e) => {
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'presence') session += dur;
+    else if (TS_SLOUCH_TYPES.includes(e.type)) slouch += dur;
+    else if (e.type === 'break') breaks++;
+  });
+  if (session < 60) return null; // nothing meaningful tracked yet today
+
+  const pct = Math.round((slouch / session) * 100);
+  const mins = Math.round(session / 60);
+  const timeLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+  const goalRef = firstGoal ? ` This week: ${firstGoal}` : '';
+  return `Today so far: ${timeLabel} tracked, ${pct}% slouching, ${breaks} break${breaks === 1 ? '' : 's'}.${goalRef}`;
+}
+
+// Speaking the weekly goal once when tracking actually starts for the day
+// is the "bring it to attention" half of the daily check-in -- the visual
+// panel is passive (only seen if you open the app and look), this is the
+// one place Plumb already announces things out loud. Gated to once per
+// calendar day per device via localStorage, not tied to whether you've
+// already seen the panel, so it doesn't repeat every time you restart
+// tracking within the same day.
+async function maybeSpeakDailyCheckin() {
+  if (!SYNC_CONFIGURED || !voiceNudgesEnabled) return;
+  const key = `plumb:${currentUserId}:dailyCheckinSpoken`;
+  if (localStorage.getItem(key) === today()) return;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/weekly_goals?user_id=eq.${encodeURIComponent(currentUserId)}&order=week_start.desc&limit=1&select=goals`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!res.ok) return;
+    const rows = await res.json();
+    const firstGoal = rows[0]?.goals?.[0];
+    if (!firstGoal) return;
+    speak(`Good to see you. This week, keeping an eye on: ${firstGoal}`);
+    localStorage.setItem(key, today());
+  } catch (err) { console.warn('maybeSpeakDailyCheckin:', err); }
+}
 
 async function loadWeeklyGoals() {
   if (!SYNC_CONFIGURED) return;
@@ -3300,6 +3356,9 @@ async function loadWeeklyGoals() {
     if (!row) { weeklyGoalsPanel.hidden = true; return; }
 
     currentWeeklyGoalId = row.id;
+    const dailyText = await computeDailyCheckinText((row.goals || [])[0]);
+    dailyCheckinEl.textContent = dailyText || '';
+    dailyCheckinEl.hidden = !dailyText;
     weeklyPatternsEl.textContent = row.patterns || '';
     weeklyGoalsList.innerHTML = '';
     (row.goals || []).forEach((g) => {
