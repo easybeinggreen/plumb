@@ -222,6 +222,9 @@
   .plumb-toast.show { opacity: 1; }
   #statusCard.pip-mode .plumb-toast { font-size: 13px; padding: 10px; }
 
+  .call-badge { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 4; white-space: nowrap; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; background: var(--ink); color: #F0DAC7; }
+  #statusCard.pip-mode .call-badge { top: 5px; font-size: 9.5px; padding: 2px 7px; }
+
   /* compact layout used only when the card is popped into the PiP window */
  #statusCard.pip-mode {
   padding: 12px 10px 10px;
@@ -495,6 +498,7 @@
           <div class="status-caption" id="statusCaption">press start camera to begin</div>
         </div>
         <div class="plumb-toast" id="plumbToast" role="status" aria-live="polite"></div>
+        <div class="call-badge" id="callBadge" hidden>in a call &middot; nudges paused</div>
       </div>
 
       <div class="panel hydration-card">
@@ -629,6 +633,10 @@
     <h3 class="settings-section-title">ambient light</h3>
     <div class="hydration-size-row"><label>glare nudge <button class="info-icon" type="button" data-info="brightness" aria-label="why this default">i</button></label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&gt;12% imbalance, held 90s</span></div>
     <div class="hydration-size-row"><label>dim/bright nudge</label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&lt;25% or &gt;80% overall, held 90s</span></div>
+
+    <h3 class="settings-section-title">calls</h3>
+    <div class="hydration-size-row"><label for="muteDuringCallsInput" title="uses your linked calendar">pause nudges during calls</label><input type="checkbox" id="muteDuringCallsInput" checked style="width:auto;" /></div>
+    <div class="hydration-size-row"><span style="font-size:11.5px;color:var(--ink-soft);line-height:1.45;">Anything on your calendar with a Meet, Zoom or Teams link counts as a call. Tracking carries on as normal; only voice and on-screen alerts pause. Does nothing if no calendar is linked.</span></div>
 
     <h3 class="settings-section-title">device</h3>
     <div class="hydration-size-row"><label for="deviceLabelInput" title="lets reports tell devices apart, e.g. laptop vs. desk rig -- separate from your name above">device name</label><input type="text" id="deviceLabelInput" placeholder="e.g. laptop" maxlength="40" /></div>

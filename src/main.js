@@ -1099,7 +1099,55 @@ function showToast(text) {
   plumbToastTimer = setTimeout(() => plumbToast.classList.remove('show'), Math.max(3000, text.length * 45));
 }
 
-async function speak(text, force = false) {
+// While you're in a call (per the synced calendar), every alert -- voice AND
+// on-screen -- pauses. Tracking and event logging carry on untouched; only the
+// interruptions stop. force (test-voice button) and userInitiated (e.g. the
+// "calibrated" confirmation you just asked for) still get through.
+const MUTE_CALLS_KEY = 'plumb:muteDuringCalls';
+const CALL_POLL_MS = 60000;
+let muteDuringCalls = localStorage.getItem(MUTE_CALLS_KEY) !== '0';
+let inCallNow = false;
+const callBadge = document.getElementById('callBadge');
+const muteDuringCallsInput = document.getElementById('muteDuringCallsInput');
+
+function renderCallBadge() { if (callBadge) callBadge.hidden = !(inCallNow && muteDuringCalls); }
+
+function setInCall(value) {
+  if (value === inCallNow) return;
+  inCallNow = value;
+  renderCallBadge();
+  if (!muteDuringCalls) return;
+  addAlertToFeed('call', value ? 'In a call — nudges paused' : 'Call ended — nudges back on');
+  if (!value) showToast('Call ended — nudges back on');
+}
+
+// Asks the database one yes/no question ("in a call right now?"). The
+// calendar table itself is server-only; this function returns nothing else.
+async function checkCallStatus() {
+  if (!SYNC_CONFIGURED || !currentUserId || !muteDuringCalls) { setInCall(false); return; }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/in_call_now`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ p_user: currentUserId })
+    });
+    if (!res.ok) return; // keep the last known state rather than flapping on a network blip
+    setInCall((await res.json()) === true);
+  } catch (err) { console.warn('checkCallStatus:', err); }
+}
+
+if (muteDuringCallsInput) {
+  muteDuringCallsInput.checked = muteDuringCalls;
+  muteDuringCallsInput.addEventListener('change', () => {
+    muteDuringCalls = muteDuringCallsInput.checked;
+    localStorage.setItem(MUTE_CALLS_KEY, muteDuringCalls ? '1' : '0');
+    renderCallBadge();
+    checkCallStatus();
+  });
+}
+
+async function speak(text, force = false, userInitiated = false) {
+  if (inCallNow && muteDuringCalls && !force && !userInitiated) return;
   showToast(text);
   // force=true (the test-voice button) bypasses mute -- deliberately
   // testing the voice is exactly the case where muted shouldn't apply, and
@@ -2858,7 +2906,7 @@ function performCalibration() {
     stillnessRef = null;
     lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
-    speak("Calibrated. That's your good posture.");
+    speak("Calibrated. That's your good posture.", false, true);
     addAlertToFeed('calibration', 'Posture calibrated');
     logCalibrationEvent();
     calibrateBtn.textContent = 'recalibrate posture';
@@ -3771,6 +3819,8 @@ maybeSwitchDay();
 fetchAndApplyAppSettings();
 reconcileTodayFromCloud();
 loadWeeklyGoals();
+checkCallStatus();
+setInterval(checkCallStatus, CALL_POLL_MS);
 setInterval(() => {
   if (running) {
     localStorage.setItem(LAST_SESSION_END_KEY, new Date().toISOString());

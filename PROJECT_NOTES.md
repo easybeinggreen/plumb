@@ -982,8 +982,24 @@ above before starting it.
   secret exists and the workflow has run. Single user (`CALENDAR_USER_ID`
   = Paul in the workflow). **Not built yet:** using the data -- posture
   during calls vs. rest of day in the weekly analysis (service key can read
-  the table), and muting nudges during calls (would need a narrow
-  server-side "in a call now?" endpoint rather than exposing the table).
+  the table) -- deliberately waiting: only ~1.7 tracked hours overlapped
+  calls as of 2026-09-20 (2 of 14 past calls), too thin to compare.
+  **Mute during calls: built 2026-09-20.** SQL function `in_call_now(p_user)`
+  (security definer, anon-callable) returns a bare yes/no for "right now";
+  the time-parameterised `_in_call_at` is service_role only so nobody can
+  probe arbitrary times to rebuild a schedule. The app polls it every 60s;
+  while true (and Settings -> calls -> "pause nudges during calls" is on,
+  default on) `speak()` suppresses ALL alerts, voice and on-screen, except
+  `force` (test voice) and `userInitiated` (the "calibrated" confirmation).
+  Tracking/logging is untouched. A small "in a call - nudges paused" pill
+  shows on the popup card; alert feed logs start/end and a toast says "Call
+  ended - nudges back on". Verified: SQL boundary logic on real synced data
+  (middle/lead-in true, 5 min before/exact end false), anon key can call
+  `in_call_now` but is refused on `_in_call_at`, and the UI flow with a
+  faked response. **Not verified live:** the suppression inside `speak()`
+  during a real call, and behaviour in the actual PiP window. In-person
+  (no call link) meetings do NOT mute.
+  A camera picker already existed (Settings -> device -> camera).
   **Multi-user is deliberately not offered:** other people would need to
   store their own private calendar links server-side, which isn't
   responsible without real auth (today "login" is a name label and RLS is
