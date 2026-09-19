@@ -1726,31 +1726,33 @@ function setStatus(mode, text, caption) {
   if (caption !== undefined) statusCaption.textContent = caption;
 }
 
-const DOT_MAX_PX = 64, DOT_CENTER = 85, ELLIPSE_MAX_PX = 66, TOLERANCE_SCALE = 210;
-const DOT_BASE_R = 11, DOT_LEAN_MAX_DELTA = 18, LEAN_CURVE_K = 8;
+// The loop is a fixed, generous size (it used to shrink with the tolerance
+// setting, leaving most of the glyph empty). Dot travel is ratio-based: at
+// GLYPH_GAIN the dot touches the loop edge at 1/GLYPH_GAIN of the way to your
+// tolerance, and travels a little past the edge once you're over it -- more
+// visible movement without touching the smoothing.
+const DOT_CENTER = 85, LOOP_RX = 58, LOOP_RY = 34, GLYPH_EDGE = 83;
+const GLYPH_GAIN = 1.25, GLYPH_MAX_RATIO = 1.5;
+const DOT_BASE_R = 13.2, DOT_LEAN_MAX_DELTA = 12, LEAN_CURVE_K = 8;
 
 function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
-  const ellipseRx = Math.min(ELLIPSE_MAX_PX, latTol * TOLERANCE_SCALE);
-  const ellipseRy = Math.min(ELLIPSE_MAX_PX, compTol * TOLERANCE_SCALE);
-  dzTolerance.style.rx = ellipseRx + 'px';
-  dzTolerance.style.ry = ellipseRy + 'px';
+  dzTolerance.style.rx = LOOP_RX + 'px';
+  dzTolerance.style.ry = LOOP_RY + 'px';
 
-  // Dot position is proportional to how much of your tolerance you've used
-  // up, scaled against the loop's own rendered radius on each axis -- so
-  // "touching the edge" always means "at the real slouch threshold",
-  // instead of the dot racing out to the edge on a curve that had nothing
-  // to do with the tolerance value.
-  const latRatio = latTol > 0 ? lateral / latTol : 0;
-  const compRatio = compTol > 0 ? compression / compTol : 0;
-  const px = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, -latRatio * ellipseRx));
-  const py = Math.max(-DOT_MAX_PX, Math.min(DOT_MAX_PX, compRatio * ellipseRy));
+  const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K);
+  const dotR = DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA;
+
+  const clampRatio = (r) => Math.max(-GLYPH_MAX_RATIO, Math.min(GLYPH_MAX_RATIO, r * GLYPH_GAIN));
+  const latRatio = latTol > 0 ? clampRatio(lateral / latTol) : 0;
+  const compRatio = compTol > 0 ? clampRatio(compression / compTol) : 0;
+  const maxTravel = Math.max(0, GLYPH_EDGE - dotR); // keeps the whole dot inside the 170-unit drawing
+  const maxX = maxTravel, maxY = maxTravel;
+  const px = Math.max(-maxX, Math.min(maxX, -latRatio * LOOP_RX));
+  const py = Math.max(-maxY, Math.min(maxY, compRatio * LOOP_RY));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (DOT_CENTER + py) + 'px';
   dzRing.style.cx = (DOT_CENTER + px) + 'px';
   dzRing.style.cy = (DOT_CENTER + py) + 'px';
-
-  const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K);
-  const dotR = DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA;
   dzDot.style.r = dotR + 'px';
   dzRing.style.r = (dotR + 5) + 'px';
 }

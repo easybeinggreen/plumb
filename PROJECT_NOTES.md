@@ -945,10 +945,27 @@ above before starting it.
 - **Stretch routines on demand:** ~5 seated office stretches x ~5 slow reps
   with small animated visuals; general ergonomics guidance, not medical
   advice. Not built.
-- **A Plumb character** (the plumb bob): user's idea that the app is
-  missing one; being designed, nothing built.
+- **A Plumb character: ON ICE (2026-09-19).** Three concepts were drawn
+  (balancer, the "l" as the plumb line, eyes on the dot); user decided
+  against it -- the app's tone is serious/professional and a mascot would
+  feel gimmicky, and voices are about to change. Don't revive it unprompted.
+- **Popup glyph reworked 2026-09-19:** base dot 11 -> 13.2 (+20%), the loop
+  is now a fixed generous size (58x34) instead of shrinking with the
+  tolerance setting, and `GLYPH_GAIN` 1.25 means the dot touches the loop
+  edge at 80% of your tolerance and travels a little past it beyond that.
+  Smoothing untouched. **Found while doing this:** the synced `app_settings`
+  row (last written 2026-08-22) still had lateral tolerance 0.20 and it
+  overrides the 0.07 code default on every load, so the retuned default
+  never applied to the user -- likely why lateral "needed a long way".
+  Chrome's Document PiP API documents no way to hide the window's title
+  bar/origin; `disallowReturnToOpener` only hides the back-to-tab button.
 - Still queued from before: camera picker (Brio), Google Calendar via a
   private iCal link (would also give "mute nudges during calls").
+  **Plan:** GitHub secret `CALENDAR_ICS_URL` -> scheduled Action fetches +
+  parses the ICS (recurring events need a real parser), flags events with a
+  Meet/Zoom/Teams link as calls, upserts times only (no titles) into a
+  `calendar_events` table -> the app mutes nudges during calls and the weekly
+  analysis compares posture during calls vs the rest of the day.
 
 ## The presence/break/away/not-tracking state model
 
