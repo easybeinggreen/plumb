@@ -966,11 +966,29 @@ above before starting it.
   bar/origin; `disallowReturnToOpener` only hides the back-to-tab button.
 - Still queued from before: camera picker (Brio), Google Calendar via a
   private iCal link (would also give "mute nudges during calls").
-  **Plan:** GitHub secret `CALENDAR_ICS_URL` -> scheduled Action fetches +
-  parses the ICS (recurring events need a real parser), flags events with a
-  Meet/Zoom/Teams link as calls, upserts times only (no titles) into a
-  `calendar_events` table -> the app mutes nudges during calls and the weekly
-  analysis compares posture during calls vs the rest of the day.
+  **Built 2026-09-19 (stage 1, waiting on the secret):** hourly workflow
+  `.github/workflows/calendar-sync.yml` runs `scripts/sync-calendar.cjs`
+  (node-ical installed with `--no-save` in CI only): reads the private iCal
+  link from GitHub secret `CALENDAR_ICS_URL` (never logged), expands
+  recurring events (EXDATE and moved instances handled), skips all-day /
+  cancelled / "free" / declined-by-owner events, flags events with a
+  Meet/Zoom/Teams/Webex link as calls, and upserts **times only, never
+  titles** into `public.calendar_events` (window -35d..+14d; rows not seen
+  in a run are deleted). Table is **service_role only** -- anon and
+  authenticated have no access, deliberately, because meeting times are more
+  sensitive than posture data and the other tables are anon-readable. Parser
+  verified against a synthetic Google-style calendar in UTC and Brisbane
+  time zones (exact instants); the DB write path is only verified once the
+  secret exists and the workflow has run. Single user (`CALENDAR_USER_ID`
+  = Paul in the workflow). **Not built yet:** using the data -- posture
+  during calls vs. rest of day in the weekly analysis (service key can read
+  the table), and muting nudges during calls (would need a narrow
+  server-side "in a call now?" endpoint rather than exposing the table).
+  **Multi-user is deliberately not offered:** other people would need to
+  store their own private calendar links server-side, which isn't
+  responsible without real auth (today "login" is a name label and RLS is
+  open). Revisit only with proper auth, per-user revocable links, and
+  opt-in.
 
 ## The presence/break/away/not-tracking state model
 
