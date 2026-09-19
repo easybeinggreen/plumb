@@ -2301,19 +2301,28 @@ function renderTodayTimeline(events, canvas, referenceDate) {
     .map(key => ({ key, color: colors[key] }));
 
   let legendX = 0;
+  let rowY = legendY;
   ctx2.font = '10px Karla, sans-serif';
 
+  // Wraps onto a new row instead of running off the right edge -- in the
+  // narrower live-tracking panel the single row used to cut off "break" and
+  // drop "away"/"not tracking" entirely.
   legendItems.forEach(item => {
     const swatchSize = 8;
     const text = labels[item.key];
     const textWidth = ctx2.measureText(text).width;
     const totalWidth = swatchSize + 4 + textWidth + 14;
 
+    if (legendX > 0 && legendX + totalWidth - 14 > width) {
+      legendX = 0;
+      rowY += 14;
+    }
+
     ctx2.fillStyle = item.color;
-    ctx2.fillRect(legendX, legendY, swatchSize, swatchSize);
+    ctx2.fillRect(legendX, rowY, swatchSize, swatchSize);
 
     ctx2.fillStyle = '#4B615E';
-    ctx2.fillText(text, legendX + swatchSize + 4, legendY + swatchSize - 1);
+    ctx2.fillText(text, legendX + swatchSize + 4, rowY + swatchSize - 1);
 
     legendX += totalWidth;
   });
