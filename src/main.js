@@ -1,7 +1,7 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
-import { hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder } from './companion.js';
+import { hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -293,7 +293,7 @@ let hydrationLastClickMl = 0;
 const EXTRAS_KEY = 'plumb:extras';
 const REMINDER_FIRED_KEY = 'plumb:reminderFired';
 const MAX_REMINDERS = 20;
-function defaultExtras() { return { hydrationPace: { on: true, start: '07:00', end: '19:00' }, reminders: [] }; }
+function defaultExtras() { return { hydrationPace: { on: true, start: '07:00', end: '19:00' }, reminders: [], pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, wrap: { on: true, time: '17:30' } }; }
 function normaliseExtras(s) {
   const d = defaultExtras();
   if (!s || typeof s !== 'object') return d;
@@ -311,6 +311,16 @@ function normaliseExtras(s) {
       .slice(0, MAX_REMINDERS)
       .map((r) => ({ id: r.id, text: r.text.trim().slice(0, 80), kind: r.kind === 'every' ? 'every' : 'time', time: r.time, everyMin: Number(r.everyMin) || 45, weekdaysOnly: r.weekdaysOnly !== false, enabled: r.enabled !== false }));
   }
+  const pm = s.pomodoro;
+  if (pm && typeof pm === 'object') {
+    const num = (v, lo, hi, dflt) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= lo && n <= hi ? n : dflt; };
+    d.pomodoro = { focus: num(pm.focus, 5, 90, 25), short: num(pm.short, 1, 30, 5), long: num(pm.long, 5, 60, 15), rounds: num(pm.rounds, 2, 8, 4) };
+  }
+  const wr = s.wrap;
+  if (wr && typeof wr === 'object') {
+    if (typeof wr.on === 'boolean') d.wrap.on = wr.on;
+    if (hhmmToMinutes(wr.time) !== null) d.wrap.time = wr.time;
+  }
   return d;
 }
 let extras = (() => { try { return normaliseExtras(JSON.parse(localStorage.getItem(EXTRAS_KEY) || 'null')); } catch (e) { return defaultExtras(); } })();
@@ -319,6 +329,12 @@ let lastHydrationNudgeMs = 0;
 let hydrationNudgeVariant = 0;
 const hydrationPaceMarker = document.getElementById('hydrationPaceMarker');
 const hydrationPaceText = document.getElementById('hydrationPaceText');
+const POMO_KEY = 'plumb:pomodoro';
+let pomo = (() => {
+  try { return rolloverPomodoro(JSON.parse(localStorage.getItem(POMO_KEY) || 'null'), dateForTimestamp(Date.now())); }
+  catch (e) { return newPomodoroState(dateForTimestamp(Date.now())); }
+})();
+let latestWeeklyGoals = [];
 
 let eventBuffer = [];
 let audioCtx = null;
@@ -1146,8 +1162,8 @@ let inCallNow = false;
 const callBadge = document.getElementById('callBadge');
 const muteDuringCallsInput = document.getElementById('muteDuringCallsInput');
 
-const alertsSuppressed = () => inCallNow && muteDuringCalls;
-function renderCallBadge() { if (callBadge) callBadge.hidden = !(inCallNow && muteDuringCalls); }
+const alertsSuppressed = (kind = 'nudge') => (inCallNow && muteDuringCalls) || pomodoroBlocksAlert(pomo, kind);
+function renderCallBadge() { renderStatusPill(); }
 
 function setInCall(value) {
   if (value === inCallNow) return;
@@ -1200,13 +1216,13 @@ function renderPace() {
 }
 
 function maybeNudgeHydration() {
-  if (!extras.hydrationPace.on || !running || !isPersonPresent || alertsSuppressed()) return;
+  if (!extras.hydrationPace.on || !running || !isPersonPresent || alertsSuppressed('hydration')) return;
   const status = currentPace();
   if (!shouldNudgeHydration({ status, nowMs: Date.now(), lastNudgeMs: lastHydrationNudgeMs })) return;
   lastHydrationNudgeMs = Date.now();
   const text = hydrationNudgeText(status.behindMl, hydrationNudgeVariant++);
   addAlertToFeed('hydration', text);
-  speak(text);
+  speak(text, false, false, 'hydration');
 }
 
 // ---- Reminders --------------------------------------------------------------
@@ -1216,7 +1232,7 @@ function saveExtras() {
 }
 
 function checkReminders() {
-  if (alertsSuppressed()) return; // leave it unfired so a time reminder can still land just after the call (10 min grace)
+  if (alertsSuppressed('reminder')) return; // leave it unfired so a time reminder can still land just after the call (10 min grace)
   const now = new Date();
   const p = extras.hydrationPace;
   const startMin = hhmmToMinutes(p.start), endMin = hhmmToMinutes(p.end);
@@ -1229,11 +1245,12 @@ function checkReminders() {
       // rather than firing the moment the app is reopened.
       if (!last || now.getTime() - last > r.everyMin * 2 * 60000) { reminderFired[r.id] = now.getTime(); changed = true; return; }
     }
-    if (!reminderDue(r, now, last, startMin, endMin)) return;
+    // A reminder that fell inside a focus block may land up to 30 min late, once it ends.
+    if (!reminderDue(r, now, last, startMin, endMin, pomo.phase !== 'idle' ? 30 : undefined)) return;
     reminderFired[r.id] = now.getTime();
     changed = true;
     addAlertToFeed('reminder', `Reminder: ${r.text}`);
-    speak(`Reminder: ${r.text}`);
+    speak(`Reminder: ${r.text}`, false, false, 'reminder');
   });
   if (changed) localStorage.setItem(REMINDER_FIRED_KEY, JSON.stringify(reminderFired));
 }
@@ -1293,6 +1310,12 @@ function renderExtrasUI() {
   paceOnInput.checked = extras.hydrationPace.on;
   paceStartInput.value = extras.hydrationPace.start;
   paceEndInput.value = extras.hydrationPace.end;
+  document.getElementById('pomoFocusInput').value = extras.pomodoro.focus;
+  document.getElementById('pomoShortInput').value = extras.pomodoro.short;
+  document.getElementById('pomoLongInput').value = extras.pomodoro.long;
+  document.getElementById('pomoRoundsInput').value = extras.pomodoro.rounds;
+  document.getElementById('wrapOnInput').checked = extras.wrap.on;
+  document.getElementById('wrapTimeInput').value = extras.wrap.time;
   renderRemindersList();
   renderPace();
 }
@@ -1338,8 +1361,164 @@ function goalReminderText(goal) {
   return goal.replace(/^\s*(?:at|by|around|before)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*[,:-]?\s*/i, '').replace(/^./, (c) => c.toUpperCase()).slice(0, 80);
 }
 
-async function speak(text, force = false, userInitiated = false) {
-  if (inCallNow && muteDuringCalls && !force && !userInitiated) return;
+// ---- Focus timer (tomato) -----------------------------------------------------
+// Logic lives in companion.js. While a focus block runs every alert is frozen
+// (see pomodoroBlocksAlert); tracking and logging carry on untouched.
+const pomodoroBtn = document.getElementById('pomodoroBtn');
+const pomodoroBtnLabel = document.getElementById('pomodoroBtnLabel');
+const TOMATO_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><circle cx="12" cy="14" r="8" fill="#D2452F"/><path d="M12 6.6c-.4 1.5-1.8 2.5-3.8 2.7 1.3.4 2.6.2 3.8-.6 1.2.8 2.5 1 3.8.6-2-.2-3.4-1.2-3.8-2.7z" fill="#2E7D4F"/><path d="M12 6.6V3.8" stroke="#2E7D4F" stroke-width="1.6" stroke-linecap="round"/></svg>';
+const pomoCfg = () => extras.pomodoro;
+function savePomo() { localStorage.setItem(POMO_KEY, JSON.stringify(pomo)); }
+
+// One pill on the popup card for whatever is quieting Plumb: the focus timer
+// and/or a call.
+function renderStatusPill() {
+  if (!callBadge) return;
+  const parts = [];
+  const remaining = formatMmSs(pomodoroRemainingMs(pomo, Date.now()));
+  if (pomo.phase === 'focus') parts.push({ tomato: true, text: `focus ${remaining}` });
+  else if (pomo.phase === 'short' || pomo.phase === 'long') parts.push({ tomato: true, text: `break ${remaining}` });
+  const inCall = inCallNow && muteDuringCalls;
+  if (inCall) parts.push({ text: parts.length ? 'in a call' : 'in a call · alerts paused' });
+  callBadge.hidden = parts.length === 0;
+  callBadge.textContent = '';
+  parts.forEach((p, i) => {
+    if (i > 0) { const sep = document.createElement('span'); sep.textContent = '·'; callBadge.appendChild(sep); }
+    if (p.tomato) { const ic = document.createElement('span'); ic.style.display = 'inline-flex'; ic.innerHTML = TOMATO_SVG; callBadge.appendChild(ic); }
+    const t = document.createElement('span'); t.textContent = p.text; callBadge.appendChild(t);
+  });
+}
+
+function renderPomodoroUI() {
+  const active = pomo.phase !== 'idle';
+  const remaining = formatMmSs(pomodoroRemainingMs(pomo, Date.now()));
+  pomodoroBtn.classList.toggle('pomodoro-focus', pomo.phase === 'focus');
+  pomodoroBtn.classList.toggle('pomodoro-break', pomo.phase === 'short' || pomo.phase === 'long');
+  pomodoroBtnLabel.textContent = pomo.phase === 'focus' ? `focus ${remaining}` : active ? `break ${remaining}` : (pomo.completedToday > 0 ? `focus (${pomo.completedToday} done)` : 'focus');
+  pomodoroBtn.title = active ? 'click to stop the timer' : 'a distraction-free focus block: every alert pauses until it ends, then a short break';
+  renderStatusPill();
+}
+
+let lastPomoTickMs = 0;
+function pomodoroTick() {
+  lastPomoTickMs = Date.now();
+  const rolled = rolloverPomodoro(pomo, today());
+  if (rolled !== pomo) { pomo = rolled; savePomo(); renderPomodoroUI(); }
+  if (pomo.phase === 'idle') return;
+  const { state, event } = tickPomodoro(pomo, Date.now(), pomoCfg());
+  if (event) {
+    pomo = state;
+    savePomo();
+    const text = event.type === 'focus-done'
+      ? `Focus block done. Take ${event.breakMin} minutes${event.long ? ' — a long break' : ''}.`
+      : 'Break over. Start the next focus block when you are ready.';
+    addAlertToFeed('pomodoro', text);
+    speak(text, false, false, 'pomodoro');
+  }
+  renderPomodoroUI();
+}
+
+pomodoroBtn.addEventListener('click', () => {
+  if (pomo.phase === 'idle') {
+    pomo = startFocus(pomo, Date.now(), pomoCfg());
+    savePomo();
+    showToast(`Focus started. Alerts are paused for ${pomoCfg().focus} minutes.`);
+  } else {
+    const wasFocus = pomo.phase === 'focus';
+    pomo = stopPomodoro(pomo);
+    savePomo();
+    showToast(wasFocus ? 'Focus stopped. Alerts are back on.' : 'Timer stopped.');
+  }
+  renderPomodoroUI();
+});
+setInterval(pomodoroTick, 1000);
+renderPomodoroUI();
+
+// ---- End-of-day wrap ------------------------------------------------------------
+const wrapBtn = document.getElementById('wrapBtn');
+const dayWrapOverlay = document.getElementById('dayWrapOverlay');
+const dayWrapBody = document.getElementById('dayWrapBody');
+const alertsKey = () => `plumb:${currentUserId}:alertsToday:${today()}`;
+function countAlert() { localStorage.setItem(alertsKey(), String((Number(localStorage.getItem(alertsKey())) || 0) + 1)); }
+const alertsToday = () => Number(localStorage.getItem(alertsKey())) || 0;
+
+async function openDayWrap() {
+  wrapBtn.classList.remove('ready');
+  dayWrapBody.textContent = 'working it out…';
+  dayWrapOverlay.classList.add('open');
+  if (!SYNC_CONFIGURED) { dayWrapBody.textContent = 'The wrap needs cloud sync to be set up.'; return; }
+  const d = today();
+  const y = dateForTimestamp(Date.now() - 86400000);
+  const [events, prev] = await Promise.all([fetchEventsForRange(d, d), fetchEventsForRange(y, y)]);
+  if (presenceStartedAt) events.push({ type: 'presence', start_time: new Date(presenceStartedAt).toISOString(), duration_seconds: Math.round((Date.now() - presenceStartedAt) / 1000) });
+  const wrap = buildDayWrap({ events, hydrationMl: hydrationConsumedMl, targetMl: hydrationTargetMl, tomatoes: pomo.completedToday, alertsCount: alertsToday(), prevPctWell: sittingWellPct(prev), goal: latestWeeklyGoals[0] || null });
+  dayWrapBody.textContent = '';
+  if (!wrap.hasData) {
+    dayWrapBody.textContent = 'Not enough tracked yet today for a wrap. It needs at least 10 minutes.';
+    return;
+  }
+  const head = document.createElement('p');
+  head.className = 'wrap-headline';
+  head.textContent = wrap.headline;
+  dayWrapBody.appendChild(head);
+  wrap.rows.forEach((r) => {
+    const row = document.createElement('div');
+    row.className = 'wrap-row';
+    const k = document.createElement('span'); k.className = 'k'; k.textContent = r.label;
+    const v = document.createElement('span'); v.className = 'v'; v.textContent = r.value;
+    if (r.note) { const n = document.createElement('span'); n.className = 'n'; n.textContent = r.note; v.appendChild(n); }
+    row.append(k, v);
+    dayWrapBody.appendChild(row);
+  });
+  if (wrap.goal) {
+    const g = document.createElement('p');
+    g.className = 'wrap-goal';
+    g.textContent = `This week you're working on: ${wrap.goal}`;
+    dayWrapBody.appendChild(g);
+  }
+}
+
+// Once a day at the wrap time, while tracking runs, say it's ready. Never
+// interrupts a focus block or a call (retries once those end).
+function maybeAnnounceWrap() {
+  if (!extras.wrap.on || !running) return;
+  const flagKey = `plumb:${currentUserId}:wrapAnnounced`;
+  if (localStorage.getItem(flagKey) === today()) return;
+  if (minutesNow(new Date()) < hhmmToMinutes(extras.wrap.time)) return;
+  if (alertsSuppressed('wrap')) return;
+  localStorage.setItem(flagKey, today());
+  wrapBtn.classList.add('ready');
+  addAlertToFeed('wrap', "Today's wrap is ready");
+  speak("Your day's wrap is ready. Open it from the top of the page.", false, false, 'wrap');
+}
+
+wrapBtn.addEventListener('click', openDayWrap);
+document.getElementById('dayWrapClose').addEventListener('click', () => dayWrapOverlay.classList.remove('open'));
+
+// ---- Settings inputs for the two features above ----------------------------------------
+const POMO_LIMITS = { focus: [5, 90], short: [1, 30], long: [5, 60], rounds: [2, 8] };
+const POMO_INPUT_IDS = { focus: 'pomoFocusInput', short: 'pomoShortInput', long: 'pomoLongInput', rounds: 'pomoRoundsInput' };
+Object.entries(POMO_INPUT_IDS).forEach(([key, id]) => {
+  const el = document.getElementById(id);
+  el.addEventListener('change', () => {
+    const n = Math.round(Number(el.value));
+    const [lo, hi] = POMO_LIMITS[key];
+    if (!(n >= lo && n <= hi)) { el.value = extras.pomodoro[key]; return; }
+    extras.pomodoro[key] = n;
+    saveExtras();
+  });
+});
+document.getElementById('wrapOnInput').addEventListener('change', (e) => { extras.wrap.on = e.target.checked; saveExtras(); });
+document.getElementById('wrapTimeInput').addEventListener('change', (e) => {
+  if (hhmmToMinutes(e.target.value) === null) { e.target.value = extras.wrap.time; return; }
+  extras.wrap.time = e.target.value;
+  saveExtras();
+});
+renderExtrasUI();
+
+async function speak(text, force = false, userInitiated = false, kind = 'nudge') {
+  if (!force && !userInitiated && alertsSuppressed(kind)) return;
+  if (!force && !userInitiated && kind !== 'pomodoro' && kind !== 'wrap') countAlert();
   showToast(text);
   // force=true (the test-voice button) bypasses mute -- deliberately
   // testing the voice is exactly the case where muted shouldn't apply, and
@@ -3585,6 +3764,7 @@ function loop() {
   const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
   maybeSwitchDay();
+  if (Date.now() - lastPomoTickMs > 500) pomodoroTick(); // the popup's frame loop isn't throttled like a hidden tab's timers
 
   const result = landmarker.detectForVideo(video, now);
   ctx.clearRect(0, 0, overlay.width, overlay.height);
@@ -3754,7 +3934,7 @@ function loop() {
       if (stillMs / 60000 >= stillMin && Date.now() - lastStillnessNudgeAt > 60000) {
         const p = STILLNESS_PHRASES[stillIdx % STILLNESS_PHRASES.length];
         stillIdx++;
-        speak(p);
+        speak(p, false, false, 'stillness');
         addAlertToFeed('stillness_prompt', p);
         lastStillnessNudgeAt = Date.now();
         stillnessRef = { lateral, compression, lean, sink };
@@ -3803,7 +3983,7 @@ function loop() {
       if (presenceStartedAt && !breakActive && continuousMin >= breakIntervalMin && Date.now() - lastBreakNudgeAt > 60000) {
         const p = BREAK_PROMPT_PHRASES[breakIdx % BREAK_PROMPT_PHRASES.length];
         breakIdx++;
-        speak(p);
+        speak(p, false, false, 'break');
         addAlertToFeed('break_prompt', p);
         lastBreakNudgeAt = Date.now();
       }
@@ -3933,6 +4113,7 @@ async function loadWeeklyGoals() {
     if (!row) { weeklyGoalsPanel.hidden = true; return; }
 
     currentWeeklyGoalId = row.id;
+    latestWeeklyGoals = row.goals || [];
     const dailyText = await computeDailyCheckinText((row.goals || [])[0]);
     dailyCheckinEl.textContent = dailyText || '';
     dailyCheckinEl.hidden = !dailyText;
@@ -4041,6 +4222,7 @@ setInterval(() => {
   renderPace();
   maybeNudgeHydration();
   checkReminders();
+  maybeAnnounceWrap();
 }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');

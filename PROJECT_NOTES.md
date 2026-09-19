@@ -934,9 +934,8 @@ above before starting it.
   into `speak()` so every existing nudge gets it, muted or not. Decision:
   the popup is always visible when Plumb is running, so it's the one place
   for alerts -- no browser-notification fallback wanted.
-- **Approved, not built (hydration pacing and reminders since built, see
-  below):** end-of-day wrap-up; Pomodoro/focus timer layered on the
-  existing 25-min break gauge; coached 20-20-20 (user noted it's probably redundant with 25-min
+- **Approved, not built (hydration pacing, reminders, focus timer and wrap
+  since built, see below):** coached 20-20-20 (user noted it's probably redundant with 25-min
   breaks -- plan is to fold a 20s "look far away" step into the start of
   each break rather than a separate timer).
 - **Stretch routines on demand:** ~5 seated office stretches x ~5 slow reps
@@ -946,6 +945,44 @@ above before starting it.
   (balancer, the "l" as the plumb line, eyes on the dot); user decided
   against it -- the app's tone is serious/professional and a mascot would
   feel gimmicky, and voices are about to change. Don't revive it unprompted.
+- **Focus timer (tomato) + end-of-day wrap: built 2026-09-20.**
+  Timer logic in `src/companion.js` (100 checks pass in total incl. block
+  cycle, long break every N, day rollover, sleeping through a block, alert
+  blocking, grace window, wrap maths). **Focus freezes EVERY alert** (posture,
+  water, reminders, light, wrap; only the timer's own messages pass) via
+  `alertsSuppressed(kind)`; tracking/logging is untouched. During the
+  timer's own breaks only Plumb's "take a break"/"move" prompts are held
+  back (the timer is the break rhythm). Nothing auto-starts: focus -> break
+  -> idle, you start the next block. A reminder that fell inside a block may
+  land up to 30 min late once it ends. Button (tomato SVG) in the control row
+  shows the countdown; one status pill on the popup card shows the tomato
+  timer and/or "in a call". Timer state is per device (localStorage
+  `plumb:pomodoro`); durations (25/5/15, long break every 4) and wrap
+  settings sync in `app_settings.extras`. The main frame loop also ticks the
+  timer because a hidden tab's own timers get throttled. **Wrap**
+  ("today's wrap" header button + a once-a-day "wrap ready" notice at 17:30
+  while tracking runs, retried after a call/focus block): tracked time,
+  sitting-well % (vs yesterday), breaks, longest sit, most common slouch,
+  steadiest/roughest hour, water, focus blocks, and the count of alerts
+  Plumb sent you (per-device localStorage counter -- deliberate: measure the
+  interruption load before capping it), plus the week's first goal. Calls are
+  NOT in the wrap yet (the calendar table is server-only). **Verified live in
+  the desktop preview:** focus start/freeze/resume (a due reminder was held
+  for 32s then fired 5s after stopping), focus->break and break->idle
+  transitions with messages, wrap layout with fake events (numbers checked by
+  hand), settings validation + sync round trip. **Not verified:** the timer
+  inside the real PiP window, and the auto "wrap ready" notice (needs
+  tracking running).
+- **Design worry raised by the user (2026-09-20):** could someone spend all
+  day interacting with Plumb and get little done? Guardrails so far: focus
+  freezes everything, calls mute, the wrap reports interruption count.
+  Next: watch that count for a week, then consider an hourly alert budget.
+  Stretches must stay on-demand only and tied to breaks, never a new prompt.
+- **Stretch routines (decided, not built):** short links to demo videos, not
+  stick-figure animations; shown once as a demo, then just the cue text.
+  Plan: five seated moves, each with a YouTube *search* link by default (a
+  specific video URL can't be verified from here) and a field to paste your
+  own favourite video.
 - **Hydration pacing + reminders: built 2026-09-20.** Pure logic in
   `src/companion.js` (41 checks pass, incl. midday/midnight parsing,
   weekend/grace/double-fire cases). Pacing spreads the daily target evenly

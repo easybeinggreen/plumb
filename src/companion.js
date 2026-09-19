@@ -74,7 +74,7 @@ export function paceLabel(status) {
 // lastFiredMs: when this reminder last fired (epoch ms) or undefined.
 // windowStartMin/windowEndMin: active hours, used by 'every' reminders.
 
-export function reminderDue(r, now, lastFiredMs, windowStartMin, windowEndMin) {
+export function reminderDue(r, now, lastFiredMs, windowStartMin, windowEndMin, graceMin = REMINDER_GRACE_MIN) {
   if (!r || r.enabled === false || !r.text) return false;
   const day = now.getDay();
   if (r.weekdaysOnly && (day === 0 || day === 6)) return false;
@@ -90,7 +90,7 @@ export function reminderDue(r, now, lastFiredMs, windowStartMin, windowEndMin) {
 
   const at = hhmmToMinutes(r.time);
   if (at === null) return false;
-  if (nowMin < at || nowMin - at > REMINDER_GRACE_MIN) return false;
+  if (nowMin < at || nowMin - at > graceMin) return false;
   // Already fired today for this slot?
   if (lastFiredMs) {
     const last = new Date(lastFiredMs);
@@ -114,4 +114,140 @@ export function parseGoalTime(text) {
 export function describeReminder(r) {
   const days = r.weekdaysOnly ? 'weekdays' : 'every day';
   return r.kind === 'every' ? `every ${r.everyMin} min` : `${r.time} ${days}`;
+}
+
+// ---- Focus timer (Pomodoro) --------------------------------------------------
+export const POMODORO_DEFAULTS = { focus: 25, short: 5, long: 15, rounds: 4 };
+
+export function newPomodoroState(dateStr) {
+  return { date: dateStr, phase: 'idle', endsAt: null, round: 0, completedToday: 0 };
+}
+export function rolloverPomodoro(state, dateStr) {
+  return state && state.date === dateStr ? state : newPomodoroState(dateStr);
+}
+export function startFocus(state, nowMs, cfg) {
+  return { ...state, phase: 'focus', endsAt: nowMs + cfg.focus * 60000 };
+}
+export function stopPomodoro(state) {
+  return { ...state, phase: 'idle', endsAt: null };
+}
+// Advances the timer if the current phase has ended. Returns the new state and,
+// when something just finished, an event the caller can announce. Focus ends
+// straight into the break; a break ends into idle (waits for you to start the
+// next block -- nothing auto-starts).
+export function tickPomodoro(state, nowMs, cfg) {
+  if (state.phase === 'idle' || state.endsAt === null || nowMs < state.endsAt) return { state, event: null };
+  if (state.phase === 'focus') {
+    const round = state.round + 1;
+    const long = round % cfg.rounds === 0;
+    const breakMin = long ? cfg.long : cfg.short;
+    return {
+      state: { ...state, round, completedToday: state.completedToday + 1, phase: long ? 'long' : 'short', endsAt: nowMs + breakMin * 60000 },
+      event: { type: 'focus-done', breakMin, long, round }
+    };
+  }
+  return { state: { ...state, phase: 'idle', endsAt: null }, event: { type: 'break-done' } };
+}
+export function pomodoroRemainingMs(state, nowMs) {
+  return state.endsAt ? Math.max(0, state.endsAt - nowMs) : 0;
+}
+export function formatMmSs(ms) {
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+// kind: 'nudge' (posture/light), 'break', 'stillness', 'hydration', 'reminder',
+// 'wrap', 'pomodoro'. A focus block freezes everything except the timer's own
+// messages; during a timer break Plumb's own "take a break / move" prompts are
+// redundant (the timer IS the break rhythm) but everything else may speak.
+export function pomodoroBlocksAlert(state, kind) {
+  if (state.phase === 'focus') return kind !== 'pomodoro';
+  if (state.phase === 'short' || state.phase === 'long') return kind === 'break' || kind === 'stillness';
+  return false;
+}
+
+// ---- End-of-day wrap ---------------------------------------------------------
+const SLOUCH_LABELS = { lateral_left: 'leaning left', lateral_right: 'leaning right', compression: 'neck dropping', lean_in: 'leaning in', sitting_low: 'sitting low' };
+
+export function formatDuration(totalSec) {
+  const mins = Math.round(totalSec / 60);
+  return mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+}
+export function hourLabel(h) {
+  return `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+}
+
+// Spreads a block across the local hours it covers, in whole-minute chunks.
+function addByHour(bucket, startIso, durationSec) {
+  const start = new Date(startIso).getTime();
+  if (!Number.isFinite(start)) return;
+  for (let t = 0; t < durationSec; t += 60) {
+    const h = new Date(start + t * 1000).getHours();
+    bucket[h] = (bucket[h] || 0) + Math.min(60, durationSec - t);
+  }
+}
+
+export function buildDayWrap({ events, hydrationMl, targetMl, tomatoes = 0, alertsCount = null, prevPctWell = null, goal = null }) {
+  let tracked = 0, slouch = 0, breaks = 0, breakSec = 0, longestSit = 0;
+  const byType = {}, hourTracked = {}, hourSlouch = {};
+  events.forEach((e) => {
+    const dur = e.duration_seconds || 0;
+    if (e.type === 'presence') {
+      tracked += dur;
+      longestSit = Math.max(longestSit, dur);
+      if (e.start_time) addByHour(hourTracked, e.start_time, dur);
+    } else if (SLOUCH_LABELS[e.type]) {
+      slouch += dur;
+      byType[e.type] = (byType[e.type] || 0) + dur;
+      if (e.start_time) addByHour(hourSlouch, e.start_time, dur);
+    } else if (e.type === 'break') {
+      breaks++;
+      breakSec += dur;
+    }
+  });
+  if (tracked < 600) return { hasData: false };
+
+  const pctWell = Math.max(0, Math.min(100, Math.round((1 - Math.min(slouch, tracked) / tracked) * 100)));
+  const rows = [];
+  rows.push({ label: 'tracked', value: formatDuration(tracked) });
+  rows.push({ label: 'sitting well', value: `${pctWell}%`, note: prevPctWell != null ? `yesterday ${prevPctWell}%` : null });
+  rows.push({ label: 'breaks', value: breaks > 0 ? `${breaks} (${formatDuration(breakSec)} in total)` : 'none taken' });
+  rows.push({ label: 'longest sit', value: formatDuration(longestSit), note: longestSit >= 90 * 60 ? 'worth breaking up' : null });
+
+  const topType = Object.entries(byType).sort((a, b) => b[1] - a[1])[0];
+  if (topType && slouch >= 120) {
+    rows.push({ label: 'most common', value: SLOUCH_LABELS[topType[0]], note: `${Math.round((topType[1] / slouch) * 100)}% of slouch time` });
+  }
+
+  const hours = Object.keys(hourTracked).map(Number).filter((h) => hourTracked[h] >= 15 * 60)
+    .map((h) => ({ h, ratio: (hourSlouch[h] || 0) / hourTracked[h], slouchSec: hourSlouch[h] || 0 }));
+  if (hours.length >= 2) {
+    const steadiest = [...hours].sort((a, b) => a.ratio - b.ratio)[0];
+    const roughest = [...hours].sort((a, b) => b.ratio - a.ratio)[0];
+    if (roughest.h !== steadiest.h && roughest.slouchSec >= 180 && roughest.ratio >= 0.2) {
+      rows.push({ label: 'steadiest hour', value: `${hourLabel(steadiest.h)} (${Math.round((1 - steadiest.ratio) * 100)}%)` });
+      rows.push({ label: 'roughest hour', value: `${hourLabel(roughest.h)} (${Math.round((1 - roughest.ratio) * 100)}%)` });
+    }
+  }
+
+  if (targetMl > 0) rows.push({ label: 'water', value: `${hydrationMl}ml of ${targetMl}ml`, note: `${Math.round((hydrationMl / targetMl) * 100)}%` });
+  if (tomatoes > 0) rows.push({ label: 'focus blocks', value: String(tomatoes) });
+  if (alertsCount !== null) rows.push({ label: 'alerts from Plumb', value: String(alertsCount), note: alertsCount === 0 ? 'quiet day' : null });
+
+  let headline = `Sitting well ${pctWell}% of ${formatDuration(tracked)} tracked.`;
+  if (prevPctWell != null && Math.abs(pctWell - prevPctWell) >= 3) {
+    headline += ` ${Math.abs(pctWell - prevPctWell)} points ${pctWell > prevPctWell ? 'better' : 'lower'} than yesterday.`;
+  }
+  return { hasData: true, headline, rows, goal };
+}
+
+// Sitting-well % for a set of events, or null if too little was tracked.
+export function sittingWellPct(events) {
+  let tracked = 0, slouch = 0;
+  events.forEach((e) => {
+    const d = e.duration_seconds || 0;
+    if (e.type === 'presence') tracked += d;
+    else if (SLOUCH_LABELS[e.type]) slouch += d;
+  });
+  if (tracked < 600) return null;
+  return Math.max(0, Math.min(100, Math.round((1 - Math.min(slouch, tracked) / tracked) * 100)));
 }

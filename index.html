@@ -245,6 +245,21 @@
   .goal-remind { margin-left: 6px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink-soft); font-size: 10.5px; padding: 1px 8px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
   .goal-remind:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
 
+  #pomodoroBtn { display: inline-flex; align-items: center; gap: 7px; border-color: var(--ink-faint-2); font-size: 13px; font-weight: 500; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; font-variant-numeric: tabular-nums; }
+  #pomodoroBtn:hover:not(:disabled) { border-color: var(--ink); }
+  #pomodoroBtn.pomodoro-focus { background: var(--ink); border-color: var(--ink); color: #F0DAC7; }
+  #pomodoroBtn.pomodoro-break { border-color: var(--accent); color: var(--accent); }
+  #wrapBtn { position: relative; }
+  #wrapBtn.ready::after { content: ""; position: absolute; top: -3px; right: -8px; width: 9px; height: 9px; border-radius: 50%; background: var(--terracotta); }
+  .call-badge { display: flex; align-items: center; gap: 5px; }
+  .call-badge .tomato { width: 11px; height: 11px; flex: none; }
+  .wrap-headline { font-size: 15px; line-height: 1.5; margin: -6px 0 14px; color: var(--ink); }
+  .wrap-row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 7px 0; border-bottom: 1px solid var(--ink-faint); font-size: 13px; }
+  .wrap-row .k { color: var(--ink-soft); }
+  .wrap-row .v { font-weight: 600; color: var(--ink); text-align: right; }
+  .wrap-row .n { display: block; font-size: 11px; font-weight: 400; color: var(--ink-soft); }
+  .wrap-goal { margin-top: 14px; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); }
+
   /* compact layout used only when the card is popped into the PiP window */
  #statusCard.pip-mode {
   padding: 12px 10px 10px;
@@ -446,10 +461,16 @@
       </div>
       <div class="strap">aligned for life</div>
     </div>
+    <div style="display:flex;gap:18px;align-items:flex-end;">
+    <button class="btn-nav" id="wrapBtn">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M4 12h10M4 17h6"/><path d="M16 15l2.2 2.2L22 12.5"/></svg>
+      today's wrap
+    </button>
     <button class="btn-nav" id="reportBtn">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
       view report
     </button>
+    </div>
   </header>
 
   <main>
@@ -477,6 +498,7 @@
       <div class="control-row">
         <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
+        <button id="pomodoroBtn" title="a distraction-free focus block: every alert pauses until it ends, then a short break"><svg class="tomato" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="14" r="8" fill="#D2452F"/><path d="M12 6.6c-.4 1.5-1.8 2.5-3.8 2.7 1.3.4 2.6.2 3.8-.6 1.2.8 2.5 1 3.8.6-2-.2-3.4-1.2-3.8-2.7z" fill="#2E7D4F"/><path d="M12 6.6V3.8" stroke="#2E7D4F" stroke-width="1.6" stroke-linecap="round"/></svg><span id="pomodoroBtnLabel">focus</span></button>
         <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
         <button id="ergoWizardBtn" title="a one-off walkthrough of your desk: eye height against the screen, distance, lighting, desk basics -- then calibrate">workstation setup</button>
         <button id="closeupBtn" title="a live mirror and quick check of how you look and sound to others, before a video call">are you camera ready?</button>
@@ -518,7 +540,7 @@
           <div class="status-caption" id="statusCaption">press start camera to begin</div>
         </div>
         <div class="plumb-toast" id="plumbToast" role="status" aria-live="polite"></div>
-        <div class="call-badge" id="callBadge" hidden>in a call &middot; nudges paused</div>
+        <div class="call-badge" id="callBadge" hidden></div>
       </div>
 
       <div class="panel hydration-card">
@@ -672,6 +694,18 @@
     </div>
     <div id="reminderMsg" style="font-size:11.5px;color:var(--ink-soft);margin-top:6px;min-height:14px;">Reminders show in the popup and are spoken, while Plumb is open. "Every N minutes" only runs during your active hours.</div>
 
+    <h3 class="settings-section-title">focus timer</h3>
+    <div class="hydration-size-row"><label for="pomoFocusInput">focus (min)</label><input type="number" id="pomoFocusInput" min="5" max="90" step="5" value="25" /></div>
+    <div class="hydration-size-row"><label for="pomoShortInput">short break (min)</label><input type="number" id="pomoShortInput" min="1" max="30" step="1" value="5" /></div>
+    <div class="hydration-size-row"><label for="pomoLongInput">long break (min)</label><input type="number" id="pomoLongInput" min="5" max="60" step="5" value="15" /></div>
+    <div class="hydration-size-row"><label for="pomoRoundsInput">long break after</label><input type="number" id="pomoRoundsInput" min="2" max="8" step="1" value="4" /></div>
+    <div class="hydration-size-row"><span style="font-size:11.5px;color:var(--ink-soft);line-height:1.45;">While a focus block runs, every alert is paused: posture, water, reminders, light and the rest. Tracking carries on as normal. During the timer's breaks, Plumb's own "take a break" and "move" prompts stay quiet too.</span></div>
+
+    <h3 class="settings-section-title">end of day</h3>
+    <div class="hydration-size-row"><label for="wrapOnInput">daily wrap</label><input type="checkbox" id="wrapOnInput" checked style="width:auto;" /></div>
+    <div class="hydration-size-row"><label for="wrapTimeInput">ready at</label><input type="time" id="wrapTimeInput" value="17:30" /></div>
+    <div class="hydration-size-row"><span style="font-size:11.5px;color:var(--ink-soft);line-height:1.45;">Once a day at this time, while tracking is running, Plumb tells you your wrap is ready. You can open it any time from the top of the page.</span></div>
+
     <h3 class="settings-section-title">calls</h3>
     <div class="hydration-size-row"><label for="muteDuringCallsInput" title="uses your linked calendar">pause nudges during calls</label><input type="checkbox" id="muteDuringCallsInput" checked style="width:auto;" /></div>
     <div class="hydration-size-row"><span style="font-size:11.5px;color:var(--ink-soft);line-height:1.45;">Anything on your calendar with a Meet, Zoom or Teams link counts as a call. Tracking carries on as normal; only voice and on-screen alerts pause. Does nothing if no calendar is linked.</span></div>
@@ -796,6 +830,14 @@
       <button id="ergoBackBtn" class="btn-compact" type="button">back</button>
       <button id="ergoNextBtn" class="btn-compact" type="button">next</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="dayWrapOverlay">
+  <div class="modal" style="max-width: 460px;">
+    <button class="modal-close" id="dayWrapClose">&times;</button>
+    <h2 class="modal-title">today's wrap</h2>
+    <div id="dayWrapBody"></div>
   </div>
 </div>
 
