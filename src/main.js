@@ -1,6 +1,7 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
+import { hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder } from './companion.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -284,6 +285,40 @@ let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 20
 let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass: 300, mug: 250, can: 355, bottle: 500 };
 let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
 let hydrationLastClickMl = 0;
+
+// ---- Hydration pacing + reminders (state) ---------------------------------
+// Synced through app_settings.extras so they follow you across devices; the
+// logic itself lives in companion.js (pure + tested). Kept up here so it is
+// initialised before renderHydration() first runs.
+const EXTRAS_KEY = 'plumb:extras';
+const REMINDER_FIRED_KEY = 'plumb:reminderFired';
+const MAX_REMINDERS = 20;
+function defaultExtras() { return { hydrationPace: { on: true, start: '07:00', end: '19:00' }, reminders: [] }; }
+function normaliseExtras(s) {
+  const d = defaultExtras();
+  if (!s || typeof s !== 'object') return d;
+  const hp = s.hydrationPace;
+  if (hp && typeof hp === 'object') {
+    if (typeof hp.on === 'boolean') d.hydrationPace.on = hp.on;
+    if (hhmmToMinutes(hp.start) !== null) d.hydrationPace.start = hp.start;
+    if (hhmmToMinutes(hp.end) !== null) d.hydrationPace.end = hp.end;
+    if (hhmmToMinutes(d.hydrationPace.end) <= hhmmToMinutes(d.hydrationPace.start)) d.hydrationPace = defaultExtras().hydrationPace;
+  }
+  if (Array.isArray(s.reminders)) {
+    d.reminders = s.reminders
+      .filter((r) => r && typeof r.id === 'string' && typeof r.text === 'string' && r.text.trim()
+        && (r.kind === 'every' ? Number(r.everyMin) >= 5 : hhmmToMinutes(r.time) !== null))
+      .slice(0, MAX_REMINDERS)
+      .map((r) => ({ id: r.id, text: r.text.trim().slice(0, 80), kind: r.kind === 'every' ? 'every' : 'time', time: r.time, everyMin: Number(r.everyMin) || 45, weekdaysOnly: r.weekdaysOnly !== false, enabled: r.enabled !== false }));
+  }
+  return d;
+}
+let extras = (() => { try { return normaliseExtras(JSON.parse(localStorage.getItem(EXTRAS_KEY) || 'null')); } catch (e) { return defaultExtras(); } })();
+let reminderFired = (() => { try { return JSON.parse(localStorage.getItem(REMINDER_FIRED_KEY) || '{}') || {}; } catch (e) { return {}; } })();
+let lastHydrationNudgeMs = 0;
+let hydrationNudgeVariant = 0;
+const hydrationPaceMarker = document.getElementById('hydrationPaceMarker');
+const hydrationPaceText = document.getElementById('hydrationPaceText');
 
 let eventBuffer = [];
 let audioCtx = null;
@@ -760,6 +795,7 @@ function renderHydration() {
   hydrationConsumedEl.textContent = hydrationConsumedMl;
   hydrationTargetEl.textContent = hydrationTargetMl;
   hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
+  renderPace();
 }
 
 let lastHydrationEventId = null;
@@ -1110,6 +1146,7 @@ let inCallNow = false;
 const callBadge = document.getElementById('callBadge');
 const muteDuringCallsInput = document.getElementById('muteDuringCallsInput');
 
+const alertsSuppressed = () => inCallNow && muteDuringCalls;
 function renderCallBadge() { if (callBadge) callBadge.hidden = !(inCallNow && muteDuringCalls); }
 
 function setInCall(value) {
@@ -1144,6 +1181,161 @@ if (muteDuringCallsInput) {
     renderCallBadge();
     checkCallStatus();
   });
+}
+
+
+// ---- Hydration pacing -------------------------------------------------------
+function currentPace() {
+  const p = extras.hydrationPace;
+  return paceStatus({ consumedMl: hydrationConsumedMl, targetMl: hydrationTargetMl, startMin: hhmmToMinutes(p.start), endMin: hhmmToMinutes(p.end), nowMin: minutesNow(new Date()) });
+}
+
+function renderPace() {
+  if (!hydrationPaceMarker || !hydrationPaceText) return;
+  if (!extras.hydrationPace.on || !(hydrationTargetMl > 0)) { hydrationPaceMarker.hidden = true; hydrationPaceText.textContent = ''; return; }
+  const st = currentPace();
+  hydrationPaceMarker.hidden = st.state === 'before';
+  hydrationPaceMarker.style.bottom = Math.max(0, Math.min(100, (st.expectedMl / hydrationTargetMl) * 100)) + '%';
+  hydrationPaceText.textContent = paceLabel(st);
+}
+
+function maybeNudgeHydration() {
+  if (!extras.hydrationPace.on || !running || !isPersonPresent || alertsSuppressed()) return;
+  const status = currentPace();
+  if (!shouldNudgeHydration({ status, nowMs: Date.now(), lastNudgeMs: lastHydrationNudgeMs })) return;
+  lastHydrationNudgeMs = Date.now();
+  const text = hydrationNudgeText(status.behindMl, hydrationNudgeVariant++);
+  addAlertToFeed('hydration', text);
+  speak(text);
+}
+
+// ---- Reminders --------------------------------------------------------------
+function saveExtras() {
+  localStorage.setItem(EXTRAS_KEY, JSON.stringify(extras));
+  scheduleSettingsPush();
+}
+
+function checkReminders() {
+  if (alertsSuppressed()) return; // leave it unfired so a time reminder can still land just after the call (10 min grace)
+  const now = new Date();
+  const p = extras.hydrationPace;
+  const startMin = hhmmToMinutes(p.start), endMin = hhmmToMinutes(p.end);
+  let changed = false;
+  extras.reminders.forEach((r) => {
+    if (!r.enabled) return;
+    const last = reminderFired[r.id];
+    if (r.kind === 'every') {
+      // Start the clock on first sight, and restart it after a long absence
+      // rather than firing the moment the app is reopened.
+      if (!last || now.getTime() - last > r.everyMin * 2 * 60000) { reminderFired[r.id] = now.getTime(); changed = true; return; }
+    }
+    if (!reminderDue(r, now, last, startMin, endMin)) return;
+    reminderFired[r.id] = now.getTime();
+    changed = true;
+    addAlertToFeed('reminder', `Reminder: ${r.text}`);
+    speak(`Reminder: ${r.text}`);
+  });
+  if (changed) localStorage.setItem(REMINDER_FIRED_KEY, JSON.stringify(reminderFired));
+}
+
+const remindersList = document.getElementById('remindersList');
+const reminderText = document.getElementById('reminderText');
+const reminderKind = document.getElementById('reminderKind');
+const reminderTime = document.getElementById('reminderTime');
+const reminderEvery = document.getElementById('reminderEvery');
+const reminderWeekdays = document.getElementById('reminderWeekdays');
+const reminderAddBtn = document.getElementById('reminderAddBtn');
+const reminderMsg = document.getElementById('reminderMsg');
+const paceOnInput = document.getElementById('paceOnInput');
+const paceStartInput = document.getElementById('paceStartInput');
+const paceEndInput = document.getElementById('paceEndInput');
+
+function renderRemindersList() {
+  remindersList.innerHTML = '';
+  if (extras.reminders.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'font-size:12px;color:var(--ink-soft);margin-bottom:6px;';
+    empty.textContent = 'No reminders yet.';
+    remindersList.appendChild(empty);
+    return;
+  }
+  extras.reminders.forEach((r) => {
+    const row = document.createElement('div');
+    row.className = 'reminder-item';
+    const on = document.createElement('input');
+    on.type = 'checkbox';
+    on.checked = r.enabled;
+    on.title = 'on/off';
+    on.addEventListener('change', () => { r.enabled = on.checked; saveExtras(); });
+    const text = document.createElement('span');
+    text.className = 'r-text';
+    text.textContent = r.text;
+    const when = document.createElement('span');
+    when.className = 'r-when';
+    when.textContent = describeReminder(r);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.textContent = '×';
+    del.title = 'remove';
+    del.setAttribute('aria-label', 'remove reminder');
+    del.addEventListener('click', () => {
+      extras.reminders = extras.reminders.filter((x) => x.id !== r.id);
+      delete reminderFired[r.id];
+      saveExtras();
+      renderRemindersList();
+    });
+    row.append(on, text, when, del);
+    remindersList.appendChild(row);
+  });
+}
+
+function renderExtrasUI() {
+  paceOnInput.checked = extras.hydrationPace.on;
+  paceStartInput.value = extras.hydrationPace.start;
+  paceEndInput.value = extras.hydrationPace.end;
+  renderRemindersList();
+  renderPace();
+}
+
+function addReminder(fields) {
+  if (extras.reminders.length >= MAX_REMINDERS) return `That's the maximum of ${MAX_REMINDERS} reminders.`;
+  const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  extras.reminders.push({ id, text: fields.text.trim().slice(0, 80), kind: fields.kind, time: fields.time, everyMin: fields.everyMin, weekdaysOnly: fields.weekdaysOnly, enabled: true });
+  saveExtras();
+  renderRemindersList();
+  return null;
+}
+
+reminderKind.addEventListener('change', () => {
+  const every = reminderKind.value === 'every';
+  reminderEvery.hidden = !every;
+  reminderTime.hidden = every;
+});
+reminderAddBtn.addEventListener('click', () => {
+  const text = reminderText.value.trim();
+  const kind = reminderKind.value;
+  if (!text) { reminderMsg.textContent = 'Type what the reminder should say first.'; reminderText.focus(); return; }
+  if (kind === 'time' && hhmmToMinutes(reminderTime.value) === null) { reminderMsg.textContent = 'Pick a time.'; return; }
+  const every = Number(reminderEvery.value);
+  if (kind === 'every' && !(every >= 5 && every <= 240)) { reminderMsg.textContent = 'Choose between 5 and 240 minutes.'; return; }
+  const err = addReminder({ text, kind, time: reminderTime.value, everyMin: every, weekdaysOnly: reminderWeekdays.checked });
+  reminderMsg.textContent = err || `Added: "${text}"`;
+  if (!err) reminderText.value = '';
+});
+paceOnInput.addEventListener('change', () => { extras.hydrationPace.on = paceOnInput.checked; saveExtras(); renderPace(); });
+[paceStartInput, paceEndInput].forEach((el) => el.addEventListener('change', () => {
+  const s = hhmmToMinutes(paceStartInput.value), e = hhmmToMinutes(paceEndInput.value);
+  if (s === null || e === null || e <= s) { paceStartInput.value = extras.hydrationPace.start; paceEndInput.value = extras.hydrationPace.end; return; }
+  extras.hydrationPace.start = paceStartInput.value;
+  extras.hydrationPace.end = paceEndInput.value;
+  saveExtras();
+  renderPace();
+}));
+renderExtrasUI();
+
+// Turns a weekly goal like "At 1:30pm, take a two-minute walk..." into a reminder.
+function goalReminderText(goal) {
+  return goal.replace(/^\s*(?:at|by|around|before)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\s*[,:-]?\s*/i, '').replace(/^./, (c) => c.toUpperCase()).slice(0, 80);
 }
 
 async function speak(text, force = false, userInitiated = false) {
@@ -3770,6 +3962,22 @@ async function loadWeeklyGoals() {
       const label = document.createElement('b');
       label.textContent = (GOAL_LABELS[i] || 'goal') + ': ';
       li.append(label, document.createTextNode(g));
+      const goalTime = parseGoalTime(g);
+      if (goalTime) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'goal-remind';
+        const exists = () => extras.reminders.some((r) => r.kind === 'time' && r.time === goalTime && r.text === goalReminderText(g));
+        const paint = () => { btn.textContent = exists() ? `reminder set for ${goalTime}` : `remind me at ${goalTime}`; btn.disabled = exists(); };
+        btn.addEventListener('click', () => {
+          const err = addReminder({ text: goalReminderText(g), kind: 'time', time: goalTime, everyMin: 45, weekdaysOnly: true });
+          showToast(err || `Reminder set for ${goalTime} on weekdays`);
+          paint();
+        });
+        paint();
+        li.append(btn);
+      }
+
       weeklyGoalsList.appendChild(li);
     });
     weeklyQuestionEl.textContent = row.question || '';
@@ -3830,6 +4038,9 @@ setInterval(() => {
   reconcileTodayFromCloud();
   if (!trackingSummary.hidden) renderTrackingSummary();
   sampleLight();
+  renderPace();
+  maybeNudgeHydration();
+  checkReminders();
 }, 10000);
 window.addEventListener('beforeunload', () => {
   finalizePresenceBlock('page_unload');
@@ -3943,6 +4154,7 @@ async function pushAppSettings() {
         mug_ml: hydrationSizes.mug,
         can_ml: hydrationSizes.can,
         bottle_ml: hydrationSizes.bottle,
+        extras,
         updated_at: new Date().toISOString()
       }])
     });
@@ -3972,6 +4184,7 @@ async function fetchAndApplyAppSettings() {
     if (s.can_ml != null) hydrationSizes.can = s.can_ml;
     if (s.bottle_ml != null) hydrationSizes.bottle = s.bottle_ml;
     localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
+    if (s.extras) { extras = normaliseExtras(s.extras); localStorage.setItem(EXTRAS_KEY, JSON.stringify(extras)); renderExtrasUI(); }
     localStorage.setItem(TUNING_KEY, JSON.stringify({
       tolerance: toleranceSlider.value, compression: compressionToleranceSlider.value, lean: leanToleranceSlider.value,
       sink: sinkToleranceSlider.value, sustain: sustainSlider.value, breakInterval: breakSlider.value, stillness: stillnessSlider.value

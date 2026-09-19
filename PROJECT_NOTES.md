@@ -934,12 +934,9 @@ above before starting it.
   into `speak()` so every existing nudge gets it, muted or not. Decision:
   the popup is always visible when Plumb is running, so it's the one place
   for alerts -- no browser-notification fallback wanted.
-- **Approved, not built:** hydration *pacing* ("500ml behind pace for
-  2pm", not just a bare reminder); end-of-day wrap-up; Pomodoro/focus timer
-  layered on the existing 25-min break gauge; in-app reminders/alarms
-  (clock time or every N min, fire toast + voice while Plumb is open --
-  can't wake a closed laptop) with an "add as reminder" button on weekly
-  goals; coached 20-20-20 (user noted it's probably redundant with 25-min
+- **Approved, not built (hydration pacing and reminders since built, see
+  below):** end-of-day wrap-up; Pomodoro/focus timer layered on the
+  existing 25-min break gauge; coached 20-20-20 (user noted it's probably redundant with 25-min
   breaks -- plan is to fold a 20s "look far away" step into the start of
   each break rather than a separate timer).
 - **Stretch routines on demand:** ~5 seated office stretches x ~5 slow reps
@@ -949,6 +946,28 @@ above before starting it.
   (balancer, the "l" as the plumb line, eyes on the dot); user decided
   against it -- the app's tone is serious/professional and a mascot would
   feel gimmicky, and voices are about to change. Don't revive it unprompted.
+- **Hydration pacing + reminders: built 2026-09-20.** Pure logic in
+  `src/companion.js` (41 checks pass, incl. midday/midnight parsing,
+  weekend/grace/double-fire cases). Pacing spreads the daily target evenly
+  across "active hours" (default 07:00-19:00): a dashed line on the water
+  gauge shows where you'd be, a label reads "on pace" / "NNNml behind
+  pace"; a nudge fires only when tracking is running, you're present, no
+  call is on, you're >=300ml behind, at most once an hour, never in the last
+  hour of the window. Reminders (Settings -> reminders): at a clock time
+  (weekdays-only option, still fires up to 10 min late so it can land just
+  after a call) or every N minutes (5-240, only within active hours; the
+  clock starts on first sight and restarts after a long absence rather than
+  firing on reopen). Fire = on-screen toast + voice "Reminder: ...", logged
+  to the alert feed, suppressed during calls. Weekly goals containing a
+  time ("At 1:30pm...") get a "remind me at 13:30" button that creates a
+  weekdays-only reminder with the "At 1:30pm," prefix stripped. Both
+  settings sync via the new `app_settings.extras` jsonb column (migration
+  `app_settings_extras`; verified round-trip). Reminders fire per device --
+  two open devices would both fire. **Verified live in the desktop preview:**
+  a reminder fired on the exact minute, once only; pace marker + label;
+  goal buttons; sync round trip. **Not verified:** the hydration NUDGE
+  itself (needs a running camera + presence -- only its gating logic is
+  tested), and everything inside the real PiP popup.
 - **Popup glyph reworked 2026-09-19:** base dot 11 -> 13.2 (+20%); the dot
   rests near the TOP of the drawing (y=50 of 170) because neck-drop only
   moves it down, so a centred rest wasted the upper half; the loop is a
