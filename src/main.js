@@ -3359,11 +3359,32 @@ async function loadWeeklyGoals() {
     const dailyText = await computeDailyCheckinText((row.goals || [])[0]);
     dailyCheckinEl.textContent = dailyText || '';
     dailyCheckinEl.hidden = !dailyText;
-    weeklyPatternsEl.textContent = row.patterns || '';
+    weeklyPatternsEl.innerHTML = '';
+    const patternLines = String(row.patterns || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    patternLines.forEach((line) => {
+      const m = line.match(/^(posture|hydration|light):\s*(.*)$/i);
+      const block = document.createElement('div');
+      block.style.marginBottom = '8px';
+      if (m) {
+        const h = document.createElement('div');
+        h.textContent = m[1].toLowerCase();
+        h.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);';
+        const p = document.createElement('div');
+        p.textContent = m[2];
+        block.append(h, p);
+      } else {
+        block.textContent = line;
+      }
+      weeklyPatternsEl.appendChild(block);
+    });
     weeklyGoalsList.innerHTML = '';
-    (row.goals || []).forEach((g) => {
+    const GOAL_LABELS = ['posture', 'hydration', 'light'];
+    (row.goals || []).forEach((g, i) => {
       const li = document.createElement('li');
-      li.textContent = g;
+      li.style.marginBottom = '4px';
+      const label = document.createElement('b');
+      label.textContent = (GOAL_LABELS[i] || 'goal') + ': ';
+      li.append(label, document.createTextNode(g));
       weeklyGoalsList.appendChild(li);
     });
     weeklyQuestionEl.textContent = row.question || '';

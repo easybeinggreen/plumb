@@ -144,23 +144,23 @@ Critical: the posture data is summed across the whole week, which can make one u
 
 Critical: the ambient-light data includes "n", the number of readings that hour's average is built from. An hour with only 1-2 readings can average out to an extreme value purely by chance (one reading taken right as the camera started, or briefly covered) and look like a dramatic standout next to hours built from 15-25 readings -- that is noise, not a lighting pattern, no matter how extreme the number looks. Only treat an hour's brightness/skew as meaningful if it has a reasonable sample count roughly in line with neighboring hours (as a rule of thumb, treat anything under 5 readings as too sparse to draw a conclusion from) -- otherwise leave that hour out of the light pattern entirely rather than naming it as "the" bright or dark hour.
 
-Style for the "patterns" field: write it in plain, concrete, everyday language -- like explaining it to a friend over coffee, not a report and not a poem. State what happened and roughly when, directly. Do not invent casual-sounding metaphors, slang, or filler phrases to sound relatable (e.g. never write things like "stacks into a long hunchy block," "gets sticky," "rolls in," "a quiet pocket") -- if a sentence would only make sense as a vibe rather than a literal description, rewrite it as a literal description instead. Reference at most one specific number per sentence, and only when it actually strengthens the point -- do not recite the data back as a list of stats with times and figures in parentheses either.
+Style for the "patterns" field: it must be SHORT and scannable, not a paragraph. Exactly three labelled lines, in this order, each on its own line and each starting with its label: "posture: ", "hydration: ", "light: ". Each line is at most two short sentences (aim for under 30 words total per line). Lead with the single most useful finding for that domain; skip everything else. Plain, concrete, everyday language -- no report tone, no poetry. Do not invent casual-sounding metaphors, slang, or filler phrases to sound relatable (e.g. never write things like "stacks into a long hunchy block," "gets sticky," "rolls in," "a quiet pocket") -- if a sentence would only make sense as a vibe rather than a literal description, rewrite it as a literal description instead. Do not list every posture state -- only mention the one that matters most, plus at most one short clause on the rest. At most one specific number per line, only when it strengthens the point. Do not recite the data back.
 
 Respond with strict JSON only, matching the schema given, no markdown fencing, no other text.`;
 }
 
-function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, lastWeek }) {
-  const dataBlock = `Posture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are slouch/problem states -- none of them is good posture, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
+function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, coverage, lastWeek }) {
+  const dataBlock = `Data coverage this week: tracking was running on ${coverage.daysTracked} of 7 days, about ${coverage.hoursTracked} hours in total. Treat anything under roughly 25 tracked hours as a thin week and say so.\n\nPosture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are slouch/problem states -- none of them is good posture, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
 
   const continuity = lastWeek
     ? `\n\nLast week's goals were: ${JSON.stringify(lastWeek.goals)}. They were asked: "${lastWeek.question}" and replied: "${lastWeek.user_response || '(no reply logged)'}"​. Take that into account if it's relevant -- don't repeat a goal they already addressed or rejected without acknowledging it.`
     : '';
 
   const task = `Using only the data above, write:
-1. "patterns": 3-5 sentences, following the style instructions above -- plain and concrete, and honest about which patterns are consistent across days (per the daily-peaks list) versus which are dominated by one or two days.
-2. "goals": exactly 3 concrete, specific actions to try next week -- one about posture timing, one about hydration timing, one about the ambient light pattern. Each must be tied directly to a real, cross-day-consistent pattern in the data (not generic advice like "sit up straight," and not built on a single outlier day), and specific enough to act on (a time of day, a trigger, a concrete swap) -- if a domain's pattern is genuinely too weak, flat, or inconsistent to justify an action, say so in that slot instead of inventing one.
-3. "question": one specific question inviting the person to confirm, adjust, or reject one of the three goals above -- something they can answer in a sentence.
-4. "trackerReminder": one short, friendly sentence reminding them to keep Plumb running through the week so next week's check-in has real data to work from.
+1. "patterns": a single string of exactly three lines separated by newline characters, "posture: ...", "hydration: ...", "light: ..." -- following the strict brevity and style rules above.
+2. "goals": exactly 3 actions, in the order posture, hydration, light. Each is ONE sentence under 25 words: a specific action with a time or trigger. Each must be tied to a real, cross-day-consistent pattern (not generic advice, not built on a single outlier day or a low-n light hour). If a domain's pattern is too weak or sparse to justify an action, make that slot a short "keep tracking" style goal saying what data is missing, instead of inventing one. Do not include an alarm/reminder instruction unless it is a plain time of day the person can act on themselves.
+3. "question": one short question inviting the person to confirm, adjust, or reject one of the three goals -- answerable in a sentence.
+4. "trackerReminder": one short sentence. State the actual data coverage given above (days tracked out of 7, roughly how many hours) and say plainly that the app needs to be running most of the day for the analysis to be reliable.
 
 Respond as JSON: {"patterns": string, "goals": [string, string, string], "question": string, "trackerReminder": string}`;
 
@@ -219,6 +219,14 @@ async function analyzeUser(apiKey, userId, ctx) {
   const weekStart = addDays(weekEnd, -6);
   console.log(`Analyzing week ${weekStart} to ${weekEnd}`);
 
+  const presenceRows = await fetchAll(url, key, `posture_events?select=user_id,date,duration_seconds&date=gte.${weekStart}&date=lte.${weekEnd}&type=eq.presence`);
+  const coverageByUser = {};
+  presenceRows.forEach((r) => {
+    const c = coverageByUser[r.user_id] || (coverageByUser[r.user_id] = { days: new Set(), seconds: 0 });
+    c.days.add(r.date);
+    c.seconds += r.duration_seconds || 0;
+  });
+
   const [postureRows, hydrationRows, lightRows] = await Promise.all([
     fetchAll(url, key, `posture_events?select=user_id,type,date,start_time,duration_seconds&date=gte.${weekStart}&date=lte.${weekEnd}&type=in.(${POSTURE_TYPES.join(',')})`),
     fetchAll(url, key, `hydration_events?select=user_id,logged_at,volume_ml&date=gte.${weekStart}&date=lte.${weekEnd}`),
@@ -245,6 +253,9 @@ async function analyzeUser(apiKey, userId, ctx) {
         dailyPeaks: dailyPeaksByUser[userId] || {},
         hydrationByHour: hydrationByUserHour[userId] || {},
         lightByHour: lightByUserHour[userId] || {},
+        coverage: coverageByUser[userId]
+          ? { daysTracked: coverageByUser[userId].days.size, hoursTracked: Math.round(coverageByUser[userId].seconds / 360) / 10 }
+          : { daysTracked: 0, hoursTracked: 0 },
         lastWeek
       });
 
