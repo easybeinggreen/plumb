@@ -1,6 +1,6 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
-import { analyzeCloseup, analyzeMic } from './closeup.js';
+import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -2867,11 +2867,11 @@ let ergoStep = 0;
 let ergoLightInterval = null;
 let ergoWizardIsOpen = false;
 
-// First-guess range for the distance bar, not measured against real data --
-// worth retuning once there's a live sense of what interEyeDistanceRatio
-// actually reads as up close vs. 50-70cm away.
-const ERGO_DIST_NEAR = 0.15;
-const ERGO_DIST_FAR = 0.45;
+// Distance bar range and target zone in cm. The cm itself is an estimate
+// from eye spacing (see estimateDistanceCm) -- unvalidated against a tape
+// measure on a real camera.
+const ERGO_DIST_MIN_CM = 30, ERGO_DIST_MAX_CM = 100;
+const ERGO_DIST_GOOD_LOW_CM = 50, ERGO_DIST_GOOD_HIGH_CM = 70;
 // Eye line as a fraction down the picture. Top of screen at or just below eye
 // level (standard display-screen guidance) means eyes at or slightly above the
 // camera, which sits at the picture's vertical centre if it faces straight
@@ -2891,6 +2891,7 @@ const ergoStartCameraBtn = document.getElementById('ergoStartCameraBtn');
 const ergoEyeDots = document.getElementById('ergoEyeDots');
 const ergoEyeVerdict = document.getElementById('ergoEyeVerdict');
 const ergoDistFill = document.getElementById('ergoDistFill');
+const ergoDistZone = document.getElementById('ergoDistZone');
 const ergoCameraReadout = document.getElementById('ergoCameraReadout');
 const ergoLightPct = document.getElementById('ergoLightPct');
 const ergoLightReadout = document.getElementById('ergoLightReadout');
@@ -2925,9 +2926,21 @@ function updateErgoLiveReading(tilt, dist) {
       : eyeY > ERGO_EYE_LOW ? 'eyes below the camera -- screen looks too high; lower it (or sit higher)'
       : 'eyes about level with the top of the screen -- good';
   }
-  const pct = Math.max(0, Math.min(100, ((dist - ERGO_DIST_NEAR) / (ERGO_DIST_FAR - ERGO_DIST_NEAR)) * 100));
-  ergoDistFill.style.width = `${pct}%`;
-  ergoCameraReadout.textContent = `eye height ${lm ? (((lm[2].y + lm[5].y) / 2) * 100).toFixed(0) + '% down the picture' : '--'} · eye distance ${dist.toFixed(3)}`;
+  let distText = 'distance --';
+  if (lm) {
+    const eyePx = Math.hypot((lm[2].x - lm[5].x) * (video.videoWidth || 1), (lm[2].y - lm[5].y) * (video.videoHeight || 1));
+    const cm = estimateDistanceCm(eyePx / (video.videoWidth || 1));
+    if (cm) {
+      const span = ERGO_DIST_MAX_CM - ERGO_DIST_MIN_CM;
+      const at = (v) => Math.max(0, Math.min(100, ((v - ERGO_DIST_MIN_CM) / span) * 100));
+      ergoDistZone.style.left = `${at(ERGO_DIST_GOOD_LOW_CM)}%`;
+      ergoDistZone.style.width = `${at(ERGO_DIST_GOOD_HIGH_CM) - at(ERGO_DIST_GOOD_LOW_CM)}%`;
+      ergoDistFill.style.left = `calc(${at(cm)}% - 1px)`;
+      const rounded = Math.round(cm / 5) * 5;
+      distText = `about ${rounded}cm from the screen -- ` + (cm < ERGO_DIST_GOOD_LOW_CM ? 'a bit close, sit back' : cm > ERGO_DIST_GOOD_HIGH_CM ? 'a bit far, move closer' : 'in the sweet spot');
+    }
+  }
+  ergoCameraReadout.textContent = `eye height ${lm ? (((lm[2].y + lm[5].y) / 2) * 100).toFixed(0) + '% down the picture' : '--'} · ${distText}`;
 }
 
 function renderErgoStep() {
@@ -3105,13 +3118,19 @@ function drawCloseupGuides() {
   g.setLineDash([6, 5]);
   g.beginPath();
   g.moveTo(c.width / 2, 0); g.lineTo(c.width / 2, c.height);
-  g.moveTo(0, c.height / 3); g.lineTo(c.width, c.height / 3);
   g.stroke();
   g.setLineDash([]);
   const lm = currentCloseupPose();
   if (lm) {
+    const eyeY = (lm[2].y + lm[5].y) / 2;
+    const T = CLOSEUP_THRESHOLDS;
+    const eyesOk = eyeY >= T.eyeLineHigh && eyeY <= T.eyeLineLow;
+    const centreOk = Math.abs((1 - lm[0].x) - 0.5) <= T.centreOffset;
     g.fillStyle = 'rgba(193,98,46,0.95)';
-    [lm[0], lm[2], lm[5]].forEach((p) => { g.beginPath(); g.arc(p.x * c.width, p.y * c.height, 4, 0, Math.PI * 2); g.fill(); });
+    g.beginPath(); g.arc(lm[0].x * c.width, lm[0].y * c.height, 4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = eyesOk ? 'rgba(80,190,120,0.95)' : 'rgba(193,98,46,0.95)';
+    [lm[2], lm[5]].forEach((p) => { g.beginPath(); g.arc(p.x * c.width, p.y * c.height, 4, 0, Math.PI * 2); g.fill(); });
+    if (centreOk) { g.fillStyle = 'rgba(80,190,120,0.95)'; g.beginPath(); g.arc(lm[0].x * c.width, lm[0].y * c.height, 4, 0, Math.PI * 2); g.fill(); }
   }
 }
 
@@ -3135,6 +3154,9 @@ function closeupTick(ts) {
 }
 
 function openCloseup() {
+  const band = document.getElementById('closeupBand');
+  band.style.top = `${CLOSEUP_THRESHOLDS.eyeLineHigh * 100}%`;
+  band.style.height = `${(CLOSEUP_THRESHOLDS.eyeLineLow - CLOSEUP_THRESHOLDS.eyeLineHigh) * 100}%`;
   closeupSummary.hidden = true;
   closeupResults.innerHTML = '';
   closeupMicResults.innerHTML = '';
@@ -3156,7 +3178,8 @@ async function runMicTest() {
   micTestRunning = true;
   closeupMicBtn.disabled = true;
   closeupMicResults.innerHTML = '';
-  closeupMicStatus.textContent = 'asking for microphone access…';
+  closeupMicStatus.style.fontWeight = '';
+  closeupMicStatus.textContent = 'asking for microphone access -- click allow if your browser asks…';
   let stream = null, audioCtx = null;
   try {
     // Processing off so this reflects the raw device level (see MIC_THRESHOLDS).
@@ -3170,9 +3193,10 @@ async function runMicTest() {
     const rmsDb = [];
     let clippedFrames = 0;
     const start = performance.now();
-    closeupMicStatus.textContent = 'say a sentence out loud, as you would on a call…';
     await new Promise((resolve) => {
       const step = () => {
+        const left = Math.max(0, Math.ceil((MIC_TEST_MS - (performance.now() - start)) / 1000));
+        closeupMicStatus.textContent = `listening -- say a sentence out loud, as you would on a call (${left}s left)`;
         analyser.getFloatTimeDomainData(buf);
         let sum = 0, peak = 0;
         for (let i = 0; i < buf.length; i++) { sum += buf[i] * buf[i]; peak = Math.max(peak, Math.abs(buf[i])); }
@@ -3185,12 +3209,21 @@ async function runMicTest() {
       };
       step();
     });
-    closeupMicStatus.textContent = '';
-    renderResultRows(closeupMicResults, analyzeMic({ rmsDb, clippedFrames }));
+    const micResults = analyzeMic({ rmsDb, clippedFrames });
+    const micFixes = micResults.filter(r => r.status !== 'ok').length;
+    closeupMicStatus.textContent = micResults[0] && micResults[0].status === 'unknown'
+      ? 'Test finished, but not enough audio came through -- try again.'
+      : micFixes === 0 ? 'Test complete -- your microphone sounds fine.' : `Test complete -- ${micFixes} thing${micFixes > 1 ? 's' : ''} worth a look:`;
+    closeupMicStatus.style.fontWeight = '600';
+    renderResultRows(closeupMicResults, micResults);
   } catch (err) {
-    closeupMicStatus.textContent = err && err.name === 'NotAllowedError'
-      ? "Microphone access was blocked -- allow it in the browser's site settings and try again."
-      : "Couldn't open a microphone.";
+    const name = err && err.name;
+    const what = name === 'NotAllowedError' ? "Microphone access is blocked. Click the lock/camera icon next to the address bar, allow the microphone for this site, then try again."
+      : name === 'NotFoundError' ? "No microphone was found on this device. Plug one in or check it isn't disabled in your system sound settings."
+      : name === 'NotReadableError' ? "The microphone is in use by another app (a call, recorder or the OS). Close it and try again."
+      : "The microphone couldn't be opened.";
+    closeupMicStatus.style.fontWeight = '600';
+    closeupMicStatus.textContent = `Mic test couldn't run. ${what} You can skip this -- the camera checks above don't need it.` + (name ? ` (${name})` : '');
   } finally {
     if (stream) stream.getTracks().forEach(t => t.stop());
     if (audioCtx) audioCtx.close().catch(() => {});

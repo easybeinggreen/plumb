@@ -17,12 +17,25 @@
 // content (hair, outfit, what's in the background) -- that needs a vision
 // model, planned as a separate opt-in phase.
 
+// Rough distance from eye spacing: a pinhole-camera estimate assuming an
+// average adult inter-pupil distance (~63mm) and a typical laptop-webcam
+// horizontal field of view (~65deg; real ones range ~60-90deg, which is
+// where most of the error comes from). `eyeFrac` = eye-to-eye distance as a
+// fraction of frame WIDTH. Good for "roughly 50 or 90cm?", not for precision.
+export const WEBCAM_HFOV_DEG = 65;
+export const IPD_M = 0.063;
+export function estimateDistanceCm(eyeFrac) {
+  if (!(eyeFrac > 0)) return null;
+  const halfFov = (WEBCAM_HFOV_DEG * Math.PI) / 360;
+  return (100 * IPD_M) / (2 * Math.tan(halfFov) * eyeFrac);
+}
+
 export const CLOSEUP_THRESHOLDS = {
   centreOffset: 0.12,      // |screen x of nose - 0.5| before "off centre"
-  eyeLineHigh: 0.22,       // eye line above this fraction of frame height = head near top edge
-  eyeLineLow: 0.5,         // eye line below this = lots of empty space above the head
-  eyeDistFar: 0.08,        // inter-eye distance / frame width below this = too far away
-  eyeDistNear: 0.22,       // above this = too close
+  eyeLineHigh: 0.28,       // eye line above this fraction of frame height = head near top edge (also the top of the shaded guide band)
+  eyeLineLow: 0.5,         // eye line below this = lots of empty space above the head (bottom of the guide band)
+  eyeDistFar: 0.06,        // inter-eye distance / frame width below this (~80cm+) = too far away
+  eyeDistNear: 0.14,       // above this (~35cm or closer) = too close
   tiltDeg: 5,              // head roll before "tilted" -- how you look on a call, not a desk-setup issue
   faceDim: 0.25,           // mean face luminance (0-1)
   faceBright: 0.8,
@@ -111,10 +124,10 @@ export function analyzeCloseup({ lm, lum, w, h }) {
   } else add('centre', 'centred', 'ok', 'Nicely centred.');
 
   if (eyeMidY < T.eyeLineHigh) {
-    add('headroom', 'headroom', 'fix', 'Your head is close to the top edge -- lower the camera or sit a little lower.');
+    add('headroom', 'eye height', 'fix', 'Your eyes are too high in the picture (head near the top edge) -- lower the camera or sit a little lower.');
   } else if (eyeMidY > T.eyeLineLow) {
-    add('headroom', 'headroom', 'fix', 'Lots of empty space above your head -- raise the camera or sit up a little.');
-  } else add('headroom', 'headroom', 'ok', 'Eye line sits in a good spot.');
+    add('headroom', 'eye height', 'fix', 'Your eyes are too low in the picture (lots of empty space above your head) -- raise the camera or sit up a little.');
+  } else add('headroom', 'eye height', 'ok', 'Eyes are in the shaded band -- good.');
 
   const eyeFrac = eyeDistPx / w;
   const shouldersOk = [lSh, rSh].every(p => p && (typeof p.visibility !== 'number' || p.visibility >= T.shoulderVisibility) && p.y < 0.98);

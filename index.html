@@ -121,6 +121,9 @@
   #closeupBtn:hover:not(:disabled) { border-color: var(--ink); }
   .closeup-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; }
   .closeup-stage video, .closeup-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; transform: scaleX(-1); object-fit: cover; }
+  .closeup-band { position: absolute; left: 0; right: 0; background: rgba(255,255,255,0.14); border-top: 1px dashed rgba(255,255,255,0.6); border-bottom: 1px dashed rgba(255,255,255,0.6); pointer-events: none; }
+  .closeup-band span { position: absolute; right: 8px; top: 3px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: rgba(255,255,255,0.85); }
+  .closeup-hint { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
   .closeup-mic { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--ink-faint); }
   .closeup-meter { height: 10px; border-radius: 5px; background: var(--paper); border: 1.5px solid var(--ink-faint-2); overflow: hidden; margin: 10px 0 6px; }
   #closeupMeterFill { height: 100%; width: 0%; background: var(--accent); transition: width .08s linear; }
@@ -640,17 +643,21 @@
     <div class="ergo-step-indicator" id="ergoStepIndicator">step 1 of 5</div>
 
     <div class="ergo-step" data-ergo-step="0">
-      <p>A short walkthrough before calibrating: camera position and screen
-        distance, lighting, then a few desk basics a webcam can't measure
-        for you. Sit the way you'd normally work, then click next.</p>
+      <p>A one-off walkthrough for your desk: where your eyes sit against the
+        camera, how far you are from the screen, lighting, then a few desk
+        basics a webcam can't measure for you, ending with calibrating your
+        good-posture baseline. Sit the way you'd normally work, then click next.</p>
+      <p style="font-size:12px;">You don't need to start the camera first --
+        the next step turns it on for you. (For a quick look before a
+        video call, use <b>ready for my close-up</b> instead.)</p>
     </div>
 
     <div class="ergo-step" data-ergo-step="1" hidden>
-      <h3>camera &amp; screen distance</h3>
-      <p>Camera lens roughly level with your eyes, monitor's top edge at or
-        slightly below eye level, screen about 50&ndash;70cm away (roughly
-        20&ndash;28 inches -- a bit less than a full arm's reach). Sit
-        naturally and watch the diagram update as you move.</p>
+      <h3>camera height &amp; screen distance</h3>
+      <p>Monitor's top edge at or slightly below eye level, screen about
+        50&ndash;70cm away (roughly 20&ndash;28 inches -- a bit less than a
+        full arm's reach). Sit naturally and watch the readings update as
+        you move.</p>
 
       <div id="ergoCameraNeedsStart">
         <button id="ergoStartCameraBtn" class="btn" type="button">start camera</button>
@@ -682,8 +689,12 @@
         </div>
         <div class="ergo-live-row">
           <div style="flex:1;">
-            <div style="font-size:11px;color:var(--ink-soft);margin-bottom:4px;">distance from screen -- closer is further right, no fixed "correct" spot</div>
-            <div class="ergo-dist-bar"><div class="ergo-dist-fill" id="ergoDistFill"></div></div>
+            <div style="font-size:11px;color:var(--ink-soft);margin-bottom:4px;">distance from screen (rough estimate) -- shaded zone is the 50&ndash;70cm target</div>
+            <div class="ergo-dist-bar" style="position:relative;">
+              <div id="ergoDistZone" style="position:absolute;top:0;bottom:0;background:var(--accent);opacity:.18;"></div>
+              <div class="ergo-dist-fill" id="ergoDistFill" style="width:3px;position:absolute;top:0;bottom:0;left:0;"></div>
+            </div>
+            <div style="font-size:10.5px;color:var(--ink-soft);margin-top:4px;">Assumes a typical webcam field of view and average eye spacing, so treat &plusmn;10cm as normal. If it reads consistently off compared with a tape measure, say so and I'll adjust it.</div>
           </div>
         </div>
         <div class="ergo-live-row">
@@ -744,8 +755,10 @@
     <div id="closeupLive" hidden>
       <div class="closeup-stage">
         <video id="closeupPreview" autoplay muted playsinline></video>
+        <div id="closeupBand" class="closeup-band"><span>eyes here</span></div>
         <canvas id="closeupGuides" width="320" height="240"></canvas>
       </div>
+      <div class="closeup-hint">Line up: your eyes inside the shaded band, your nose on the vertical centre line. The dots turn green when you're there.</div>
       <div id="closeupSummary" class="closeup-summary" hidden></div>
       <ul id="closeupResults" class="closeup-results"></ul>
       <div class="closeup-mic">
