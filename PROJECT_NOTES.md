@@ -869,6 +869,29 @@ Listed in the order the user raised them, not priority.
    "framing") so the two don't read as duplicates. Older entries below still
    use the old names.
 
+   **Phase 2 built 2026-09-19 (AI review, free tier):** camera-ready has an
+   opt-in "get a fuller AI review" button that sends ONE 640px JPEG to the
+   Supabase edge function `camera-review` (source in
+   `supabase/functions/camera-review/`, shared prompt in `prompt.js`), which
+   calls OpenRouter with the key held as a **Supabase function secret**
+   (`OPENROUTER_API_KEY`; GitHub secrets are write-only so it had to be
+   re-entered). Checks hair / clothing / background / things behind the head;
+   prompt forbids commenting on face/body. `verify_jwt` is OFF (no user auth,
+   publishable key isn't a JWT) so protection is: size cap, per-user (10/day)
+   and global (150/day) caps via `camera_review_take`/`camera_review_refund`
+   (a failed review is refunded), CORS limited to the Pages origin. **Free
+   models are unreliable:** each named free vision model failed almost every
+   call (504s, empty replies, 403/404, rate limits); the `openrouter/free`
+   router succeeded ~2 in 7. So the function retries inside a 115s budget
+   (typically 15-60s, succeeded on attempt 4 / 52s in a real test, served by
+   `nex-agi/nex-n2.5-pro:free`, review was accurate: caught the flyaway hair).
+   Free OpenRouter accounts are limited to ~50 requests/day and each retry
+   counts, so ~10 reviews/day at worst. A cheap paid model
+   (e.g. google/gemini-2.5-flash-lite, ~$0.0003/check) would be fast and
+   reliable if this proves too slow. The temporary `TEST_MODELS` allow-list
+   in the function is still there -- remove once settled. Verified with the
+   user's real photos: all 8 local checks pass on both.
+
    **Phase 1 built 2026-09-19 ("ready for my close-up" button, local
    checks only, no LLM, nothing saved or sent):** `src/closeup.js` is a pure
    `analyzeCloseup({lm, lum, w, h})` -- framing (centred, headroom,

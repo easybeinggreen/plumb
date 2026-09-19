@@ -9,7 +9,10 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { SYSTEM_PROMPT, USER_PROMPT, CHECK_IDS } from './prompt.js';
 
-const MODEL = Deno.env.get('CAMERA_REVIEW_MODEL') || 'google/gemma-4-31b-it:free';
+// The free router picks whichever free model is available. Named free models were tried
+// individually (2026-09-19) and failed almost every time (timeouts, empty replies, 403/404);
+// the router succeeded roughly 2 in 7 attempts, so askWithRetries keeps trying within a time budget.
+const MODEL = Deno.env.get('CAMERA_REVIEW_MODEL') || 'openrouter/free';
 // TEMPORARY: lets a model comparison run through the deployed function with
 // only the one Supabase secret. Only these named models are accepted; remove
 // once a model is chosen.
@@ -22,7 +25,8 @@ const TEST_MODELS = new Set([
 const USER_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_USER_CAP') || 10);
 const GLOBAL_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_GLOBAL_CAP') || 150);
 const MAX_BODY_BYTES = 1_500_000;
-const MODEL_TIMEOUT_MS = 100_000; // platform wall-clock limit is 150s on the free plan
+const BUDGET_MS = 115_000;   // total retry budget; the platform wall-clock limit is 150s on the free plan
+const ATTEMPT_MS = 40_000;   // per-attempt cap so one hung free model can't eat the whole budget
 
 const ALLOWED_ORIGINS = ['https://easybeinggreen.github.io'];
 function corsHeaders(origin: string | null) {
@@ -39,9 +43,9 @@ function json(body: unknown, status: number, origin: string | null) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...corsHeaders(origin) } });
 }
 
-async function askModel(apiKey: string, imageB64: string, model: string, jsonMode: boolean) {
+async function askModel(apiKey: string, imageB64: string, model: string, jsonMode: boolean, timeoutMs: number) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), MODEL_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -69,6 +73,28 @@ async function askModel(apiKey: string, imageB64: string, model: string, jsonMod
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function askWithRetries(apiKey: string, image: string, model: string) {
+  const start = Date.now();
+  let jsonMode = true;
+  let attempt = 0;
+  while (Date.now() - start < BUDGET_MS - 6_000) {
+    attempt++;
+    const timeoutMs = Math.min(ATTEMPT_MS, BUDGET_MS - (Date.now() - start));
+    try {
+      const r = await askModel(apiKey, image, model, jsonMode, timeoutMs);
+      const { items, summary } = normalise(r.parsed);
+      return { items, summary, model: r.model, attempts: attempt };
+    } catch (e) {
+      const msg = String((e as Error).message);
+      console.error(`camera-review attempt ${attempt} failed: ${msg}`);
+      if (msg === 'model_http_401') return null; // bad key -- retrying won't help
+      if (msg === 'model_http_400') jsonMode = false; // some free models reject JSON mode
+      await new Promise((r) => setTimeout(r, msg === 'model_http_429' ? 3000 : 500));
+    }
+  }
+  return null;
 }
 
 function normalise(parsed: any) {
@@ -108,19 +134,10 @@ Deno.serve(async (req: Request) => {
   if (capErr) return json({ error: 'server_error', message: 'Could not check today\'s usage.' }, 500, origin);
   if (!allowed) return json({ error: 'daily_limit', message: `You've used today's ${USER_DAILY_CAP} AI reviews (or the shared daily limit was reached). Try again tomorrow.` }, 429, origin);
 
-  try {
-    let result;
-    try { result = await askModel(apiKey, image, model, true); } catch (e) {
-      const msg = String((e as Error).message);
-      // A timeout would just time out again (and blow the 150s platform limit); other 4xx errors won't fix
-      // themselves -- except 400, which some free models return when they don't support JSON mode.
-      if ((e as Error).name === 'AbortError' || (msg.startsWith('model_http_4') && msg !== 'model_http_400')) throw e;
-      result = await askModel(apiKey, image, model, false);
-    }
-    const { items, summary } = normalise(result.parsed);
-    return json({ items, summary, model: result.model }, 200, origin);
-  } catch (e) {
-    console.error('camera-review failed:', (e as Error).message);
-    return json({ error: 'model_failed', message: 'The AI review could not be completed. Try again in a moment.' }, 502, origin);
+  const result = await askWithRetries(apiKey, image, model);
+  if (!result) {
+    await supabase.rpc('camera_review_refund', { p_user: userId }); // a failed review shouldn't use up the daily allowance
+    return json({ error: 'model_failed', message: 'The free AI service is busy right now and could not finish the review. Please try again in a minute.' }, 502, origin);
   }
+  return json(result, 200, origin);
 });

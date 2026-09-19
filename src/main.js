@@ -3253,9 +3253,9 @@ async function runAiReview() {
   if (!closeupCameraReady() || !video.videoWidth) { closeupAiStatus.textContent = 'Start the camera first.'; return; }
   aiReviewRunning = true;
   closeupAiBtn.disabled = true;
-  closeupAiStatus.textContent = 'sending one picture for review -- this can take up to 20 seconds…';
+  closeupAiStatus.textContent = 'sending one picture for review -- the free AI service is often slow, so this can take up to two minutes…';
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
+  const timer = setTimeout(() => ctrl.abort(), 140000);
   try {
     const w = 640, h = Math.round(640 * video.videoHeight / video.videoWidth);
     const c = document.createElement('canvas');
