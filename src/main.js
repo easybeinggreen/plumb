@@ -1,6 +1,7 @@
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
+import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
 import { hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
@@ -1433,6 +1434,32 @@ pomodoroBtn.addEventListener('click', () => {
 });
 setInterval(pomodoroTick, 1000);
 renderPomodoroUI();
+
+// ---- Desk gym (on demand only -- nothing ever prompts you to open it) -------------------
+const deskGymOverlay = document.getElementById('deskGymOverlay');
+function openDeskGym() {
+  const list = document.getElementById('deskGymList');
+  if (!list.childElementCount) {
+    DESK_GYM.forEach((s) => {
+      const item = document.createElement('div');
+      item.className = 'gym-item';
+      const name = document.createElement('h3'); name.className = 'gym-name'; name.textContent = s.name;
+      const what = document.createElement('p'); what.className = 'gym-what'; what.textContent = s.what;
+      const link = document.createElement('a');
+      link.className = 'gym-link';
+      link.href = youtubeSearchUrl(s.query);
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'find a demo on YouTube \u2192';
+      item.append(name, what, link);
+      list.appendChild(item);
+    });
+    document.getElementById('deskGymNote').textContent = DESK_GYM_NOTE;
+  }
+  deskGymOverlay.classList.add('open');
+}
+document.getElementById('deskGymBtn').addEventListener('click', openDeskGym);
+document.getElementById('deskGymClose').addEventListener('click', () => deskGymOverlay.classList.remove('open'));
 
 // ---- End-of-day wrap ------------------------------------------------------------
 const wrapBtn = document.getElementById('wrapBtn');

@@ -260,6 +260,17 @@
   .wrap-row .n { display: block; font-size: 11px; font-weight: 400; color: var(--ink-soft); }
   .wrap-goal { margin-top: 14px; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); }
 
+  #deskGymBtn { border-color: var(--ink-faint-2); font-size: 13px; font-weight: 500; padding: 9px 16px; border-radius: 999px; background: transparent; color: var(--ink); border-width: 1.5px; border-style: solid; }
+  #deskGymBtn:hover:not(:disabled) { border-color: var(--ink); }
+  .gym-intro { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: -6px 0 14px; }
+  .gym-item { padding: 12px 0; border-bottom: 1px solid var(--ink-faint); }
+  .gym-item:first-child { padding-top: 4px; }
+  .gym-name { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+  .gym-what { font-size: 13px; line-height: 1.55; color: var(--ink-soft); margin: 0 0 6px; }
+  .gym-link { font-size: 12.5px; font-weight: 500; color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  .gym-link:hover { border-bottom-color: var(--accent); }
+  .gym-note { font-size: 11.5px; color: var(--ink-soft); line-height: 1.45; margin: 14px 0 0; }
+
   /* compact layout used only when the card is popped into the PiP window */
  #statusCard.pip-mode {
   padding: 12px 10px 10px;
@@ -499,6 +510,7 @@
         <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
         <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
         <button id="pomodoroBtn" title="a distraction-free focus block: every alert pauses until it ends, then a short break"><svg class="tomato" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="14" r="8" fill="#D2452F"/><path d="M12 6.6c-.4 1.5-1.8 2.5-3.8 2.7 1.3.4 2.6.2 3.8-.6 1.2.8 2.5 1 3.8.6-2-.2-3.4-1.2-3.8-2.7z" fill="#2E7D4F"/><path d="M12 6.6V3.8" stroke="#2E7D4F" stroke-width="1.6" stroke-linecap="round"/></svg><span id="pomodoroBtnLabel">focus</span></button>
+        <button id="deskGymBtn" title="five quick seated stretches, each with a short note and a demo video search">desk gym</button>
         <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
         <button id="ergoWizardBtn" title="a one-off walkthrough of your desk: eye height against the screen, distance, lighting, desk basics -- then calibrate">workstation setup</button>
         <button id="closeupBtn" title="a live mirror and quick check of how you look and sound to others, before a video call">are you camera ready?</button>
@@ -830,6 +842,16 @@
       <button id="ergoBackBtn" class="btn-compact" type="button">back</button>
       <button id="ergoNextBtn" class="btn-compact" type="button">next</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="deskGymOverlay">
+  <div class="modal" style="max-width: 480px;">
+    <button class="modal-close" id="deskGymClose">&times;</button>
+    <h2 class="modal-title">desk gym</h2>
+    <p class="gym-intro">Five quick stretches you can do in your chair. Open it whenever you like; Plumb never prompts you to.</p>
+    <div id="deskGymList"></div>
+    <p class="gym-note" id="deskGymNote"></p>
   </div>
 </div>
 

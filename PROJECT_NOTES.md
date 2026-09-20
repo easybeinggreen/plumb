@@ -978,11 +978,18 @@ above before starting it.
   freezes everything, calls mute, the wrap reports interruption count.
   Next: watch that count for a week, then consider an hourly alert budget.
   Stretches must stay on-demand only and tied to breaks, never a new prompt.
-- **Stretch routines (decided, not built):** short links to demo videos, not
-  stick-figure animations; shown once as a demo, then just the cue text.
-  Plan: five seated moves, each with a YouTube *search* link by default (a
-  specific video URL can't be verified from here) and a field to paste your
-  own favourite video.
+- **Desk gym: built 2026-09-20** (user's name for it; headings to be
+  reviewed by the user). A "desk gym" button opens a window with five seated
+  stretches (chin tucks, ear-to-shoulder neck stretch, shoulder rolls and
+  blade squeeze, chest opener, seated twist), each with a two-sentence
+  what-and-why and a "find a demo on YouTube" link. Links are YouTube
+  *searches* (always valid; a specific video ID can't be verified from
+  here). **On demand only -- nothing ever prompts you to open it**, by design
+  (see the design worry above). Data in `src/deskgym.js`. Footer says it is
+  general ergonomics guidance, not medical advice. Verified in the desktop
+  preview (five entries, two sentences each, encoded search URLs, opens in a
+  new tab). Not built: the "paste your own favourite video" field, or a
+  "watched it once" tick.
 - **Hydration pacing + reminders: built 2026-09-20.** Pure logic in
   `src/companion.js` (41 checks pass, incl. midday/midnight parsing,
   weekend/grace/double-fire cases). Pacing spreads the daily target evenly
