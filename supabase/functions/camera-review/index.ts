@@ -13,15 +13,6 @@ import { SYSTEM_PROMPT, USER_PROMPT, CHECK_IDS } from './prompt.js';
 // individually (2026-09-19) and failed almost every time (timeouts, empty replies, 403/404);
 // the router succeeded roughly 2 in 7 attempts, so askWithRetries keeps trying within a time budget.
 const MODEL = Deno.env.get('CAMERA_REVIEW_MODEL') || 'openrouter/free';
-// TEMPORARY: lets a model comparison run through the deployed function with
-// only the one Supabase secret. Only these named models are accepted; remove
-// once a model is chosen.
-const TEST_MODELS = new Set([
-  'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free', 'qwen/qwen3.8-27b:free',
-  'inclusionai/ling-3.0-flash-vl:free', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
-  'thinkingmachines/inkling-small:free', 'openrouter/free',
-  'google/gemini-2.5-flash-lite', 'qwen/qwen3-vl-32b-instruct'
-]);
 const USER_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_USER_CAP') || 10);
 const GLOBAL_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_GLOBAL_CAP') || 150);
 const MAX_BODY_BYTES = 1_500_000;
@@ -127,14 +118,12 @@ Deno.serve(async (req: Request) => {
   image = image.replace(/^data:image\/jpeg;base64,/, '');
   if (!userId || !image || image.length > MAX_BODY_BYTES || !image.startsWith('/9j/')) return json({ error: 'bad_request', message: 'Expected a JPEG picture and a user name.' }, 400, origin);
 
-  const model = typeof body?.model === 'string' && TEST_MODELS.has(body.model) ? body.model : MODEL;
-
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const { data: allowed, error: capErr } = await supabase.rpc('camera_review_take', { p_user: userId, p_user_cap: USER_DAILY_CAP, p_global_cap: GLOBAL_DAILY_CAP });
   if (capErr) return json({ error: 'server_error', message: 'Could not check today\'s usage.' }, 500, origin);
   if (!allowed) return json({ error: 'daily_limit', message: `You've used today's ${USER_DAILY_CAP} AI reviews (or the shared daily limit was reached). Try again tomorrow.` }, 429, origin);
 
-  const result = await askWithRetries(apiKey, image, model);
+  const result = await askWithRetries(apiKey, image, MODEL);
   if (!result) {
     await supabase.rpc('camera_review_refund', { p_user: userId }); // a failed review shouldn't use up the daily allowance
     return json({ error: 'model_failed', message: 'The free AI service is busy right now and could not finish the review. Please try again in a minute.' }, 502, origin);

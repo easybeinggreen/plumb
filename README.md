@@ -39,111 +39,14 @@ You already pushed the v1 files. For this version:
 ### 1. Supabase (the "no manual sync" database)
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the SQL editor, run:
-
-    ```sql
-    create table if not exists posture_logs (
-      date text primary key,
-      session_seconds integer not null default 0,
-      slouch_seconds integer not null default 0,
-      posture_nudges integer not null default 0,
-      move_nudges integer not null default 0,
-      updated_at timestamptz not null default now()
-    );
-
-    alter table posture_logs enable row level security;
-
-    -- Supabase now requires explicit grants in addition to RLS policies
-    -- for tables created after May 2026 — this line covers that.
-    grant select, insert, update on posture_logs to anon, authenticated;
-
-    create policy "anon can insert rows"
-      on posture_logs for insert
-      to anon
-      with check (true);
-
-    create policy "anon can update rows"
-      on posture_logs for update
-      to anon
-      using (true)
-      with check (true);
-    ```
-
-    Note there's deliberately no `select` policy for `anon` — the browser can
-    write but not read back, and the GitHub Action reads using a separate,
-    non-public key. This means the public key sitting in your site's source
-    can be used to write junk rows, but not to read your data. Low stakes for
-    a personal tracker, but worth knowing.
-
-    **Also run this** for `posture_events` (the granular event log behind the
-    report's today-timeline and week/month charts — the app already depends
-    on this table, this was previously missing from setup instructions):
-
-    ```sql
-    create table if not exists posture_events (
-      id bigserial primary key,
-      date text not null,
-      start_time timestamptz,
-      end_time timestamptz,
-      type text,
-      duration_seconds integer default 0,
-      ended_by text,
-      kind text,
-      pre_break_sitting_seconds integer default 0,
-      lateness_seconds integer default 0,
-      created_at timestamptz not null default now()
-    );
-
-    alter table posture_events enable row level security;
-    grant select, insert, update on posture_events to anon, authenticated;
-
-    create policy "anon can read and write events"
-      on posture_events for all
-      to anon
-      using (true)
-      with check (true);
-    ```
-
-    Unlike `posture_logs` above, this one *does* allow `anon` to read —
-    the report modal fetches directly from the browser, so it has to. In
-    practice this means RLS on this whole setup is more "keeps out casual
-    tampering" than "actually private," same honest caveat as below —
-    worth revisiting properly (see Notes).
-
-    **And these two**, added for settings/hydration cross-device sync:
-
-    ```sql
-    create table if not exists app_settings (
-      id integer primary key default 1,
-      tolerance numeric, compression numeric, lean numeric,
-      sustain integer, break_interval integer, stillness integer,
-      hydration_target_ml integer, glass_ml integer, mug_ml integer,
-      can_ml integer, bottle_ml integer,
-      updated_at timestamptz not null default now()
-    );
-    alter table app_settings enable row level security;
-    grant select, insert, update on app_settings to anon, authenticated;
-    create policy "anon can read and write settings"
-      on app_settings for all to anon using (true) with check (true);
-
-    create table if not exists hydration_events (
-      id bigserial primary key,
-      date text not null,
-      logged_at timestamptz not null default now(),
-      volume_ml integer not null,
-      drink_type text
-    );
-    alter table hydration_events enable row level security;
-    grant select, insert, update, delete on hydration_events to anon, authenticated;
-    create policy "anon can read, write, and undo hydration logs"
-      on hydration_events for all to anon using (true) with check (true);
-    ```
-
-    `app_settings` is a single shared row (`id = 1`) — there's no per-user
-    concept yet, so whichever device changes a setting last wins everywhere,
-    which is the correct behavior for a single-person, multi-device setup.
-    `hydration_events` needs `delete` granted specifically so the "undo"
-    button can retract the most recent log.
+2. Create the tables, policies and functions described in
+   [`docs/database-schema.md`](docs/database-schema.md). That file is a snapshot of the
+   live database, not a tested install script, and it replaces the older SQL that used to
+   be here (which only covered `posture_logs`, a table that has since been retired).
+   Two things to know before you start: creating a table grants nothing to `anon`,
+   `authenticated` or `service_role`, so grant what each one needs and check it; and RLS
+   on most tables is deliberately open to `anon` because "login" is only a name label,
+   which is a convenience for keeping people's data apart, not a privacy boundary.
 
 3. In your project's Settings → API, copy three values: the **Project URL**,
    the **anon public key**, and the **service_role key** (keep this last one
@@ -160,7 +63,12 @@ Repo Settings → Secrets and variables → Actions → New repository secret, a
 | `SUPABASE_URL` | your Project URL (same value again) | No |
 | `SUPABASE_SERVICE_KEY` | your service_role key | **Yes — keep private** |
 | `ANTHROPIC_API_KEY` | from console.anthropic.com | **Yes — keep private** |
-| `OPENROUTER_API_KEY` | from openrouter.ai/keys | **Yes — keep private** |
+| `OPENROUTER_API_KEY` | from openrouter.ai/keys (used by the weekly analysis) | **Yes — keep private** |
+| `CALENDAR_ICS_URL` | your calendar's private iCal link (optional; enables call detection) | **Yes — anyone with it can read your whole calendar** |
+
+The AI camera review runs as a Supabase Edge Function and needs its **own** copy of
+`OPENROUTER_API_KEY` under Edge Functions → Secrets in the Supabase dashboard (GitHub
+secrets can't be read by Supabase). See `PROJECT_NOTES.md` for how everything fits together.
 
 ### 3. GitHub Pages source
 

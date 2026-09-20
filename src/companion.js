@@ -251,3 +251,14 @@ export function sittingWellPct(events) {
   if (tracked < 600) return null;
   return Math.max(0, Math.min(100, Math.round((1 - Math.min(slouch, tracked) / tracked) * 100)));
 }
+
+// Names are only labels (see the "User identity" note in main.js), but "Paul",
+// "paul" and "Paul " would each become a separate person with separate data.
+// Collapse whitespace, cap the length, and if the typed name matches a name
+// already used on this device ignoring capitals, reuse that spelling.
+export function normaliseUserName(raw, knownNames = []) {
+  const cleaned = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
+  if (!cleaned) return '';
+  const match = knownNames.find((k) => String(k).toLowerCase() === cleaned.toLowerCase());
+  return match || cleaned;
+}

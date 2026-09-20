@@ -8,72 +8,246 @@ what's still open. Update it when you make a decision worth remembering, not
 after every commit. Written for a reader who may have no chat history at all —
 if you're that reader, this file plus git log/PRs should be enough.
 
-## Handover — 2026-09-19
+## Handover — 2026-09-20 (READ THIS FIRST)
 
-Written because this file has grown into a long chronological log (useful
-for archaeology, slow for "what's true right now"). Read this section
-first; it points into the rest of the file for detail rather than
-repeating it. Everything below was current as of the session that ended
-2026-09-19 — a huge amount landed in a short span, so verify anything
-load-bearing rather than trusting it's still accurate by the time you
-read it.
+This section is the single source of truth for "what is true right now". The
+rest of the file is a long dated log kept for archaeology; where it disagrees
+with this section, this section wins. A very large amount landed on
+2026-09-19/20, so verify anything load-bearing rather than trusting it.
 
-**Confirmed working, live-tested by the user on real hardware:**
-- Core posture detection (lateral lean, neck-drop, lean-in, sitting-low),
-  retuned twice from real feedback. Currently on `main`, not a branch.
-- Ambient brightness box (blurred to a silhouette, real resolution
-  bumped) and the light-level nudges (dim/bright + why, not just skew).
-- Device tracking, ergonomic setup wizard (now live-before-camera-start
-  with a real-time diagram, not the original one-shot version), weekly
-  pattern analysis + daily check-in, OpenRouter connectivity end to end
-  including in real CI.
-- The category color palette was redone 2026-09-19 using the `dataviz`
-  skill's `validate_palette.js` against the actual chart surface
-  (`#F5F2EC`) — not eyeballed. Passes every adjacent-pair check; some
-  non-adjacent pairs still fail the harshest "all-pairs" floor because 7
-  genuinely-needed categories can't all clear it (documented at the
-  `CATEGORY_COLORS` definition in `src/main.js`).
+### 1. What Plumb is
 
-**Confirmed still broken or unverified — check these before assuming
-they work:**
-1. **The chair-as-person presence bug is NOT resolved.** Two attempts
-   (a visibility-threshold check, then raising that threshold) did not
-   stop it per the user's own live report ("even the eye thing didn't
-   stop it seeing my chair as me"). Diagnostic logging was added
-   (`checkFaceVisibility`, logs real visibility numbers to the alert
-   feed on every presence transition) specifically so the *next*
-   occurrence gives real numbers to tune against instead of a third
-   guess. Current best theory: BlazePose was never trained to output
-   "no person," so it can extrapolate confident-but-wrong face-landmark
-   positions onto a chair-shaped blob — a model-confidence problem, not
-   a simple threshold miscalibration. Don't re-attempt a threshold tweak
-   blind; get the logged numbers from a real occurrence first.
-2. **Brightness sensitivity is an open question, not a bug fix.** User
-   reported the room got noticeably brighter mid-afternoon but the
-   number barely moved. Leading theory is webcam auto-exposure
-   compensating before Plumb ever sees the pixels (flagged as a risk
-   before this was ever built) — not something a software "sensitivity"
-   setting can fix on its own. Two real options were raised and not
-   built: locking camera exposure via `MediaTrackConstraints` (real API,
-   inconsistent device/browser support) or adaptive range-stretching
-   against the session's own observed min/max. Needs a decision, not
-   just another number tweak.
-3. Several 2026-09-18 fixes (face-visibility grace period, lateral
-   tolerance 0.07, ergo-wizard live diagram) were pushed but the specific
-   confirmation of "does this feel right now" from the user is mixed in
-   with the items above — re-read the dated entries below before
-   assuming any one of them is settled.
+A personal, self-hosted posture and desk-wellbeing companion. Runs in the browser
+(webcam -> MediaPipe pose landmarks -> compared with your calibrated baseline),
+speaks and shows short alerts, tracks hydration/light, logs everything to Supabase,
+and produces a weekly AI analysis. Single user (the owner, "Paul"); not a medical
+device; prototype quality. Live at `https://easybeinggreen.github.io/plumb/`, repo
+`easybeinggreen/plumb`, local clone `C:\Users\green\OneDrive\Documents\Plumb\plumb`.
 
-**If picking this up cold, do these first:**
-- Read the "Still open, not yet fixed" list below in full — it's been
-  added to several times and mixes old low-priority items (name
-  normalization) with the two active bugs above.
-- Don't start any new posture-detection tuning without first asking
-  whether the chair-presence bug has recurred and what the logged
-  numbers showed.
-- The `feature/eye-nose-posture-signals` branch mentioned partway
-  through the dated log below **was merged to `main` the same day** —
-  ignore any note below that still calls it unmerged; `main` is current.
+### 2. How to work here (practical, learned the hard way)
+
+- **Git:** work directly on `main`; the owner's pushes bypass branch protection (GitHub
+  prints "Bypassed rule violations"). Pages redeploys on every push (~30s). Use
+  `Co-Authored-By` trailers as in the log. One exception was declared by the owner:
+  slouch-*calibration* changes go on their own branch, not `main`.
+- **Dev server:** `npm run dev -- --port 5173`, then open `http://localhost:5173/plumb/`
+  (the `/plumb/` base matters). `.claude/launch.json` can start the wrong project
+  depending on the session's working directory; start it by hand if so.
+- **Windows/bash gotcha:** large inline heredocs containing quotes break the Bash tool.
+  Write patch scripts to `.claude/*.py` with the file-write tool, run them, delete them.
+  `.claude/` is untracked; never commit it.
+- **Running the app locally syncs to the REAL database** (`.env` holds the live URL and
+  anon key). Test edits to settings/reminders/voice push to production `app_settings`.
+  This happened twice and was cleaned up each time -- always restore what you touch.
+- **Supabase tooling:** the query tool is READ-ONLY (a one-row `update` fails with
+  "read-only transaction"; use `apply_migration` even for data fixes, and say so).
+  It cannot `set role`; `information_schema.role_table_grants` shows nothing useful, so
+  check privileges with `has_table_privilege(...)`; multi-statement queries return only
+  the last result set. Edge functions are deployed with the deploy tool and the repo
+  copy under `supabase/functions/` must be kept in sync by hand.
+- **Testing approach that worked:** put logic in pure modules (`src/closeup.js`,
+  `src/companion.js`, `src/deskgym.js`) and test with node using real Dates; 113 checks
+  passed on 2026-09-20 (test files lived in a temp folder and were not kept -- rewrite
+  from the function contracts if needed). DOM behaviour is checked in the browser pane
+  (it has NO webcam or microphone; screenshots only work when the pane is visible; a
+  screenshot taken immediately after a change can predate the render, take another).
+- **Docs:** `docs/database-schema.md` is the real schema/grants/functions/jobs reference.
+  The README's setup section now points at it (its old SQL only knew a retired table).
+
+### 3. Architecture map
+
+- `index.html` (~960 lines) + `src/main.js` (~4,600 lines, vanilla JS, no framework).
+- `src/companion.js` -- pure logic: hydration pacing, reminders, goal-time parsing, focus
+  timer state machine, alert-blocking rules, end-of-day wrap maths, name normalisation.
+- `src/closeup.js` -- pure logic: "are you camera ready?" framing/lighting checks, mic
+  analysis, webcam distance estimate. `src/deskgym.js` -- the five stretches (data only).
+- `scripts/` -- `rollup-summary.cjs` (nightly), `generate-weekly-analysis.cjs` (Friday),
+  `sync-calendar.cjs` (hourly), `generate-summary.cjs` (dormant, see section 6).
+- `.github/workflows/` -- `deploy.yml`, `rollup.yml`, `weekly-analysis.yml`, `calendar-sync.yml`.
+- `supabase/functions/camera-review/` -- the AI camera review edge function (+ `prompt.js`).
+- Supabase project `keacpowuykzcnwwdbjkd` (ap-southeast-2, free plan). Details in
+  `docs/database-schema.md`.
+
+### 4. What exists (all pushed to `main`)
+
+**Tracking core.** Pose-based detection of lateral lean, neck-drop ("compression"),
+lean-in (eye distance), sitting-low (nose drop). Event-sourced: every interval is a
+`posture_events` row; totals are computed, never trusted from a counter. Presence,
+break (60s-60min, camera-based), away (>60min), not_tracking (tab hidden). Every path
+that ends presence must also flush any open slouch block (a `visibilitychange` path
+leaked this for weeks; fixed 2026-09-17). Camera-loss handling, PiP popup in two phases.
+
+**Alert pipeline (important to understand before touching anything).** Every alert goes
+through `speak(text, force, userInitiated, kind)`, which (1) drops it if
+`alertsSuppressed(kind)`, (2) counts it as an interruption, (3) shows an on-screen
+toast over the status card (the popup) for 3s+, (4) speaks it. `kind` is one of
+`nudge | break | stillness | hydration | reminder | wrap | pomodoro`. Alerts are
+suppressed during **calls** (calendar) and during a **focus block**; see below. The
+popup is the status card moved into a Document-PiP window; alerts live there because it
+is always visible while tracking runs (owner's decision; no browser-notification
+fallback wanted).
+
+**Popup glyph.** Base dot 13.2 radius; the loop is a fixed 58x34 marking the THRESHOLD
+(dot exactly on it = state flips good->mild and the sustain clock starts). It is not a
+limit: the dot travels past it toward the drawing edge. The dot rests near the TOP
+because neck-drop only moves it down. Smoothing is untouched.
+
+**Voice.** Default is **Alba** (Piper `en_GB-alba-medium`, the Scottish female voice),
+the owner's favourite; the voice is the owner's stated key to the product. The choice
+syncs across devices via `app_settings.extras.voice`. History: the default used to be the
+browser's "Google UK English Female" (robotic), which any device without a saved choice
+silently got -- migrated away 2026-09-20. If a Piper voice is not ready (first download,
+offline) Plumb shows the alert on screen only and logs it; it **never** falls back to the
+browser's robotic default for a Piper choice. ElevenLabs voices are planned for later,
+pre-generating the fixed nudge phrases so there is no per-nudge network call; wait until
+the owner has finished reviewing the wording/headings so the phrase set is settled. The
+never-robot fallback rule and the cross-device sync carry over to any new voice engine.
+
+**"Are you camera ready?"** (button; formerly "ready for my close-up"). A live mirrored
+preview with a centre line and two dotted eye-height lines; checks that auto-refresh:
+centring, headroom, framing (head-and-shoulders), head tilt, face brightness, left/right
+lighting evenness, backlight, glare; a 5-second microphone test; and an opt-in "get a
+fuller AI review" that sends ONE 640px frame to the `camera-review` edge function (hair,
+clothing, background, things behind the head). Local checks never leave the device.
+Verified against the owner's real photos: all 8 local checks pass. Thresholds are
+unvalidated first guesses (`CLOSEUP_THRESHOLDS`).
+
+**"Workstation setup"** (button; formerly "set up your desk"). One-off wizard: eye height
+vs the top of the screen (eye line as a fraction down the picture; assumes a camera that
+faces straight out), estimated distance in cm (pinhole estimate from eye spacing, ~+/-
+10cm, 50-70cm target), lighting, a desk checklist, then calibrate. Head tilt was
+removed from it (not a setup property; it had a real bug: the eye angle was measured in
+the un-mirrored frame so a level head read ~180deg and the diagram flipped).
+
+**Calendar + calls.** `CALENDAR_ICS_URL` (GitHub secret, a private Google iCal link) ->
+hourly `calendar-sync.yml` -> `calendar_events` (times only, never titles; Meet/Zoom/
+Teams/Webex link = call). The table is service-role-only. The browser can only ask
+`in_call_now(user)` for a bare yes/no. While in a call, all alerts pause and the popup
+pill shows "in a call"; setting "pause nudges during calls" (default on). In-person
+meetings do not mute. Single user; multi-user is deliberately not offered (see 7).
+
+**Hydration pacing.** Target spread evenly over "active hours" (default 07:00-19:00). A
+dashed pace line on the water gauge and a label ("on pace" / "NNNml behind pace"). A
+nudge only when tracking runs, you're present, not in a call/focus block, >=300ml behind,
+at most hourly, never in the last hour of the window.
+
+**Reminders.** Settings -> reminders: at a clock time (weekdays option; may fire up to 10
+min late, 30 after a focus block) or every N minutes (5-240, within active hours; clock
+starts on first sight, restarts after a long absence). Weekly goals containing a time
+("At 1:30pm...") get a "remind me at 13:30" button. Fire per device (two open devices
+would both fire).
+
+**Focus timer (tomato).** Button in the control row; 25/5/15, long break every 4th
+(configurable). **Focus freezes EVERY alert** (tracking/logging carries on). During the
+timer's own breaks only Plumb's "take a break"/"move" prompts are held back. Starts on a
+work block; nothing auto-starts; a break ends into idle. State is per device
+(localStorage `plumb:pomodoro`). One status pill on the popup shows the tomato timer
+and/or "in a call".
+
+**End-of-day wrap.** "today's wrap" header button plus a once-a-day "wrap ready" notice
+at 17:30 while tracking runs (retried after a call/focus block). Tracked time,
+sitting-well % vs yesterday, breaks, longest sit, most common slouch, steadiest/roughest
+hour, water, focus blocks, count of alerts Plumb sent, and the week's first goal. Calls
+are not in it yet (calendar table is server-only).
+
+**Desk gym.** "desk gym" button: five seated stretches, each two sentences (what + why)
+and a YouTube *search* link (a search URL is always valid; a specific video id can't be
+verified). On demand only, never a prompt. Not medical advice.
+
+**Weekly analysis + daily check-in.** Friday 16:00 Brisbane, `openrouter` model
+`deepseek/deepseek-v4-flash-0731:free` pinned, per-day peak checks, light sample counts
+(`n`) so a 1-reading hour isn't called a pattern, three short labelled lines + three
+one-sentence goals + real tracked-coverage line. Shown in the "this week" panel.
+
+**Reports.** Today/week/month + day drill-down, minute-band timeline with majority-vote
+pixels, totals bars, hydration trend; `CATEGORY_COLORS` is the single colour source for
+every chart and legend (palette validated, documented at its definition).
+
+**Settings that sync across devices** live in `app_settings` (tolerances, timings,
+hydration sizes) plus `app_settings.extras` jsonb (hydration pacing, reminders, focus
+lengths, wrap time, voice). Remote wins on load. **Your saved lateral tolerance was
+0.20 from 2026-08-22 and silently overrode the 0.07 code default until it was set to
+0.07 on 2026-09-20.**
+
+### 5. Verification status (be honest about this)
+
+Verified: pure logic (113 node checks); every UI flow in the desktop browser pane
+(reminder fires on the exact minute and once only; focus freezes then releases a due
+reminder; focus->break->idle transitions; wrap with fake events, numbers hand-checked;
+desk gym links; voice default/migration/sync; in-call pill, feed and end message with a
+faked answer); the calendar parser against a synthetic calendar in UTC and Brisbane time
+zones and then the real sync (21 events); `in_call_now` boundaries on real data and its
+grants; the AI review end-to-end through the deployed function (accurate, ~15-60s).
+
+**NOT verified -- the owner is about to live-test these; expect surprises:**
+the real PiP popup (toast, status pill, focus countdown, the new glyph layout and dot
+travel); the hydration nudge firing (only its gating rules are tested); the automatic
+"wrap ready" notice; alert suppression inside `speak()` during a real call or focus
+block (only its inputs were tested); the AI review button from the actual app (only
+called directly); Alba on the owner's other devices; every threshold in the camera-ready
+and workstation checks against a real webcam (the Brio is the owner's camera; the
+browser's default camera is the laptop's, chosen in Settings -> device -> camera).
+
+### 6. Open issues and pending decisions
+
+1. **Chair-as-person presence bug: unresolved after two threshold attempts.** BlazePose
+   can extrapolate confident face landmarks onto a chair. `checkFaceVisibility` logs the
+   real numbers to the alert feed on every presence transition; get those from a real
+   occurrence before touching thresholds. Do not guess a third time.
+2. **Brightness barely tracks the room** (webcam auto-exposure compensates before Plumb
+   sees pixels). Options: lock exposure via `MediaTrackConstraints` (the Brio supports
+   manual exposure) or adaptive range-stretching. Trade-off: a locked exposure would also
+   affect how "are you camera ready?" sees the face. Owner's decision pending.
+3. **Popup size / address label.** Chrome's Document-PiP API documents no way to hide the
+   window's title bar/origin (`disallowReturnToOpener` only hides the back-to-tab button).
+   The window is already near the minimum for its content; shrinking means dropping the
+   caption and live numbers. Owner has not answered.
+4. **The dormant "AI summary" is not standalone.** `deploy.yml` has a `prepare-summary`
+   job (Monday 08:00 UTC and manual, `continue-on-error`) that runs
+   `scripts/generate-summary.cjs` and commits `public/data/summary.json`; the report's
+   "ai summary" tab and `public/summary.html` read it. It is superseded by the weekly
+   analysis. Removing it means editing the deploy pipeline and dropping that tab -- ask
+   the owner first; it was offered as a "tidy-up" before this was known.
+5. **`default` user data:** ~2.9k `posture_events` and ~100 daily-summary rows sit under
+   user `default` (from before names existed). Not merged into `Paul`; owner's call.
+6. **Owner is reviewing all headings/wording next**, which should finish before voices.
+7. **Posture during calls in the weekly analysis:** wait for ~10 tracked hours in calls
+   (only ~1.7 tracked hours overlapped 14 past calls). **Alert budget:** watch the wrap's
+   alert count for a week before capping alerts per hour. **Brightness-exposure chart /
+   auto-brighten the page:** wait for more light data / needs design.
+8. **Roadmap not started:** "best self" photo comparison for the AI review (owner is
+   still thinking about the photo), coached 20-20-20 folded into the start of each break,
+   ElevenLabs voices (after wording is settled), optional "paste my own stretch video" and
+   "watched it once" tick, a self-serve re-run button for the weekly analysis.
+
+### 7. Owner preferences and decisions to respect
+
+- Tone is **serious and professional**. A mascot/character was drawn and rejected as
+  gimmicky ("on ice"); don't revive it. Voices, not visuals, are the personality.
+- **Free tier only**: no paid services. Supabase free (Edge Functions incl.), OpenRouter
+  free models, GitHub Actions. Free models are slow/flaky, hence the retry design.
+- **Design worry:** a person could spend all day interacting with Plumb and get little
+  done. Guardrails: focus freezes everything; calls mute; stretches are on-demand only;
+  new features default to quiet; the wrap counts interruptions. New features must not add
+  prompts by default.
+- **Privacy:** video stays on the device except one frame sent on an explicit button
+  press for the AI review (not stored). Calendar link is a secret, never logged, times
+  only. Tables open to `anon` are a convenience, not a privacy boundary -- so anything
+  sensitive goes server-side only (as `calendar_events` and `camera_review_usage` do).
+  Do not offer calendar/AI features to other people without real accounts.
+- The owner prefers being told plainly what is and isn't verified, wants real data
+  checked (they have repeatedly been burned by silent data bugs), and likes small,
+  reviewable steps with the reason given. Never guess URLs.
+- Recurring bug class to check for on every new table/script: **missing role grants**
+  (four times so far). Verify with `has_table_privilege` and by running the real thing.
+
+### 8. Secrets and where they live
+
+GitHub repo secrets (write-only, workflows only): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `OPENROUTER_API_KEY`, `CALENDAR_ICS_URL`,
+`ANTHROPIC_API_KEY` (dormant script only). Supabase Edge Function secret:
+`OPENROUTER_API_KEY` (a separate copy; created 2026-09-19). Nothing sensitive is in the
+repo. The anon key in the built site is public by design.
 
 ## What this is
 
@@ -94,11 +268,13 @@ alone for now, not forgotten.
 
 ## Stack
 
-- **Frontend**: Vite + vanilla JS (no framework), single `src/main.js`
-  (~2100 lines) driving a single `index.html`. `@mediapipe/tasks-vision` for
+- **Frontend**: Vite + vanilla JS (no framework), `src/main.js`
+  (~4,600 lines) plus pure-logic modules (`src/companion.js`, `src/closeup.js`,
+  `src/deskgym.js`), driving a single `index.html`. `@mediapipe/tasks-vision` for
   pose detection, `@mintplex-labs/piper-tts-web` for offline neural voice.
 - **Backend**: Supabase (Postgres + PostgREST), accessed directly from the
-  browser via `fetch` — no server code except the GitHub Action script.
+  browser via `fetch` — no server code except the GitHub Action scripts and one
+  Supabase Edge Function (`camera-review`). See `docs/database-schema.md`.
   Project ref `keacpowuykzcnwwdbjkd` (URL `https://keacpowuykzcnwwdbjkd.supabase.co`),
   org/project named "Plumb". Uses the newer `sb_publishable_...` key format
   (what used to be called the "anon" key) — safe to expose, same as before.
@@ -730,11 +906,11 @@ testing, not anticipated in advance:
 
 **Still open, not yet fixed**:
 1. **Chair-as-person presence bug, unresolved after two attempts** — see
-   "Handover — 2026-09-19" at the top of this file for the current
+   "Handover — 2026-09-20" at the top of this file for the current
    theory and what to do next. Don't guess a third threshold blind.
 2. **Brightness sensitivity to real ambient-light changes is weak**,
    likely webcam auto-exposure compensating before Plumb sees the raw
-   pixels — see "Handover" at top for the two unbuilt options (exposure
+   pixels — see "Handover — 2026-09-20" at top for the two unbuilt options (exposure
    lock vs. adaptive range-stretch).
 3. **Name identity has no normalization.** `"Paul"`, `"paul"`, `"Paul "`
    (trailing space) are three different users to the app and database — no
@@ -990,6 +1166,21 @@ above before starting it.
   preview (five entries, two sentences each, encoded search URLs, opens in a
   new tab). Not built: the "paste your own favourite video" field, or a
   "watched it once" tick.
+- **Tidy-ups and voice fix, 2026-09-20.** (a) `normaliseUserName()` (tested, 13
+  checks): names are trimmed, whitespace-collapsed, capped at 40 chars, and a typed
+  name matching a known one ignoring capitals reuses the known spelling; a stored
+  identity only ever has stray spaces trimmed. No case/whitespace variants existed in
+  the data. (b) The temporary allow-listed model override was removed from the
+  `camera-review` function (redeployed as v6; the live source was read back to confirm).
+  (c) `public.posture_logs` was dropped after backing its 24 rows up locally (nothing read
+  or wrote it); test rows `model-test-*` were removed from `camera_review_usage`.
+  (d) README setup rewritten to point at `docs/database-schema.md` (its SQL only knew the
+  retired table) and to list the missing secrets. (e) **Voice:** the default was the
+  browser's robotic "Google UK English Female" for any device without a saved choice;
+  now Alba, with a one-off migration of the old default, cross-device sync via
+  `extras.voice`, and no robot fallback for Piper choices. Verified: fresh device and
+  old-robot-default device both land on Alba, and the cloud row holds it. **Not done:**
+  the dormant summary machinery (see Handover section 6, item 4).
 - **Hydration pacing + reminders: built 2026-09-20.** Pure logic in
   `src/companion.js` (41 checks pass, incl. midday/midnight parsing,
   weekend/grace/double-fire cases). Pacing spreads the daily target evenly

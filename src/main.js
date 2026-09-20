@@ -2,7 +2,7 @@ import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
-import { hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
+import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -16,7 +16,7 @@ const SYNC_CONFIGURED = SUPABASE_URL.startsWith('http') && !!SUPABASE_ANON_KEY;
 // The picker overlay defaults to visible in the HTML itself (avoids a flash
 // of the real app before JS can hide it). If a name is already stored, hide
 // it immediately; otherwise wire it up and leave it blocking the page.
-let currentUserId = localStorage.getItem('plumb:userId') || '';
+let currentUserId = normaliseUserName(localStorage.getItem('plumb:userId') || ''); // trims stray spaces only; never changes capitals of an existing identity
 if (currentUserId) {
   document.getElementById('userModalOverlay').classList.remove('open');
 } else {
@@ -294,7 +294,7 @@ let hydrationLastClickMl = 0;
 const EXTRAS_KEY = 'plumb:extras';
 const REMINDER_FIRED_KEY = 'plumb:reminderFired';
 const MAX_REMINDERS = 20;
-function defaultExtras() { return { hydrationPace: { on: true, start: '07:00', end: '19:00' }, reminders: [], pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, wrap: { on: true, time: '17:30' } }; }
+function defaultExtras() { return { hydrationPace: { on: true, start: '07:00', end: '19:00' }, reminders: [], pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, wrap: { on: true, time: '17:30' }, voice: '' }; }
 function normaliseExtras(s) {
   const d = defaultExtras();
   if (!s || typeof s !== 'object') return d;
@@ -322,6 +322,7 @@ function normaliseExtras(s) {
     if (typeof wr.on === 'boolean') d.wrap.on = wr.on;
     if (hhmmToMinutes(wr.time) !== null) d.wrap.time = wr.time;
   }
+  if (typeof s.voice === 'string' && s.voice.length <= 80) d.voice = s.voice;
   return d;
 }
 let extras = (() => { try { return normaliseExtras(JSON.parse(localStorage.getItem(EXTRAS_KEY) || 'null')); } catch (e) { return defaultExtras(); } })();
@@ -739,7 +740,27 @@ const PIPER_VOICES = [
   { id: 'en_GB-aru-medium', name: 'Aru — UK, low & brisk' },
   { id: 'en_GB-semaine-medium', name: 'Semaine — UK, measured' },
 ];
-const DEFAULT_VOICE_ID = 'Google UK English Female';
+// Alba is Piper's Scottish English female voice. The default used to be the
+// browser's 'Google UK English Female' -- a robotic voice that any browser or
+// device WITHOUT a saved choice (fresh profile, another machine) silently got.
+const DEFAULT_VOICE_ID = 'en_GB-alba-medium';
+const OLD_ROBOT_DEFAULT = 'Google UK English Female';
+if (!localStorage.getItem('plumb:voiceDefaultMigrated')) {
+  if (localStorage.getItem('plumb:voice') === OLD_ROBOT_DEFAULT) {
+    localStorage.setItem('plumb:voice', DEFAULT_VOICE_ID);
+    currentVoiceId = DEFAULT_VOICE_ID;
+  }
+  localStorage.setItem('plumb:voiceDefaultMigrated', '1');
+}
+const isPiperVoiceId = (id) => PIPER_VOICES.some((v) => v.id === id);
+let voiceUnavailableNoted = false;
+// Never fall back to the browser's default (robotic) voice for a Piper choice:
+// show the alert on screen only and say so once.
+function noteVoiceUnavailable() {
+  if (voiceUnavailableNoted) return;
+  voiceUnavailableNoted = true;
+  addAlertToFeed('voice', 'Voice not ready yet -- alerts are on screen only until it loads');
+}
 
 function populateVoiceList() {
   const currentVal = voiceSelect.value;
@@ -802,6 +823,8 @@ populateVoiceList();
 voiceSelect.addEventListener('change', () => {
   currentVoiceId = voiceSelect.value;
   localStorage.setItem('plumb:voice', currentVoiceId);
+  extras.voice = currentVoiceId;
+  saveExtras();
   testVoiceBtn.textContent = 'test voice';
   updateVoiceReady(false);
 });
@@ -1583,6 +1606,7 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
       return;
     }
   } catch (e) { console.warn('Piper fallback:', e); }
+  if (isPiperVoiceId(currentVoiceId)) { noteVoiceUnavailable(); return; }
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
@@ -2149,7 +2173,7 @@ function showUserPicker() {
   });
 
   function submit(name) {
-    name = name.trim();
+    name = normaliseUserName(name, known);
     if (!name) { input.focus(); return; }
     const knownSet = new Set(known);
     knownSet.add(name);
@@ -4393,7 +4417,22 @@ async function fetchAndApplyAppSettings() {
     if (s.can_ml != null) hydrationSizes.can = s.can_ml;
     if (s.bottle_ml != null) hydrationSizes.bottle = s.bottle_ml;
     localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
-    if (s.extras) { extras = normaliseExtras(s.extras); localStorage.setItem(EXTRAS_KEY, JSON.stringify(extras)); renderExtrasUI(); }
+    if (s.extras) {
+      extras = normaliseExtras(s.extras);
+      // Your voice follows you across devices. A browser voice that this
+      // device doesn't have is ignored (the local choice stays).
+      if (extras.voice && extras.voice !== currentVoiceId && [...voiceSelect.options].some((o) => o.value === extras.voice)) {
+        currentVoiceId = extras.voice;
+        voiceSelect.value = currentVoiceId;
+        localStorage.setItem('plumb:voice', currentVoiceId);
+        updateVoiceReady(false);
+      } else if (!extras.voice && currentVoiceId) {
+        extras.voice = currentVoiceId;
+        scheduleSettingsPush();
+      }
+      localStorage.setItem(EXTRAS_KEY, JSON.stringify(extras));
+      renderExtrasUI();
+    }
     localStorage.setItem(TUNING_KEY, JSON.stringify({
       tolerance: toleranceSlider.value, compression: compressionToleranceSlider.value, lean: leanToleranceSlider.value,
       sink: sinkToleranceSlider.value, sustain: sustainSlider.value, breakInterval: breakSlider.value, stillness: stillnessSlider.value
