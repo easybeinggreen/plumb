@@ -1487,7 +1487,7 @@ function openDeskGym() {
       const what = document.createElement('p'); what.className = 'gym-what'; what.textContent = s.what;
       const link = document.createElement('a');
       link.className = 'gym-link';
-      link.href = youtubeSearchUrl(s.query);
+      link.href = s.video || youtubeSearchUrl(s.query);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = 'find a demo on YouTube \u2192';

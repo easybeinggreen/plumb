@@ -4,13 +4,15 @@
 //
 // Demo links are YouTube *searches*, not specific videos: a search URL is
 // always valid, whereas a hand-picked video ID can't be verified from here.
+// An entry may carry `video`, a link the owner chose, which wins over the search.
 
 export const DESK_GYM = [
   {
     id: 'chin-tuck',
     name: 'Chin tucks',
     what: 'Sit tall and glide your chin straight back, as if making a double chin, hold for a second, then release; repeat five times. It counters the forward head position that creeps in when you lean toward a screen.',
-    query: 'seated chin tuck exercise office desk'
+    query: 'seated chin tuck exercise office desk',
+    video: 'https://www.youtube.com/shorts/pAps-PUqwv0'
   },
   {
     id: 'neck-side',
