@@ -2,7 +2,7 @@ import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
-import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, PACE_DAY_LENGTH_MIN, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
+import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -282,7 +282,7 @@ let breakTargetToday = Number(localStorage.getItem(BREAK_TARGET_KEY_PREFIX + tod
 let breaksTakenToday = Number(localStorage.getItem(BREAK_TAKEN_KEY_PREFIX + today())) || 0;
 let breakMinutesToday = Number(localStorage.getItem(BREAK_MINUTES_KEY_PREFIX + today())) || 0;
 
-let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 2000;
+let hydrationTargetMl = Number(localStorage.getItem(HYDRATION_TARGET_KEY)) || 1000;
 let hydrationSizes = JSON.parse(localStorage.getItem(HYDRATION_SIZES_KEY) || 'null') || { glass: 300, mug: 250, can: 355, bottle: 500 };
 let hydrationConsumedMl = Number(localStorage.getItem(HYDRATION_LOG_PREFIX + today())) || 0;
 let hydrationLastClickMl = 0;
@@ -294,7 +294,7 @@ let hydrationLastClickMl = 0;
 const EXTRAS_KEY = 'plumb:extras';
 const REMINDER_FIRED_KEY = 'plumb:reminderFired';
 const MAX_REMINDERS = 20;
-function defaultExtras() { return { hydrationPace: { on: true, start: '07:00', end: '19:00' }, reminders: [], pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, wrap: { on: true, time: '17:30' }, voice: '' }; }
+function defaultExtras() { return { hydrationPace: { on: true, start: '08:00', end: '16:00' }, reminders: [], pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, wrap: { on: true, time: '17:30' }, voice: '' }; }
 function normaliseExtras(s) {
   const d = defaultExtras();
   if (!s || typeof s !== 'object') return d;
@@ -1085,7 +1085,7 @@ function sampleLight() {
 
 hydrationTargetInput.value = hydrationTargetMl;
 hydrationTargetInput.addEventListener('change', () => {
-  hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 2000);
+  hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 1000);
   localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl));
   renderHydration();
   scheduleSettingsPush();
@@ -1225,26 +1225,9 @@ if (muteDuringCallsInput) {
 
 
 // ---- Hydration pacing -------------------------------------------------------
-const DAY_ANCHOR_KEY = 'plumb:dayAnchor';
-// The drinking day starts at your first check-in today and runs 9 hours, so a
-// late start doesn't make you "behind" before you've sat down.
-function dayAnchorMin() {
-  const d = today();
-  try {
-    const a = JSON.parse(localStorage.getItem(DAY_ANCHOR_KEY) || 'null');
-    if (a && a.date === d && typeof a.min === 'number') return a.min;
-  } catch (e) { /* fall through */ }
-  if (!running || !isPersonPresent) return null;
-  const min = Math.floor(minutesNow(new Date()));
-  localStorage.setItem(DAY_ANCHOR_KEY, JSON.stringify({ date: d, min }));
-  return min;
-}
-
 function currentPace() {
-  const anchor = dayAnchorMin();
-  const startMin = anchor === null ? 24 * 60 : anchor;
-  const endMin = Math.min(24 * 60 - 1, startMin + PACE_DAY_LENGTH_MIN);
-  return paceStatus({ consumedMl: hydrationConsumedMl, targetMl: hydrationTargetMl, startMin, endMin, nowMin: minutesNow(new Date()) });
+  const p = extras.hydrationPace;
+  return paceStatus({ consumedMl: hydrationConsumedMl, targetMl: hydrationTargetMl, startMin: hhmmToMinutes(p.start), endMin: hhmmToMinutes(p.end), nowMin: minutesNow(new Date()) });
 }
 
 function renderPace() {

@@ -6,7 +6,6 @@ export const PACE_BEHIND_NUDGE_ML = 300;   // how far behind pace before a nudge
 export const PACE_ON_TRACK_ML = 150;       // within this either side reads as "on pace"
 export const PACE_NUDGE_COOLDOWN_MS = 60 * 60 * 1000;
 export const PACE_NO_NUDGE_FIRST_MIN = 60; // no water nudge in the first hour after the day starts
-export const PACE_DAY_LENGTH_MIN = 9 * 60;  // the drinking day runs this long from first check-in
 export const PACE_NO_NUDGE_LAST_MIN = 60;  // no chug-your-water nudges in the last hour of the day window
 export const REMINDER_GRACE_MIN = 10;      // a time reminder still fires up to this late (e.g. after a call ends)
 

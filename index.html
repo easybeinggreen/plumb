@@ -680,15 +680,15 @@
     </div>
 
     <h3 class="settings-section-title">hydration</h3>
-    <div class="hydration-size-row"><label for="hydrationTargetInput">daily target (ml) <button class="info-icon" type="button" data-info="hydrationTarget" aria-label="why this default">i</button></label><input type="number" id="hydrationTargetInput" min="500" max="5000" step="50" value="2000" /></div>
+    <div class="hydration-size-row"><label for="hydrationTargetInput">daily target (ml) <button class="info-icon" type="button" data-info="hydrationTarget" aria-label="why this default">i</button></label><input type="number" id="hydrationTargetInput" min="500" max="5000" step="50" value="1000" /></div>
     <div class="hydration-size-row"><label for="hydrationGlassInput">glass (ml)</label><input type="number" id="hydrationGlassInput" min="50" max="1000" step="10" value="300" /></div>
     <div class="hydration-size-row"><label for="hydrationMugInput">mug (ml)</label><input type="number" id="hydrationMugInput" min="50" max="1000" step="10" value="250" /></div>
     <div class="hydration-size-row"><label for="hydrationCanInput">can (ml)</label><input type="number" id="hydrationCanInput" min="50" max="1000" step="5" value="355" /></div>
     <div class="hydration-size-row"><label for="hydrationBottleInput">bottle (ml)</label><input type="number" id="hydrationBottleInput" min="50" max="2000" step="10" value="500" /></div>
 
     <div class="hydration-size-row"><label for="paceOnInput" title="a dashed line on the water gauge shows where you'd be if you drank evenly through the day">pace reminders</label><input type="checkbox" id="paceOnInput" checked style="width:auto;" /></div>
-    <div class="hydration-size-row"><label for="paceStartInput">active hours</label><span style="display:flex;align-items:center;gap:6px;"><input type="time" id="paceStartInput" value="07:00" /><span style="color:var(--ink-soft);">to</span><input type="time" id="paceEndInput" value="19:00" /></span></div>
-    <div class="hydration-size-row"><span style="font-size:11.5px;color:var(--ink-soft);line-height:1.45;">Your daily target is spread evenly across your active hours. If you fall about 300ml behind while tracking is running, you get a nudge, at most once an hour and never in the last hour of the day.</span></div>
+    <div class="hydration-size-row"><label for="paceStartInput">working hours</label><span style="display:flex;align-items:center;gap:6px;"><input type="time" id="paceStartInput" value="08:00" /><span style="color:var(--ink-soft);">to</span><input type="time" id="paceEndInput" value="16:00" /></span></div>
+    <div class="hydration-size-row"><span style="font-size:11.5px;color:var(--ink-soft);line-height:1.45;">Your target is for your working day and is spread evenly across your working hours. It doesn't affect tracking. If you fall about 300ml behind while tracking is running, you get a nudge, at most once an hour, never in the first or last hour of the day.</span></div>
 
     <h3 class="settings-section-title">ambient light</h3>
     <div class="hydration-size-row"><label>glare nudge <button class="info-icon" type="button" data-info="brightness" aria-label="why this default">i</button></label><span style="font-family:var(--mono);font-size:12px;color:var(--ink-soft);">&gt;12% imbalance, held 90s</span></div>
@@ -704,7 +704,7 @@
       <label><input type="checkbox" id="reminderWeekdays" checked /> weekdays only</label>
       <button id="reminderAddBtn" class="btn-compact" type="button">add</button>
     </div>
-    <div id="reminderMsg" style="font-size:11.5px;color:var(--ink-soft);margin-top:6px;min-height:14px;">Reminders show in the popup and are spoken, while Plumb is open. "Every N minutes" only runs during your active hours.</div>
+    <div id="reminderMsg" style="font-size:11.5px;color:var(--ink-soft);margin-top:6px;min-height:14px;">Reminders show in the popup and are spoken, while Plumb is open. "Every N minutes" only runs during your working hours.</div>
 
     <h3 class="settings-section-title">focus timer</h3>
     <div class="hydration-size-row"><label for="pomoFocusInput">focus (min)</label><input type="number" id="pomoFocusInput" min="5" max="90" step="5" value="25" /></div>
