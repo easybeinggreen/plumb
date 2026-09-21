@@ -5,6 +5,8 @@
 export const PACE_BEHIND_NUDGE_ML = 300;   // how far behind pace before a nudge is worth it
 export const PACE_ON_TRACK_ML = 150;       // within this either side reads as "on pace"
 export const PACE_NUDGE_COOLDOWN_MS = 60 * 60 * 1000;
+export const PACE_NO_NUDGE_FIRST_MIN = 60; // no water nudge in the first hour after the day starts
+export const PACE_DAY_LENGTH_MIN = 9 * 60;  // the drinking day runs this long from first check-in
 export const PACE_NO_NUDGE_LAST_MIN = 60;  // no chug-your-water nudges in the last hour of the day window
 export const REMINDER_GRACE_MIN = 10;      // a time reminder still fires up to this late (e.g. after a call ends)
 
@@ -40,7 +42,7 @@ export function paceStatus({ consumedMl, targetMl, startMin, endMin, nowMin }) {
   else if (behindMl > PACE_ON_TRACK_ML) state = 'slightly-behind';
   else if (behindMl < -PACE_ON_TRACK_ML) state = 'ahead';
   else state = 'on';
-  return { expectedMl, behindMl, state, minutesLeft: endMin - nowMin };
+  return { expectedMl, behindMl, state, minutesLeft: endMin - nowMin, minutesIn: nowMin - startMin };
 }
 
 const round50 = (n) => Math.max(50, Math.round(n / 50) * 50);
@@ -58,6 +60,7 @@ export function hydrationNudgeText(behindMl, variant = 0) {
 export function shouldNudgeHydration({ status, nowMs, lastNudgeMs }) {
   if (status.state !== 'behind') return false;
   if (status.minutesLeft < PACE_NO_NUDGE_LAST_MIN) return false;
+  if (status.minutesIn < PACE_NO_NUDGE_FIRST_MIN) return false;
   return !lastNudgeMs || nowMs - lastNudgeMs >= PACE_NUDGE_COOLDOWN_MS;
 }
 

@@ -2,7 +2,7 @@ import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
-import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
+import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, PACE_DAY_LENGTH_MIN, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -1225,9 +1225,26 @@ if (muteDuringCallsInput) {
 
 
 // ---- Hydration pacing -------------------------------------------------------
+const DAY_ANCHOR_KEY = 'plumb:dayAnchor';
+// The drinking day starts at your first check-in today and runs 9 hours, so a
+// late start doesn't make you "behind" before you've sat down.
+function dayAnchorMin() {
+  const d = today();
+  try {
+    const a = JSON.parse(localStorage.getItem(DAY_ANCHOR_KEY) || 'null');
+    if (a && a.date === d && typeof a.min === 'number') return a.min;
+  } catch (e) { /* fall through */ }
+  if (!running || !isPersonPresent) return null;
+  const min = Math.floor(minutesNow(new Date()));
+  localStorage.setItem(DAY_ANCHOR_KEY, JSON.stringify({ date: d, min }));
+  return min;
+}
+
 function currentPace() {
-  const p = extras.hydrationPace;
-  return paceStatus({ consumedMl: hydrationConsumedMl, targetMl: hydrationTargetMl, startMin: hhmmToMinutes(p.start), endMin: hhmmToMinutes(p.end), nowMin: minutesNow(new Date()) });
+  const anchor = dayAnchorMin();
+  const startMin = anchor === null ? 24 * 60 : anchor;
+  const endMin = Math.min(24 * 60 - 1, startMin + PACE_DAY_LENGTH_MIN);
+  return paceStatus({ consumedMl: hydrationConsumedMl, targetMl: hydrationTargetMl, startMin, endMin, nowMin: minutesNow(new Date()) });
 }
 
 function renderPace() {
@@ -1620,8 +1637,9 @@ const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", 
 const SINK_PHRASES = ["You've slid down in the seat — sit back up.", "Slipping low in the chair — scoot back and sit tall.", "You've sunk down — reposition and sit up.", "Chair's swallowing you — sit up in it.", "Settle back up in your seat."];
 const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it.", "Good time for a stretch — up you get.", "Your body could use a change of scenery.", "Stand, shake it out, then carry on."];
 const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
-const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Nice long break — welcome back.", "That was a proper break — good stuff.", "Well rested — good to have you back."];
-const BREAK_RETURN_SHORT_PHRASES = ["Good break — that was a nice stretch.", "Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet."];
+const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Nice long break — welcome back.", "That was a proper break — good stuff.", "Well rested — good to have you back.", "Welcome back — that was a well-earned rest.", "Back again — hope you got some fresh air.", "Good to see you — that break did you good."];
+const BREAK_RETURN_SHORT_PHRASES = ["Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet.", "Welcome back — hope that helped.", "Right on time — back at it.", "Good reset — off you go.", "Back already — nicely done.", "Welcome back. Ease into it.", "Good move — a little movement goes a long way."];
+const MORNING_PHRASES = ["Good morning! A new day of posture tracking has started.", "Morning! Ready when you are — let's make it a good day.", "Good morning. Fresh day, fresh start — let's go.", "Hello, and welcome to a brand new day.", "Morning! Sit tall, and let's begin."];
 const GLARE_LEFT_PHRASES = ["Strong light on your left — worth adjusting the blind.", "It's gotten bright on your left side.", "Left side's quite bright now — check the light."];
 const GLARE_RIGHT_PHRASES = ["Strong light on your right — worth adjusting the blind.", "It's gotten bright on your right side.", "Right side's quite bright now — check the light."];
 // Eye-comfort framing, not appearance -- deliberately not "you look washed
@@ -2271,7 +2289,7 @@ function maybeSwitchDay() {
     hydrationLastClickMl = 0;
     renderHydration();
     renderBreakGauge();
-    speak("Good morning! A new day of posture tracking has started.");
+    speak(MORNING_PHRASES[Math.floor(Math.random() * MORNING_PHRASES.length)]);
   }
 }
 
