@@ -1155,6 +1155,21 @@ async function ensurePiperVoice(voiceId) {
   try {
     testVoiceBtn.textContent = 'loading voice…';
     try { Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true }); } catch (e) {}
+    // piper-tts-web's TtsSession is an undocumented singleton: once one
+    // instance exists, TtsSession.create() for a DIFFERENT voiceId just
+    // relabels that same instance's .voiceId property and returns it --
+    // the actual loaded model (its private ONNX inference session) is
+    // never reloaded. Confirmed directly against the live library:
+    // create('A') then create('B') returns the identical object, and
+    // predict() keeps using whichever model was loaded first, forever,
+    // regardless of voiceId -- this is why switching voices "locked" onto
+    // the first one no matter how long you waited or which voice you
+    // picked. TtsSession._instance is a plain (non-private) static
+    // property, so clearing it here forces a genuine fresh instance --
+    // and therefore a genuine re-download/re-init -- every time this app
+    // has already decided (via the cache check above) that it actually
+    // needs a different voice.
+    piperTTS.TtsSession._instance = null;
     const session = await piperTTS.TtsSession.create({
       voiceId,
       wasmPaths: PIPER_WASM_PATHS,
