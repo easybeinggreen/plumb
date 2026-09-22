@@ -1261,6 +1261,7 @@ async function ensurePiperVoice(voiceId) {
   if (AU_SPEAKER_IDS[voiceId] !== undefined) {
     try {
       testVoiceBtn.textContent = 'loading voice…';
+      try { Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true }); } catch (e) {}
       await ensureAuModelLoaded(p => { testVoiceBtn.textContent = `Downloading… ${Math.round(p.loaded * 100 / p.total)}%`; });
       const session = new AuVoiceSession(voiceId);
       if (seq === piperRequestSeq) {
