@@ -775,9 +775,12 @@ function populateVoiceList() {
   });
   voiceSelect.appendChild(piperGroup);
   if (window.speechSynthesis) {
-    const voices = window.speechSynthesis.getVoices();
+    // Microsoft's SAPI voices are excluded outright (not just deprioritised)
+    // -- the owner found them awful on listening, so they're never offered,
+    // even as a fallback when no Google/Samantha/Daniel voice is available.
+    const voices = window.speechSynthesis.getVoices().filter(v => !v.name.includes('Microsoft'));
     const englishVoices = voices.filter(v => v.lang.startsWith('en') &&
-      (v.name.includes('Google') || v.name.includes('Microsoft') || v.name.includes('Samantha') || v.name.includes('Daniel')));
+      (v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Daniel')));
     const usedVoices = englishVoices.length > 0 ? englishVoices : voices.filter(v => v.lang.startsWith('en'));
     if (usedVoices.length > 0) {
       const browserGroup = document.createElement('optgroup');
@@ -1139,26 +1142,43 @@ function renderBreakGauge(liveContinuousMin = 0) {
 }
 renderBreakGauge();
 
+// Bumped on every call so a slow, superseded request can tell it's stale by
+// the time it resolves -- without this, switching voices while an earlier
+// voice was still downloading could let that earlier download finish LATER
+// and silently overwrite the newer voice you'd already switched to, so
+// "test voice" kept playing the first voice no matter what you picked next.
+let piperRequestSeq = 0;
+
 async function ensurePiperVoice(voiceId) {
-  if (piperSession && piperSessionVoice === voiceId) return true;
+  if (piperSession && piperSessionVoice === voiceId) return piperSession;
+  const seq = ++piperRequestSeq;
   try {
     testVoiceBtn.textContent = 'loading voice…';
     try { Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true }); } catch (e) {}
-    piperSession = await piperTTS.TtsSession.create({
+    const session = await piperTTS.TtsSession.create({
       voiceId,
       wasmPaths: PIPER_WASM_PATHS,
       progress: p => { testVoiceBtn.textContent = `Downloading… ${Math.round(p.loaded * 100 / p.total)}%`; }
     });
-    await piperSession.waitReady;
-    piperSessionVoice = voiceId;
-    testVoiceBtn.textContent = 'test voice';
-    updateVoiceReady(true);
-    return true;
+    await session.waitReady;
+    // Only adopt this as the shared cached voice if nothing newer has been
+    // requested since -- this call's own caller still gets its session
+    // either way (returned below), so playback is always correct even when
+    // the shared cache is deliberately left alone here.
+    if (seq === piperRequestSeq) {
+      piperSession = session;
+      piperSessionVoice = voiceId;
+      testVoiceBtn.textContent = 'test voice';
+      updateVoiceReady(true);
+    }
+    return session;
   } catch (err) {
     console.warn('Piper:', err);
-    testVoiceBtn.textContent = 'test voice';
-    updateVoiceReady(false);
-    return false;
+    if (seq === piperRequestSeq) {
+      testVoiceBtn.textContent = 'test voice';
+      updateVoiceReady(false);
+    }
+    return null;
   }
 }
 
@@ -1587,9 +1607,9 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
     }
   }
   try {
-    const ok = await ensurePiperVoice(currentVoiceId);
-    if (ok) {
-      const wav = await piperSession.predict(text);
+    const session = await ensurePiperVoice(currentVoiceId);
+    if (session) {
+      const wav = await session.predict(text);
       const buffer = await audioCtx.decodeAudioData(await wav.arrayBuffer());
       // Unlike speechSynthesis (cancelled above), nothing was stopping a
       // still-playing Piper buffer before starting the next one -- two
