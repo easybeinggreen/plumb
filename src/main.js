@@ -739,6 +739,8 @@ const PIPER_VOICES = [
   { id: 'en_GB-jenny_dioco-medium', name: 'Jenny — UK female, bright' },
   { id: 'en_GB-aru-medium', name: 'Aru — UK, low & brisk' },
   { id: 'en_GB-semaine-medium', name: 'Semaine — UK, measured' },
+  { id: 'en_AU-angus', name: 'Angus — AU male, literary (large download)' },
+  { id: 'en_AU-matilda', name: 'Matilda — AU female, literary (large download)' },
 ];
 // Alba is Piper's Scottish English female voice. The default used to be the
 // browser's 'Google UK English Female' -- a robotic voice that any browser or
@@ -1142,6 +1144,110 @@ function renderBreakGauge(liveContinuousMin = 0) {
 }
 renderBreakGauge();
 
+// ---- Australian community voices (Angus, Matilda) ---------------------------
+// piper-tts-web's built-in PATH_MAP only knows the official rhasspy voices, all
+// served from one fixed Hugging Face repo, and its predict() hardcodes speaker
+// 0 with no way to pick a different one. Neither fits this voice: it's a
+// community model (DataCraftsmanAustralia/piper-en_AU-librivox-medium) on a
+// different repo, and it's a single file holding ten speakers selected by id.
+// So it's driven directly here instead, reusing the exact same
+// phonemizer/onnxruntime pipeline TtsSession itself uses internally (mirrors
+// piper-tts-web's own init()/predict() almost line for line) -- everything
+// else about the voice picker, caching and playback stays exactly as it is
+// for the official voices.
+const AU_MODEL_BASE = 'https://huggingface.co/DataCraftsmanAustralia/piper-en_AU-librivox-medium/resolve/main';
+const AU_SPEAKER_IDS = { 'en_AU-angus': 4, 'en_AU-matilda': 7 }; // ids from the model's own voice_to_speaker.yaml
+let auOrt = null, auPhonemize = null, auOnnxSession = null, auModelConfig = null, auLoadPromise = null;
+
+function auPcm2Wav(buffer, sampleRate) {
+  const headerLength = 44;
+  const view = new DataView(new ArrayBuffer(buffer.length * 2 + headerLength));
+  view.setUint32(0, 0x46464952, false); view.setUint32(4, view.buffer.byteLength - 8, true);
+  view.setUint32(8, 0x45564157, false); view.setUint32(12, 0x20746d66, false);
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, 2 * sampleRate, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  view.setUint32(36, 0x61746164, false); view.setUint32(40, 2 * buffer.length, true);
+  let p = headerLength;
+  for (let i = 0; i < buffer.length; i++) {
+    const v = buffer[i];
+    view.setInt16(p, v >= 1 ? 32767 : v <= -1 ? -32768 : (v * 32768) | 0, true);
+    p += 2;
+  }
+  return view.buffer;
+}
+
+// One shared ~75MB model file covers both Angus and Matilda -- once either has
+// loaded, switching to the other is instant (just a different speaker id per
+// predict() call), only the FIRST of the two pays the real download cost.
+async function ensureAuModelLoaded(progressCb) {
+  if (auOnnxSession) return;
+  if (!auLoadPromise) {
+    auLoadPromise = (async () => {
+      auOrt = await import('onnxruntime-web');
+      auOrt.env.allowLocalModels = false;
+      auOrt.env.wasm.numThreads = navigator.hardwareConcurrency;
+      auOrt.env.wasm.wasmPaths = PIPER_WASM_PATHS.onnxWasm;
+      // Reuses the exact phonemizer chunk piper-tts-web bundles for itself --
+      // a file-path import, not a package import, so it's unaffected by that
+      // package only declaring "." in its own package.json exports map.
+      const { createPiperPhonemize } = await import(
+        '../node_modules/@mintplex-labs/piper-tts-web/dist/piper-o91UDS6e.js'
+      );
+      auPhonemize = createPiperPhonemize;
+      const configRes = await fetch(`${AU_MODEL_BASE}/en_AU-librivox-medium.onnx.json`);
+      if (!configRes.ok) throw new Error(`AU model config: HTTP ${configRes.status}`);
+      auModelConfig = await configRes.json();
+      const modelRes = await fetch(`${AU_MODEL_BASE}/en_AU-librivox-medium.onnx`);
+      if (!modelRes.ok) throw new Error(`AU model: HTTP ${modelRes.status}`);
+      const total = Number(modelRes.headers.get('content-length') || 0);
+      const reader = modelRes.body.getReader();
+      let received = 0;
+      const chunks = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        progressCb == null ? void 0 : progressCb({ loaded: received, total });
+      }
+      const modelBuf = await new Blob(chunks).arrayBuffer();
+      auOnnxSession = await auOrt.InferenceSession.create(modelBuf);
+    })();
+  }
+  await auLoadPromise;
+}
+
+class AuVoiceSession {
+  constructor(voiceId) { this.speakerId = AU_SPEAKER_IDS[voiceId]; }
+  async predict(text) {
+    const input = JSON.stringify([{ text: text.trim() }]);
+    const phonemeIds = await new Promise((resolve, reject) => {
+      auPhonemize({
+        print: (data) => resolve(JSON.parse(data).phoneme_ids),
+        printErr: (message) => reject(new Error(message)),
+        locateFile: (url) => {
+          if (url.endsWith('.wasm')) return PIPER_WASM_PATHS.piperWasm;
+          if (url.endsWith('.data')) return PIPER_WASM_PATHS.piperData;
+          return url;
+        }
+      }).then((module) => module.callMain([
+        '-l', auModelConfig.espeak.voice, '--input', input, '--espeak_data', '/espeak-ng-data'
+      ]));
+    });
+    const sampleRate = auModelConfig.audio.sample_rate;
+    const { noise_scale, length_scale, noise_w } = auModelConfig.inference;
+    const feeds = {
+      input: new auOrt.Tensor('int64', phonemeIds, [1, phonemeIds.length]),
+      input_lengths: new auOrt.Tensor('int64', [phonemeIds.length]),
+      scales: new auOrt.Tensor('float32', [noise_scale, length_scale, noise_w]),
+      sid: new auOrt.Tensor('int64', [this.speakerId])
+    };
+    const { output: { data: pcm } } = await auOnnxSession.run(feeds);
+    return new Blob([auPcm2Wav(pcm, sampleRate)], { type: 'audio/x-wav' });
+  }
+}
+
 // Bumped on every call so a slow, superseded request can tell it's stale by
 // the time it resolves -- without this, switching voices while an earlier
 // voice was still downloading could let that earlier download finish LATER
@@ -1152,6 +1258,24 @@ let piperRequestSeq = 0;
 async function ensurePiperVoice(voiceId) {
   if (piperSession && piperSessionVoice === voiceId) return piperSession;
   const seq = ++piperRequestSeq;
+  if (AU_SPEAKER_IDS[voiceId] !== undefined) {
+    try {
+      testVoiceBtn.textContent = 'loading voice…';
+      await ensureAuModelLoaded(p => { testVoiceBtn.textContent = `Downloading… ${Math.round(p.loaded * 100 / p.total)}%`; });
+      const session = new AuVoiceSession(voiceId);
+      if (seq === piperRequestSeq) {
+        piperSession = session;
+        piperSessionVoice = voiceId;
+        testVoiceBtn.textContent = 'test voice';
+        updateVoiceReady(true);
+      }
+      return session;
+    } catch (err) {
+      console.warn('AU voice:', err);
+      if (seq === piperRequestSeq) { testVoiceBtn.textContent = 'test voice'; updateVoiceReady(false); }
+      return null;
+    }
+  }
   try {
     testVoiceBtn.textContent = 'loading voice…';
     try { Object.defineProperty(navigator, 'hardwareConcurrency', { value: 1, configurable: true }); } catch (e) {}
