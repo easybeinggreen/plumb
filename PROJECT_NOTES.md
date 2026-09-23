@@ -8,7 +8,161 @@ what's still open. Update it when you make a decision worth remembering, not
 after every commit. Written for a reader who may have no chat history at all —
 if you're that reader, this file plus git log/PRs should be enough.
 
-## Handover — 2026-09-20 (READ THIS FIRST)
+## Handover — 2026-09-23 (READ THIS FIRST — supersedes 2026-09-20 below wherever they disagree)
+
+Written because the owner may be about to move to a different Claude account, which would lose this
+conversation's memory and the claude.ai doc referenced below -- everything that matters from this session is
+captured here instead, in the repo, so it survives that. The 2026-09-20 section right below this one is still
+correct for everything it covers that this section doesn't touch (architecture, secrets, general "how to work
+here" facts) -- read both.
+
+### 1. What actually changed and shipped (all pushed to `main`, deployed)
+
+- **Hydration model reworked.** The day-window used to be "first check-in + 9 hours"; it's now an explicit
+  **working hours** setting (Settings → hydration, default **08:00–16:00**), and the default daily target
+  dropped from 2000ml to **1000ml** (half of the usual ~2L guidance, reasoned as "roughly half your waking
+  day"). The 300ml-behind trigger itself was deliberately left as a flat amount, not scaled to the new lower
+  target -- owner's explicit call ("if I'm 300 behind I'm 300 behind"). The owner's own live Supabase row
+  (`user_id = 'Paul'`) was updated directly via migration to match (`hydration_target_ml: 1000`,
+  `extras.hydrationPace: {start: "08:00", end: "16:00"}`) -- new devices/fresh installs get the new defaults
+  automatically; existing saved settings needed this one-time push.
+- **Morning greeting varied** (`MORNING_PHRASES`, 5 lines, picked at random -- the one exception to every other
+  group's step-through-in-order pattern) and **break-return phrasing widened** (7 long-break + 9 short-break
+  variants) so it stops repeating "that was a nice stretch" -- direct owner feedback that it always said the
+  same thing.
+- **Camera-ready AI review tuned down**: the prompt (`supabase/functions/camera-review/prompt.js`) now
+  explicitly tells the model to ignore a few stray flyaway hairs and only flag genuinely messy hair -- owner
+  reported it fixating on normal minor flyaways. Deployed directly via the Supabase edge-function deploy tool
+  (version 7); the repo's copy of `index.ts`/`prompt.js` matches what's actually live.
+- **Chin tucks now link to a real demo video** the owner chose (`https://www.youtube.com/shorts/pAps-PUqwv0`)
+  instead of a generic YouTube search -- `src/deskgym.js` gained an optional `video` field per entry that, when
+  present, wins over the search-link fallback; the other four stretches are unchanged (still search links).
+- **Two real bugs found and fixed in Piper voice switching** (see "The real Piper bug" below for the full
+  story -- worth reading in full if this area breaks again). Net effect: switching voices in Settings now
+  actually works, confirmed by the owner listening to real captured audio, not just by code review.
+- **Microsoft's browser-voice (SAPI) entries removed outright** from the voice picker's "browser voices" group
+  -- not deprioritised, excluded even as a fallback when no Google/Samantha/Daniel voice exists on a device.
+  Owner's words: "they are awful."
+- **Piper voice roster expanded from 1 to 10.** Discovered mid-session that 8 official Piper voices were
+  *already* wired in code (`PIPER_VOICES` in `src/main.js`) but never mentioned to the owner or exercised --
+  Alan, Nathan, Alba, Southern, Cori, Jenny, Aru, Semaine (all UK accents, mixed genders). Added two more:
+  **Angus** and **Matilda**, a community Australian-English model (see below) -- all ten are free, local,
+  already deployed, and selectable today in Settings → voice.
+
+### 2. The real Piper bug (read this before touching voice-switching code again)
+
+Two separate, real bugs stacked on top of each other. Fixing only the first one was not enough --
+**confirmed the fix by listening to real captured audio, not by code review or byte/checksum comparison**,
+because Piper's model has genuine run-to-run randomness that makes byte-level comparison actively misleading
+(the same voice, same text, repeated, produces different output lengths -- checksums looked "different" for
+switched voices when it was actually just noise, more than once, before real audio settled it).
+
+1. **A real but secondary race** (`ce7131e`): `ensurePiperVoice()` cached the loaded voice in two shared
+   variables. If a slow download for voice A was still in flight when the owner switched to voice B, A's
+   download could finish *later* and silently clobber B's already-loaded session. Fixed with a request-sequence
+   counter so a superseded, late-finishing load can no longer overwrite a newer one.
+2. **The actual root cause** (`26966cd`), only found after the owner insisted the fix hadn't worked and a live
+   reproduction (see below) proved it: `piper-tts-web`'s `TtsSession` class is an **undocumented singleton**.
+   `TtsSession.create()` for a *different* `voiceId`, once any instance already exists, just relabels that same
+   instance's `.voiceId` property and returns it -- the actual loaded ONNX model (a private field) is **never
+   reloaded**. Confirmed directly against the live library in a browser console: `create('A')` then `create('B')`
+   returns the *identical object*. This is why switching voices "locked" onto the first one loaded, forever,
+   regardless of how long you waited or which voice you picked next -- fix #1 above was real and worth keeping,
+   but could never have fixed this. Fixed by clearing `piperTTS.TtsSession._instance = null` (a plain,
+   non-private static property) immediately before every `create()` call the app has already decided needs a
+   genuinely different voice.
+3. **How this was actually verified**, since it's a pattern worth reusing if audio bugs come up again: captured
+   the real `AudioContext.decodeAudioData` input via a monkey-patched hook in the live deployed app (not a
+   local mock), for a real sequence of voice switches through the real Settings UI, saved the raw bytes as
+   actual playable `.wav` files, and sent them to the owner to listen to directly -- twice, once proving the bug
+   was still present after fix #1 alone, once confirming it was gone after fix #2. The owner's ears caught what
+   byte/length/checksum comparison could not.
+
+### 3. Angus and Matilda (Australian voices) -- how they actually work
+
+Not an official Piper voice -- Piper ships no `en_AU` locale at all (confirmed against the real
+`rhasspy/piper-voices` Hugging Face repo listing: only `en_GB` and `en_US` exist). The owner asked for
+Australian voices anyway, so this uses a community model instead:
+**`DataCraftsmanAustralia/piper-en_AU-librivox-medium`** on Hugging Face, one file, ten speakers. Two real
+library limits meant it couldn't just be added to `PIPER_VOICES` like the others:
+
+- `piper-tts-web`'s built-in `PATH_MAP` only knows the one official HF repo it ships with.
+- Its `predict()` hardcodes speaker id `0`, with no public way to select a different speaker.
+
+So it's driven by a small hand-written path instead (`AU_MODEL_BASE`, `AU_SPEAKER_IDS`, `ensureAuModelLoaded`,
+`AuVoiceSession` -- all in `src/main.js`, right before `ensurePiperVoice`), which mirrors
+`piper-tts-web`'s own `init()`/`predict()` almost line for line: same phonemizer chunk (imported by a relative
+file path into `node_modules`, not a package import, since the package's own `package.json` `exports` map only
+declares `"."`), same `onnxruntime-web`, same WASM paths, just pointed at the different repo and given an
+explicit `sid` tensor per call. `ensurePiperVoice()` branches to this path early for `en_AU-angus` /
+`en_AU-matilda`, before reaching any of the official-voice / singleton-workaround code.
+
+- **The voice: Angus, not "Algy."** The owner initially asked for "Algy" -- that's the *narrator's pen name* in
+  the model's voice table, not a voice id. The actual voice slot he narrates is called Angus (speaker id 4,
+  male). Matilda is speaker id 7 (female) and *is* a real voice name in this model.
+- **~75MB shared file.** Both voices come from the one download -- whichever is picked first pays the real cost
+  (confirmed live: took a genuine ~15-20s), the other loads near-instantly afterward (confirmed live: Matilda
+  right after Angus needed no new download).
+- **Known quality caveat, from the model's own card, not yet independently judged by the owner beyond a first
+  listen of the author's own demo samples**: trained on 19th/early-20th-century LibriVox audiobook narration --
+  a formal literary reading style, not conversational, and it struggles with modern short phrasing, numbers, and
+  abbreviations, which is most of what Plumb actually says. The author's own card says it was "still improving
+  slowly when training was paused." Owner said "go for" both after hearing the author's official demo clips
+  (fixed sentence, not Plumb's own wording) -- **worth a follow-up check once the owner has actually heard them
+  speak a real Plumb nudge line**, not just the demo sentence, since that's a materially different test.
+
+### 4. ElevenLabs: tried, abandoned, don't restart without reading this
+
+The owner wanted 4+ distinct gendered voices and started down the ElevenLabs path before landing on expanding
+Piper instead (see above). Kept here so nobody repeats the same dead end:
+
+- **Free-plan API access is blocked entirely** -- confirmed directly: a real API key with real TTS permission
+  got `402 payment_required "Free users cannot use library voices via the API"` for *both* a Voice Library
+  voice *and* a plain default premade voice (Rachel). Not a library-specific restriction as the error message
+  implies -- free-plan API access to voice synthesis appears blocked outright, at least for this account.
+- **Manual generation via the website (not blocked) produced genuinely corrupted-sounding audio** on a bulk
+  run (35 clips in ~23 minutes) -- confirmed the files were NOT truncated downloads (a byte-level MP3 frame
+  parity check on all 35 passed clean), so the corruption was baked into the actual generated audio content
+  itself, most likely free-tier generation congestion under rapid back-to-back requests. All 35 clips from that
+  run are unusable and were never salvaged or aligned to specific phrases -- not worth the effort once the
+  audio itself was bad.
+- **Decision: not pursuing further.** Owner: "leave them out, not needed."
+- A `voice-gen/` folder (phrases.json, voices.json, a real `generate.mjs` script that would batch-call the
+  ElevenLabs API once entries are added to `voices.json`) was built and works, but **was deliberately never
+  committed to git** -- it sits locally only, untracked, along with an uncommitted `.gitignore` addition for
+  `voice-gen/output`. If ElevenLabs is ever revisited, that tooling still exists locally on this machine (not
+  guaranteed to survive an account switch, but does survive independent of the Claude account since it's just
+  files on disk) -- otherwise it can be safely deleted, nothing else depends on it.
+
+### 5. The "Plumb spoken phrases" doc -- now mirrored into the repo, doc itself is NOT durable
+
+A claude.ai doc (`https://claude.ai/code/artifact/f7c7bc8e-ac2c-4236-bbef-7ca21b11dfe8`) was created to list
+every spoken line for the (later-abandoned) ElevenLabs recording pass, and the owner made real wording edits
+in it while reviewing. **That doc lives on a Claude account and will not survive an account switch** -- its
+current content (as of rev 83) has been copied verbatim into **`docs/spoken-phrases.md`** in this repo, which
+is now the durable copy.
+
+**Important, easy to miss: the owner's edited wording in that doc was never applied to `src/main.js`.** A
+handful of lines differ from the live code (trimmed break/stillness lines losing a trailing clause, the
+morning lines gaining "Lets calibrate", "Good change of scenery" replacing "Good stretch" in one short-break
+line, the calibrated line rewritten). Since Plumb now speaks these lines live via Piper rather than playing
+pre-recorded clips, this isn't moot the way it would be for a pure recording-prep doc -- **these edits are
+real candidate changes to what the app actually says, sitting unapplied**. Ask the owner whether to apply them
+before doing so; don't assume yes. `docs/spoken-phrases.md` spells out exactly which lines differ.
+
+The doc also has a second tab, "Lee recording checklist" -- a per-line checklist for a manual ElevenLabs
+recording pass that got partway through (36 of ~79 lines ticked) before the whole ElevenLabs path was
+abandoned. Harmless leftover, not acted on further, also not durable (same account risk as the main tab).
+
+### 6. Also cleaned up, not code but worth knowing
+
+- **A local Supabase MCP server config in `~/.claude.json` had an expired token** and was removed (backed up
+  first as `~/.claude.json.bak-before-supabase-removal`, a plaintext copy of the old token -- delete that backup
+  once you've confirmed nothing needed recovering from it). The **account-managed Supabase connector** is the
+  one actually used for everything in this project (migrations, edge function deploys) and was untouched --
+  confirm it's still connected if a future session reports Supabase tool calls failing with "Unauthorized."
+
+## Handover — 2026-09-20 (superseded by 2026-09-23 above wherever they disagree; still correct for everything else)
 
 This section is the single source of truth for "what is true right now". The
 rest of the file is a long dated log kept for archaeology; where it disagrees
