@@ -1776,13 +1776,13 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
 const LEFT_PHRASES = ["You're leaning left — straighten up.", "Left drift — bring head centre.", "Tilting left — correct it.", "Drifting left — ease back to centre.", "A little left lean — straighten up.", "Left side's dropped — bring it back."];
 const RIGHT_PHRASES = ["Leaning right — centre yourself.", "Right drift — straighten up.", "Tilting right — adjust.", "Drifting right — ease back to centre.", "A little right lean — straighten up.", "Right side's dropped — bring it back."];
 const SLUMP_PHRASES = ["Neck's dropping — sit taller.", "Neck sinking — lengthen spine.", "Shoulders dropping — open up.", "Reset your posture.", "Sinking a bit — lift through the chest.", "Spine's rounding — sit a touch taller.", "Shoulders back and down — reset."];
-const LEAN_PHRASES = ["You've drifted in close — ease back from the screen.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen.", "A bit close to the screen — ease back.", "Crept toward the monitor — give it room.", "Pull back a little from the screen."];
+const LEAN_PHRASES = ["You've drifted in close — ease back.", "Getting close to the monitor — sit back a little.", "Give yourself some space from the screen.", "A bit close to the screen — ease back.", "Crept toward the monitor — give it room.", "Pull back a little from the screen."];
 const SINK_PHRASES = ["You've slid down in the seat — sit back up.", "Slipping low in the chair — scoot back and sit tall.", "You've sunk down — reposition and sit up.", "Chair's swallowing you — sit up in it.", "Settle back up in your seat."];
-const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, stretch, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it.", "Good time for a stretch — up you get.", "Your body could use a change of scenery.", "Stand, shake it out, then carry on."];
-const STILLNESS_PHRASES = ["You've held the same shape a while — shift position, even briefly.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
+const BREAK_PROMPT_PHRASES = ["Time for a break — stand up, come back refreshed.", "You've been sitting a while — step away.", "Take a short break — enjoy it.", "Good time for a stretch — up you get.", "Your body could use a change of scenery.", "Stand, shake it out, then carry on."];
+const STILLNESS_PHRASES = ["You've held the same shape a while — shift position.", "Time to change something — stand, stretch, or just re-settle.", "Give your spine a change of scenery for a moment.", "Same spot a while — a small shift will do.", "Bodies like variety — change something, even slightly.", "Worth a little wiggle — you've been still a while."];
 const BREAK_RETURN_LONG_PHRASES = ["Great long break — you're refreshed.", "Nice long break — welcome back.", "That was a proper break — good stuff.", "Well rested — good to have you back.", "Welcome back — that was a well-earned rest.", "Back again — hope you got some fresh air.", "Good to see you — that break did you good."];
-const BREAK_RETURN_SHORT_PHRASES = ["Nice one — welcome back.", "Good stretch — back to it.", "That's the way — short and sweet.", "Welcome back — hope that helped.", "Right on time — back at it.", "Good reset — off you go.", "Back already — nicely done.", "Welcome back. Ease into it.", "Good move — a little movement goes a long way."];
-const MORNING_PHRASES = ["Good morning! A new day of posture tracking has started.", "Morning! Ready when you are — let's make it a good day.", "Good morning. Fresh day, fresh start — let's go.", "Hello, and welcome to a brand new day.", "Morning! Sit tall, and let's begin."];
+const BREAK_RETURN_SHORT_PHRASES = ["Nice one — welcome back.", "Good change of scenery — back to it.", "That's the way — short and sweet.", "Welcome back — hope that helped.", "Right on time — back at it.", "Good reset — off you go.", "Back already — nicely done.", "Welcome back. Ease into it.", "Good move — a little movement goes a long way."];
+const MORNING_PHRASES = ["Good morning! A new day of posture tracking has started. Lets calibrate", "Morning! Ready when you are — let's make it a good day. Calibrate", "Good morning. Fresh day, fresh start — let's calibrate", "Hello, and welcome to a brand new day. Lets calibrate", "Morning! Sit tall, and let's begin calibrating."];
 const GLARE_LEFT_PHRASES = ["Strong light on your left — worth adjusting the blind.", "It's gotten bright on your left side.", "Left side's quite bright now — check the light."];
 const GLARE_RIGHT_PHRASES = ["Strong light on your right — worth adjusting the blind.", "It's gotten bright on your right side.", "Right side's quite bright now — check the light."];
 // Eye-comfort framing, not appearance -- deliberately not "you look washed
@@ -3489,7 +3489,7 @@ function performCalibration() {
     stillnessRef = null;
     lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
-    speak("Calibrated. That's your good posture.", false, true);
+    speak("Calibrated. That's set your good posture.", false, true);
     addAlertToFeed('calibration', 'Posture calibrated');
     logCalibrationEvent();
     calibrateBtn.textContent = 'recalibrate posture';

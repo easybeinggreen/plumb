@@ -6,13 +6,8 @@ doc rev 83, because that doc lives on a Claude account and would be lost on an a
 the durable copy. It was originally drafted for an ElevenLabs recording pass that was abandoned (see
 `PROJECT_NOTES.md`'s 2026-09-23 handover) once Piper became the committed voice path.
 
-**Important: this wording has NOT been applied to `src/main.js`.** Piper speaks straight from the phrase-array
-strings in the code, so unlike a pre-recorded-clip plan, these edits are directly relevant to what the live app
-actually says -- but they're still only sitting in this doc/file, not in the code. A handful of lines differ
-from what's currently live (trimmed break/stillness lines, the morning lines gained a trailing "Lets calibrate",
-"Good change of scenery" replacing "Good stretch" in one short-break line, "Calibrated. That's set your good
-posture." replacing the original). **Ask the owner whether to apply these to `src/main.js` before assuming
-they're wanted** -- don't apply silently.
+This wording **has been applied to `src/main.js`** (2026-09-23, owner confirmed) -- this file and the code now
+match. Piper speaks straight from these phrase-array strings, so this is genuinely what the live app says.
 
 {N} marks a live variable (a number spoken aloud). The weekly-goal and reminder lines contain text written
 elsewhere and can never be fixed wording. Within each group Plumb steps through the lines in order (the morning

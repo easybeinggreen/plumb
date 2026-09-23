@@ -142,13 +142,10 @@ in it while reviewing. **That doc lives on a Claude account and will not survive
 current content (as of rev 83) has been copied verbatim into **`docs/spoken-phrases.md`** in this repo, which
 is now the durable copy.
 
-**Important, easy to miss: the owner's edited wording in that doc was never applied to `src/main.js`.** A
-handful of lines differ from the live code (trimmed break/stillness lines losing a trailing clause, the
-morning lines gaining "Lets calibrate", "Good change of scenery" replacing "Good stretch" in one short-break
-line, the calibrated line rewritten). Since Plumb now speaks these lines live via Piper rather than playing
-pre-recorded clips, this isn't moot the way it would be for a pure recording-prep doc -- **these edits are
-real candidate changes to what the app actually says, sitting unapplied**. Ask the owner whether to apply them
-before doing so; don't assume yes. `docs/spoken-phrases.md` spells out exactly which lines differ.
+The owner's edited wording in that doc **has now been applied to `src/main.js`** (2026-09-23, owner confirmed
+"apply the wording changes to the code") -- `LEAN_PHRASES`, `BREAK_PROMPT_PHRASES`, `STILLNESS_PHRASES`,
+`BREAK_RETURN_SHORT_PHRASES`, `MORNING_PHRASES`, and the calibrated line all match the doc/`docs/spoken-phrases.md`
+now. `docs/spoken-phrases.md` is genuinely current, not just a snapshot of a decision still pending.
 
 The doc also has a second tab, "Lee recording checklist" -- a per-line checklist for a manual ElevenLabs
 recording pass that got partway through (36 of ~79 lines ticked) before the whole ElevenLabs path was
