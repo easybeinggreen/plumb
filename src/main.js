@@ -1183,6 +1183,10 @@ function auPcm2Wav(buffer, sampleRate) {
 async function ensureAuModelLoaded(progressCb) {
   if (auOnnxSession) return;
   if (!auLoadPromise) {
+    // A failed attempt (a real risk at ~75MB) must not leave a rejected
+    // promise cached forever -- without this, one dropped connection would
+    // permanently break both AU voices for the rest of the page session,
+    // with no way to retry short of a full reload.
     auLoadPromise = (async () => {
       auOrt = await import('onnxruntime-web');
       auOrt.env.allowLocalModels = false;
@@ -1213,7 +1217,10 @@ async function ensureAuModelLoaded(progressCb) {
       }
       const modelBuf = await new Blob(chunks).arrayBuffer();
       auOnnxSession = await auOrt.InferenceSession.create(modelBuf);
-    })();
+    })().catch((err) => {
+      auLoadPromise = null; // let the next attempt actually retry, not just replay this failure
+      throw err;
+    });
   }
   await auLoadPromise;
 }
@@ -1633,7 +1640,7 @@ function openDeskGym() {
       link.href = s.video || youtubeSearchUrl(s.query);
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
-      link.textContent = 'find a demo on YouTube \u2192';
+      link.textContent = (s.video ? 'watch a demo on YouTube' : 'find a demo on YouTube') + ' \u2192';
       item.append(name, what, link);
       list.appendChild(item);
     });
