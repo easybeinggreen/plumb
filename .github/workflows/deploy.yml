@@ -1,14 +1,12 @@
-name: Summarize, build, and deploy
+name: Build and deploy
 
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: '0 8 * * 1'
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -17,39 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepare-summary:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    continue-on-error: true          # don't block the rest of the workflow on failure
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Generate AI summary from Supabase
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: node scripts/generate-summary.cjs
-
-      - name: Commit updated summary
-        if: success()
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/data/summary.json
-          git diff --staged --quiet || git commit -m "Update AI summary"
-          git diff --staged --quiet || git push
-
   build-and-deploy:
-    needs: prepare-summary
-    # Always run, even if prepare-summary fails or is skipped
-    if: always() && !cancelled()
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -63,7 +29,9 @@ jobs:
         with:
           node-version: '22'
 
-      - run: npm install
+      # npm ci, not npm install: the AU voices import a content-hashed file from
+      # inside piper-tts-web (see src/main.js), so the exact locked version matters.
+      - run: npm ci
 
       - run: npm run build
         env:

@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.0",
-    "@mintplex-labs/piper-tts-web": "^1.0.4"
+    "@mintplex-labs/piper-tts-web": "^1.0.4",
+    "onnxruntime-web": "1.27.0"
   },
   "devDependencies": {
     "vite": "^8.2.0"
