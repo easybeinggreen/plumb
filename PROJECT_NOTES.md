@@ -42,7 +42,14 @@ respond to leaning left/right within a few seconds.
 - **Weekly analysis** was failing since OpenRouter retired the pinned free slug (404 on 2026-09-25); it now uses
   `openrouter/free`. The serving model is stored in `weekly_goals.model` -- check it if a week reads oddly.
 - Popup (PiP) layout scales with the window (it was a fixed 170px card / 96px glyph). Checked at several sizes
-  in a browser pane; not yet seen in a real PiP window.
+  in a browser pane; not yet seen in a real PiP window. Default size is now **160x152** (owner asked for 20% less
+  in each dimension than the original 200x190, 2026-09-26). Chrome treats the requested size as a hint: it may
+  enforce a minimum and remembers a size the user has dragged the window to, so an already-open or previously
+  resized popup can stay bigger; the content now scales down to any size.
+  The on-screen message (toast) in the popup is now the app's text green (`--ink`, solid) with light orange text
+  (`#FFAA66`, 6.1:1 contrast; the old near-black at 95% was "gloomy"), split into two balanced rows
+  (`toastRows`, breaks after punctuation near the middle) and a bigger font (13px at 160x152, up from 11px).
+  Orange text on the brighter accent green (`--accent`) fails contrast (best ~3:1), so don't use that pairing.
 - **Angus and Matilda never made a sound (fixed 2026-09-26, found by reproducing in a browser pane).** They
   downloaded and synthesised fine, but `auPcm2Wav` wrote its four WAV chunk tags as big-endian integers, storing
   "FFIR"/"EVAW" instead of "RIFF"/"WAVE", so `decodeAudioData` rejected every clip ("Unable to decode audio data").
