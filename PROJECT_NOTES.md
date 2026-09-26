@@ -69,13 +69,16 @@ about 100px); the countdown digits are unchanged. Measured at a 1280x800 viewpor
 (69px / about 20% less), and the row fits (436 of 436px). Not verified: real data in the gauge/brightness box (the
 pane has no webcam; values were injected into the DOM) or the ring's words via the real render path.
 
-**Ambient brightness and camera exposure (owner, 2026-09-26): wants the light read BEFORE the webcam's auto-exposure
-compensates**, because the camera's own light does not help with eye strain from a window. Not started. Next step is
-data, not code: on the laptop with the camera on, run in the browser console
-`const t = document.querySelector('video').srcObject.getVideoTracks()[0]; [t.getCapabilities(), t.getSettings()]`
-and see whether the camera reports exposure time / ISO / compensation. If it does, scene light can be estimated from
-pixel brightness divided by exposure; if not, the alternative is locking exposure, which changes how "how do I
-look?" sees the face (trade-off recorded earlier in this file). Untested: needs the real camera.
+**Ambient brightness and camera exposure: DECIDED, leave as is (owner, 2026-09-26).** The owner would like the light
+read before the webcam's auto-exposure compensates (the camera's own light does not help with eye strain from a
+window), but chose not to pursue it: it may vary from camera to camera and is not worth the complexity. Do not restart
+this without asking. What was learned, in case it is ever revisited: the laptop camera (HP Wide Vision 5MP, 640x480
+stream) exposes `exposureTime` (about 1 ms to 250 ms, in Chrome's 100-microsecond units), `exposureMode`
+(continuous/manual), `exposureCompensation` and `brightness` through `getCapabilities()`, with no ISO or gain. Its
+reported `exposureTime` was 9.765625, the minimum, in a bright scene, so at that moment the camera had no room left to
+shorten the exposure. Never tested: whether that value updates live in continuous mode (a 25-second cover-the-lens
+console test was offered and not run). Locking manual exposure would change how "how do I look?" sees the face and
+may persist in the camera for other apps.
 
 **PARKED by the owner (do not start without asking): the dot's range in the popup.** The drawing is 170 units wide, the
 loop's edge is 58 out from the centre and the wall (dot edge at the drawing's edge) is 69.8, i.e. only 1.2x the
