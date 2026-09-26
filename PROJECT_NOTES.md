@@ -43,6 +43,19 @@ respond to leaning left/right within a few seconds.
   `openrouter/free`. The serving model is stored in `weekly_goals.model` -- check it if a week reads oddly.
 - Popup (PiP) layout scales with the window (it was a fixed 170px card / 96px glyph). Checked at several sizes
   in a browser pane; not yet seen in a real PiP window.
+- **Sleep-gap artifacts (found from the week report showing 98% slouching, one day at 250%, and "16h 40m away").**
+  When the laptop slept with Plumb open, whatever was open was closed at WAKE-UP time: a slouch block became a
+  single 15.33h `compression` event (id 17171, 2026-09-22 16:45 -> 09-23 08:05) and four overnight absences became
+  15.4-15.7h `away` events (ids 4409, 6950, 9917, 19187; 62h of "away" in total). `handleLoopGap` (src/main.js) now
+  detects a >30s gap between frames, ends everything open at the last frame actually seen (breaks are ended
+  silently) and logs the gap as `not_tracking`. **Data repair, applied 2026-09-26:** those five rows were relabelled
+  `not_tracking` (to revert: set `type` back to `away` for 4409/6950/9917/19187 and `compression` for 17171), and the
+  matching `posture_daily_summary` cache rows were deleted and rebuilt by running `rollup.yml` (the rollup only
+  upserts, so it never removes stale cache rows -- remember that if raw rows are ever corrected). After the repair
+  the week showed 19.0h slouching of 35.3h tracked (54%), away 1.3h. Same-shaped older rows for the pre-name
+  `default` user (2026-08-05..21, up to 29h) were NOT touched. The weekly analysis also now ignores any single slouch
+  block over 2 hours. **Still open:** even after the repair most days read 54-74% "slouching", which suggests the
+  calibration baseline / tolerances drift over a day rather than genuinely slouching that much -- worth a look.
 - Smaller: Alan removed from the voices; spoken weekly-goal line removed (it overlapped the morning "let's
   calibrate"); morning greeting only 05:00-12:00; stopping the camera during a break no longer leaves a phantom
   presence timer; a failed camera start releases the stream; events the server rejects with a 4xx are dropped
