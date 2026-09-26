@@ -59,14 +59,23 @@ if you're that reader, this file plus git log/PRs should be enough.
 ### "today" panel layout (branch `fix/today-panel-layout`, 2026-09-26) + a parked popup issue
 
 **Panel (hydration / ambient brightness / break ring):** owner's list, all done. A "Hydration" heading now sits over
-the gauge (same style as "Ambient brightness"); the numbers ("550 / 1000ml", pace text) moved to the LEFT of the
-gauge, which is 124px tall (was 150); the four size buttons are icon-then-label pills in a 2x2 grid under it. The
+the gauge (same style as "Ambient brightness"); the numbers moved to the LEFT of the gauge as a fraction (consumed, a rule, the target) with the pace wording
+under it in the same small text as the brightness caption (it sits in the space beside the gauge, so it costs no
+height; putting it under the gauge instead made the card 20px taller). The gauge is 124px tall (was 150); the four size buttons are icon-then-label pills in a 2x2 grid under it. The
 three columns line up on the gauge's midpoint. The brightness readout now says how much: "brighter on left by 14%"
 (percentage points on the same 0-100 scale as "71% bright" and the 12% glare-nudge threshold in settings). In the
 break ring the words ("break due", "on a break") are 18px (was 21px, which spilled over the ring: 105px of text in
 about 100px); the countdown digits are unchanged. Measured at a 1280x800 viewport: the card is 280px tall, was 349px
 (69px / about 20% less), and the row fits (436 of 436px). Not verified: real data in the gauge/brightness box (the
 pane has no webcam; values were injected into the DOM) or the ring's words via the real render path.
+
+**Ambient brightness and camera exposure (owner, 2026-09-26): wants the light read BEFORE the webcam's auto-exposure
+compensates**, because the camera's own light does not help with eye strain from a window. Not started. Next step is
+data, not code: on the laptop with the camera on, run in the browser console
+`const t = document.querySelector('video').srcObject.getVideoTracks()[0]; [t.getCapabilities(), t.getSettings()]`
+and see whether the camera reports exposure time / ISO / compensation. If it does, scene light can be estimated from
+pixel brightness divided by exposure; if not, the alternative is locking exposure, which changes how "how do I
+look?" sees the face (trade-off recorded earlier in this file). Untested: needs the real camera.
 
 **PARKED by the owner (do not start without asking): the dot's range in the popup.** The drawing is 170 units wide, the
 loop's edge is 58 out from the centre and the wall (dot edge at the drawing's edge) is 69.8, i.e. only 1.2x the

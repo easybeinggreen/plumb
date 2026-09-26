@@ -378,9 +378,15 @@
      icon-then-label pills in a 2x2 grid, to save vertical space. */
   .hydration-col { width: 150px; }
   .hydration-main { display: flex; align-items: center; justify-content: center; gap: 10px; }
-  .hydration-numbers { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; }
-  .hydration-numbers .hydration-readout { text-align: right; }
-  .hydration-numbers .hydration-readout b { font-size: 17px; }
+  /* consumed over a rule over the target, so it reads as a fraction, with the pace wording under it in the
+     same small text as the brightness caption (it sits in the space beside the gauge, so it costs no height) */
+  .hydration-left { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
+  .hydration-fraction { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
+  .hydration-fraction .hydration-readout { text-align: center; }
+  .hydration-num { border-bottom: 1.5px solid var(--ink); padding: 0 4px 3px; }
+  .hydration-num b { font-size: 17px; }
+  .hydration-den { padding-top: 3px; }
+  #hydrationPaceText:empty { display: none; }
   .hydration-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; width: 100%; margin-top: 2px; }
   .hydration-btn {
     display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 5px; padding: 4px 6px;
@@ -593,9 +599,11 @@
           <div class="gauge-col hydration-col">
             <div class="gauge-heading">Hydration</div>
             <div class="hydration-main">
-              <div class="hydration-numbers">
-                <div class="hydration-readout"><b id="hydrationConsumed">0</b></div>
-                <div class="hydration-readout small">/ <span id="hydrationTarget">1000</span>ml</div>
+              <div class="hydration-left">
+                <div class="hydration-fraction">
+                  <div class="hydration-readout hydration-num"><b id="hydrationConsumed">0</b></div>
+                  <div class="hydration-readout small hydration-den"><span id="hydrationTarget">1000</span>ml</div>
+                </div>
                 <div class="hydration-readout small" id="hydrationPaceText"></div>
               </div>
               <div class="hydration-gauge">
