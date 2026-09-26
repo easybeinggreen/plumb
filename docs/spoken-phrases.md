@@ -17,7 +17,7 @@ greeting is the one exception, picked at random).
 
 **Morning greeting** -- plays once, when a new calendar day begins while Plumb is running.
 
-- Good morning! A new day of posture tracking has started. Lets calibrate
+- Good morning! A new day of tracking has started. Lets calibrate
 - Morning! Ready when you are — let's make it a good day. Calibrate
 - Good morning. Fresh day, fresh start — let's calibrate
 - Hello, and welcome to a brand new day. Lets calibrate
@@ -25,7 +25,7 @@ greeting is the one exception, picked at random).
 
 **After calibrating**
 
-- Calibrated. That's set your good posture.
+- Calibrated. That's set your good position.
 
 **Weekly goal** -- no longer spoken (removed 2026-09-26: it overlapped the morning "let's calibrate" line). The goal
 is still shown in the "this week" panel.
@@ -55,7 +55,7 @@ seconds while it continues.
 - Neck's dropping — sit taller.
 - Neck sinking — lengthen spine.
 - Shoulders dropping — open up.
-- Reset your posture.
+- Reset your position.
 - Sinking a bit — lift through the chest.
 - Spine's rounding — sit a touch taller.
 - Shoulders back and down — reset.

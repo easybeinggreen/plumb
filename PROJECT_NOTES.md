@@ -54,6 +54,9 @@ respond to leaning left/right within a few seconds.
   ~1ms after the trigger), the calibration line is pre-generated as soon as the voice is ready, synthesis runs one
   at a time, and a line that finishes after a newer one has started is dropped instead of playing over it.
   Voices: Alba stays the default; Alan and Cori removed (8 Piper voices + Angus and Matilda now).
+  **Spoken lines must avoid the word "posture"** -- every Piper voice mispronounces it (owner, 2026-09-26). Say
+  "position" instead ("Calibrated. That's set your good position.", "Reset your position.", morning greeting
+  now just "a new day of tracking"). On-screen labels (e.g. "calibrate posture") are unaffected.
 - **Sleep-gap artifacts (found from the week report showing 98% slouching, one day at 250%, and "16h 40m away").**
   When the laptop slept with Plumb open, whatever was open was closed at WAKE-UP time: a slouch block became a
   single 15.33h `compression` event (id 17171, 2026-09-22 16:45 -> 09-23 08:05) and four overnight absences became
