@@ -19,6 +19,11 @@ if you're that reader, this file plus git log/PRs should be enough.
 - **Supabase project** `keacpowuykzcnwwdbjkd`. Edge functions: `camera-review` v7, `weekly-analysis` v2 (both
   `verify_jwt` off, deliberately: the app has no user auth; protection is daily caps + CORS + server-side key).
   New table `ai_summary`. Anthropic is not used anywhere any more (secret deleted); everything AI is OpenRouter free.
+- **Demo login created 2026-09-26:** an `app_settings` row `user_id = 'Demo'` (lateral tolerance 0.03, sustained 3s; every
+  other value copied from Paul's, voice left at the default Alba). Choosing the name Demo on a device loads it (checked in the
+  browser pane: sliders read 0.03 and 3). Undo: `delete from app_settings where user_id = 'Demo'` (via a migration).
+  At 0.03 the dot's wall (1.2x tolerance, see the parked popup item) sits at a 0.036 lean, so expect it to jump to the
+  side and stay there; it is proportionally the same as at 0.07.
 - **Demo on Wednesday 2026-09-30:** the owner sets up a separate 'Demo' login (high sensitivity: lateral tolerance
   0.03, sustained 3s). Calibration is now persisted per user for the same day (see "Calibration drift" below), so
   a reload keeps the morning's baseline; press "recalibrate" before the demo anyway so it matches the demo posture.
