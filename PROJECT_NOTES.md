@@ -61,28 +61,41 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
-### Summary panel (right-hand column, branch `feat/summary-panel`, 2026-09-26)
+### "last 7 days" panel and the two-point AI analysis (branch `feat/two-point-analysis`, 2026-09-26)
 
-The old "this week" panel (587px) and the alert feed (76px) were replaced by one tight panel, "summary", with two tabs:
-(Renamed by the owner afterwards: the tabs read "today so far" and "last 7 days", the AI button "7 days summary", and the goals
-heading "goals for the next 7 days"; the code and ids still say `today` / `week` / `weekly`.)
-- **today** (computed from the raw events on demand, NO AI): the wrap's headline and six rows (tracked, sitting plumb vs
-  yesterday, breaks, longest sit, most common, roughest hour). Loads on page load, on selecting the tab, and every 3
-  minutes while it is showing. Uses `buildDayWrap` (the same maths as the "today's wrap" window; `renderDayWrapInto` is
-  shared). The old one-line "Today so far" check-in was removed.
-- **this week**: first "the numbers behind it" (`buildWeekDrivers` in `src/companion.js`, computed from the same week's
-  raw events: tracked time and days, out-of-plumb % split by type, roughest/steadiest hour of day pooled over the week,
-  breaks a day, longest sit), then the AI's three goals, its question (reply hidden behind a "reply" link), and the AI's
-  three pattern lines collapsed under "the AI's reading". The AI's coverage sentence (`tracker_reminder`) is no longer
-  shown (the numbers already say it; the column is still written). "update weekly summary" only shows on this tab.
-  When the biggest share of out-of-plumb is sitting low, the numbers carry a caution: it can read high after a break.
-- **recent activity**: the alert feed is now a collapsed link at the bottom of the panel (it is not important, and it
-  is wiped on reload anyway). The panel is always visible (it no longer waits for the weekly fetch).
-Measured at 1280x800 with Paul's real data (camera off): today tab 270px, this week tab 483px, against 663px before;
-the page's scroll height went 1448px -> 1041px (today) / 1254px (week). Not verified: the panel in a narrow window,
-the AI generation button end to end (unchanged code path, not re-run), or the reply save.
-The AI recommendation ("take a break at 1pm") is still built from the sitting-low hour pattern, which was inflated by
-the baseline drift fixed in PR #20; expect it to change after a week on the new calibration.
+The owner rejected the tabbed summary (#25/#26: "today so far" is covered by the chart, and a block of figures is not
+wanted, the charts have them): **"i need analysis. tell me what to do."** The right-hand panel is now just "last 7 days"
+with a "7 days summary" button and **two points, each a finding backed by numbers plus one recommendation**; the
+activity log is a collapsed "recent activity" link. At 1280x900 the whole right-hand column fits on one screen (panel
+320px, was 587px + 76px).
+- **The AI still writes the analysis; code does the arithmetic.** `supabase/functions/weekly-analysis/analysis.js` now
+  computes, from raw rows, `buildSlumpSummary` (slumping = neck dropping + sitting low as % of tracked time; before 12
+  against 1-6pm; by hour; left/right and lean-in separately) and `buildHydrationSummary` (average ml a day against the
+  target, ml by noon / 3pm / the end of the working day, share drunk before noon, missing days count as zero). Free
+  models have misjudged arithmetic and "peak" hours before, so they are handed the figures to quote. The prompt asks for
+  exactly two points ("label", "finding", "recommendation"), each finding a comparison (morning against afternoon; water
+  by the end of the working day against the target), recommendations one sentence with a time/amount/trigger. It carries
+  the owner's own observations as context ("drinks mostly in the morning, ends the day under target; slumps after lunch")
+  but must use them only if the numbers support them and quote the number. Old row shape kept: `patterns` = two
+  "label: finding" lines, `goals` = the two recommendations, `question` and `tracker_reminder` left empty (the reply box
+  and the coverage sentence are gone). The panel still shows older 3-point rows.
+- **Deployed as `weekly-analysis` v4 (verify_jwt off, as before).** Checked live for Paul: the AI wrote "slumping at 50%
+  and neck dropping at 10% from 1pm to 6pm compared to 26% and 8% before 12" and "683ml by the end of the working day
+  against your 1000ml target, with 53% of your total water drunk before noon"; all of those match an independent SQL
+  calculation. Recommendations: recalibrate the sitting height after lunch; keep drinking through the afternoon.
+  The model varies per run (`weekly_goals.model`). Node checks of both aggregators (hand-computed cases) and a
+  cross-check against Paul's real water log passed; those test files were not kept.
+- **A missing grant bit again (the sixth time):** the function failed with "permission denied for table app_settings"
+  because `service_role` could not read it. Fixed by migration `grant_service_role_select_app_settings`; the Friday job
+  uses the same role. Verified with `has_table_privilege`.
+- **Real numbers behind the owner's view (2026-09-20..26):** he drinks 917ml a day on average (92% of 1000ml), only 683ml
+  by 4pm, and 53% of it before noon; slumping is 26% of tracked time before noon and 50% after 1pm. So he does end the
+  working day under target (he catches up in the evening) and does slump after lunch.
+- "Sitting low" can read high on data before the 26 Sep calibration fix (#20); the prompt tells the model to cite neck
+  dropping alongside it and not to build a recommendation on sitting low alone.
+- Not verified: the button end to end from the page (the function was called directly; the panel reads the stored row),
+  and the Friday scheduled job with the new output. The "remind me at" button appears when a recommendation contains a
+  time ("by 6pm" offers 18:00), as before.
 
 ### "today" panel layout (branch `fix/today-panel-layout`, 2026-09-26) + a parked popup issue
 

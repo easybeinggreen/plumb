@@ -4,7 +4,7 @@ import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } fr
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
 import { dotPosition } from './glyph.js';
 import { pruneSamples, baselineFromSamples, noseRebaseDecision, parseStoredBaseline, NOSE_REBASE_SETTLE_MS } from './calibration.js';
-import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct, buildWeekDrivers } from './companion.js';
+import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
@@ -4600,18 +4600,10 @@ function loop() {
 
 // ---- Weekly pattern analysis (generate-weekly-analysis.cjs writes these) ----
 const weeklyGoalsPanel = document.getElementById('weeklyGoalsPanel');
-const weeklyPatternsEl = document.getElementById('weeklyPatterns');
-const weeklyGoalsList = document.getElementById('weeklyGoalsList');
-const weeklyQuestionEl = document.getElementById('weeklyQuestion');
-const weeklyResponseRow = document.getElementById('weeklyResponseRow');
-const weeklyResponseInput = document.getElementById('weeklyResponseInput');
-const weeklyResponseBtn = document.getElementById('weeklyResponseBtn');
-const weeklyResponseSaved = document.getElementById('weeklyResponseSaved');
-const weeklyReplyLink = document.getElementById('weeklyReplyLink');
+const weeklyPointsEl = document.getElementById('weeklyPoints');
 const weeklyGenerateBtn = document.getElementById('weeklyGenerateBtn');
 const weeklyGenerateMsg = document.getElementById('weeklyGenerateMsg');
 const weeklyBody = document.getElementById('weeklyBody');
-let currentWeeklyGoalId = null;
 
 // The weekly goal used to be spoken aloud once a day when tracking started
 // ("Good to see you. This week, keeping an eye on: ..."). Removed 2026-09-26:
@@ -4634,69 +4626,50 @@ async function loadWeeklyGoals() {
     if (!row) {
       latestWeeklyGoals = [];
       if (!weeklyGenerating) weeklyGenerateMsg.textContent = 'No 7 days summary yet. Track for a while, then press 7 days summary.';
-      loadWeekDrivers(dateForTimestamp(Date.now() - 6 * 86400000), today());
       return;
     }
 
-    currentWeeklyGoalId = row.id;
     latestWeeklyGoals = row.goals || [];
-    weeklyPatternsEl.innerHTML = '';
-    const patternLines = String(row.patterns || '').split('\n').map((l) => l.trim()).filter(Boolean);
-    patternLines.forEach((line) => {
-      const m = line.match(/^(posture|hydration|light):\s*(.*)$/i);
-      const block = document.createElement('div');
-      block.style.marginBottom = '4px';
-      if (m) {
-        const h = document.createElement('b');
-        h.textContent = m[1].toLowerCase() + ': ';
-        h.style.color = 'var(--ink)';
-        block.append(h, document.createTextNode(m[2]));
-      } else {
-        block.textContent = line;
-      }
-      weeklyPatternsEl.appendChild(block);
-    });
-    weeklyGoalsList.innerHTML = '';
-    const GOAL_LABELS = ['posture', 'hydration', 'light'];
-    (row.goals || []).forEach((g, i) => {
-      const li = document.createElement('li');
-      li.style.marginBottom = '3px';
-      const label = document.createElement('b');
-      label.textContent = (GOAL_LABELS[i] || 'goal') + ': ';
-      li.append(label, document.createTextNode(g));
-      const goalTime = parseGoalTime(g);
-      if (goalTime) {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'goal-remind';
-        const exists = () => extras.reminders.some((r) => r.kind === 'time' && r.time === goalTime && r.text === goalReminderText(g));
-        const paint = () => { btn.textContent = exists() ? `reminder set for ${goalTime}` : `remind me at ${goalTime}`; btn.disabled = exists(); };
-        btn.addEventListener('click', () => {
-          const err = addReminder({ text: goalReminderText(g), kind: 'time', time: goalTime, everyMin: 45, weekdaysOnly: true });
-          showToast(err || `Reminder set for ${goalTime} on weekdays`);
+    // Two points. `patterns` holds one "label: finding" line per point and `goals` the matching
+    // recommendation, in the same order (older summaries had three of each and still show).
+    weeklyPointsEl.innerHTML = '';
+    const lines = String(row.patterns || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    const recs = row.goals || [];
+    lines.forEach((line, i) => {
+      const m = line.match(/^([a-z ]+):\s*(.*)$/i);
+      const point = document.createElement('div');
+      point.className = 'summary-point';
+      const label = document.createElement('div');
+      label.className = 'summary-point-label';
+      label.textContent = m ? m[1].trim() : 'note';
+      const finding = document.createElement('div');
+      finding.className = 'summary-point-finding';
+      finding.textContent = m ? m[2] : line;
+      point.append(label, finding);
+      const rec = recs[i];
+      if (rec) {
+        const recEl = document.createElement('div');
+        recEl.className = 'summary-point-rec';
+        recEl.textContent = rec;
+        const goalTime = parseGoalTime(rec);
+        if (goalTime) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'goal-remind';
+          const exists = () => extras.reminders.some((r) => r.kind === 'time' && r.time === goalTime && r.text === goalReminderText(rec));
+          const paint = () => { btn.textContent = exists() ? `reminder set for ${goalTime}` : `remind me at ${goalTime}`; btn.disabled = exists(); };
+          btn.addEventListener('click', () => {
+            const err = addReminder({ text: goalReminderText(rec), kind: 'time', time: goalTime, everyMin: 45, weekdaysOnly: true });
+            showToast(err || `Reminder set for ${goalTime} on weekdays`);
+            paint();
+          });
           paint();
-        });
-        paint();
-        li.append(btn);
+          recEl.append(btn);
+        }
+        point.append(recEl);
       }
-
-      weeklyGoalsList.appendChild(li);
+      weeklyPointsEl.appendChild(point);
     });
-    weeklyQuestionEl.textContent = row.question || '';
-    loadWeekDrivers(row.week_start, row.week_end);
-
-    // Already answered this week -- show the reply instead of asking again,
-    // rather than silently letting a second answer overwrite the first.
-    weeklyResponseRow.hidden = true;
-    if (row.user_response) {
-      weeklyReplyLink.hidden = true;
-      weeklyResponseSaved.hidden = false;
-      weeklyResponseSaved.textContent = `you said: "${row.user_response}"`;
-    } else {
-      weeklyReplyLink.hidden = !row.question;
-      weeklyResponseSaved.hidden = true;
-      weeklyResponseInput.value = '';
-    }
   } catch (err) { console.warn('loadWeeklyGoals:', err); }
 }
 
@@ -4735,86 +4708,6 @@ weeklyGenerateBtn.addEventListener('click', async () => {
   }
 });
 
-weeklyReplyLink.addEventListener('click', () => {
-  weeklyReplyLink.hidden = true;
-  weeklyResponseRow.hidden = false;
-  weeklyResponseInput.focus();
-});
-
-weeklyResponseBtn.addEventListener('click', async () => {
-  const reply = weeklyResponseInput.value.trim();
-  if (!reply || !currentWeeklyGoalId || !SYNC_CONFIGURED) return;
-  weeklyResponseBtn.disabled = true;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/weekly_goals?id=eq.${currentWeeklyGoalId}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        Prefer: 'return=minimal'
-      },
-      body: JSON.stringify({ user_response: reply, responded_at: new Date().toISOString() })
-    });
-    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-    weeklyResponseRow.hidden = true;
-    weeklyReplyLink.hidden = true;
-    weeklyResponseSaved.hidden = false;
-    weeklyResponseSaved.textContent = `you said: "${reply}"`;
-  } catch (err) {
-    console.warn('save weekly response:', err);
-  } finally {
-    weeklyResponseBtn.disabled = false;
-  }
-});
-
-// ---- Summary panel: "today" (computed, no AI) and "this week" (numbers + the AI's reading) ----
-const summaryTodayEl = document.getElementById('summaryToday');
-const summaryWeekEl = document.getElementById('summaryWeek');
-const weeklyDriversEl = document.getElementById('weeklyDrivers');
-let summaryTab = 'today';
-const TODAY_ROWS = ['tracked', 'sitting plumb', 'breaks', 'longest sit', 'most common', 'roughest hour'];
-
-async function loadTodaySummary() {
-  if (!SYNC_CONFIGURED) { summaryTodayEl.textContent = 'Needs cloud sync to be set up.'; return; }
-  const d = today();
-  const y = dateForTimestamp(Date.now() - 86400000);
-  const [events, prev] = await Promise.all([fetchEventsForRange(d, d), fetchEventsForRange(y, y)]);
-  if (presenceStartedAt) events.push({ type: 'presence', start_time: new Date(presenceStartedAt).toISOString(), duration_seconds: Math.round((Date.now() - presenceStartedAt) / 1000) });
-  const wrap = buildDayWrap({ events, hydrationMl: hydrationConsumedMl, targetMl: hydrationTargetMl, prevPctWell: sittingWellPct(prev) });
-  if (!wrap.hasData) { summaryTodayEl.textContent = 'Not enough tracked yet today. It needs at least 10 minutes.'; return; }
-  renderDayWrapInto(summaryTodayEl, wrap, { only: TODAY_ROWS, showGoal: false });
-}
-
-async function loadWeekDrivers(start, end) {
-  if (!SYNC_CONFIGURED) return;
-  const w = buildWeekDrivers({ events: await fetchEventsForRange(start, end) });
-  weeklyDriversEl.textContent = '';
-  if (!w.hasData) { weeklyDriversEl.textContent = 'Not enough tracked time in this period yet.'; return; }
-  const fmt = (ds) => new Date(ds + 'T00:00:00').toLocaleDateString([], { day: 'numeric', month: 'short' });
-  document.getElementById('weeklyDriversTitle').textContent = `the numbers behind it, ${fmt(start)} to ${fmt(end)}`;
-  w.lines.forEach((l) => {
-    const row = document.createElement('div');
-    row.className = 'wrap-row';
-    const k = document.createElement('span'); k.className = 'k'; k.textContent = l.label + ' ';
-    const v = document.createElement('span'); v.className = 'v'; v.textContent = l.value;
-    if (l.note) { const n = document.createElement('span'); n.className = 'n'; n.textContent = l.note; v.appendChild(n); }
-    row.append(k, v);
-    weeklyDriversEl.appendChild(row);
-  });
-}
-
-function selectSummaryTab(tab) {
-  summaryTab = tab;
-  document.getElementById('tabToday').classList.toggle('active', tab === 'today');
-  document.getElementById('tabWeek').classList.toggle('active', tab === 'week');
-  summaryTodayEl.hidden = tab !== 'today';
-  summaryWeekEl.hidden = tab !== 'week';
-  weeklyGenerateBtn.hidden = tab !== 'week';
-  if (tab === 'today') loadTodaySummary();
-}
-document.getElementById('tabToday').addEventListener('click', () => selectSummaryTab('today'));
-document.getElementById('tabWeek').addEventListener('click', () => selectSummaryTab('week'));
-setInterval(() => { if (summaryTab === 'today' && !document.hidden) loadTodaySummary(); }, 180000);
-
 // The activity log is not important enough to sit on the screen: a collapsed link at the bottom of the panel.
 document.getElementById('activityToggle').addEventListener('click', () => {
   alertFeed.hidden = !alertFeed.hidden;
@@ -4827,7 +4720,6 @@ maybeSwitchDay();
 fetchAndApplyAppSettings();
 reconcileTodayFromCloud();
 loadWeeklyGoals();
-loadTodaySummary();
 checkCallStatus();
 setInterval(checkCallStatus, CALL_POLL_MS);
 setInterval(() => {
