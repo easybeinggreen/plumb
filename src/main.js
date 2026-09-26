@@ -4333,6 +4333,9 @@ const weeklyResponseBtn = document.getElementById('weeklyResponseBtn');
 const weeklyResponseSaved = document.getElementById('weeklyResponseSaved');
 const weeklyTrackerReminderEl = document.getElementById('weeklyTrackerReminder');
 const dailyCheckinEl = document.getElementById('dailyCheckin');
+const weeklyGenerateBtn = document.getElementById('weeklyGenerateBtn');
+const weeklyGenerateMsg = document.getElementById('weeklyGenerateMsg');
+const weeklyBody = document.getElementById('weeklyBody');
 let currentWeeklyGoalId = null;
 
 // Not an LLM call -- the weekly analysis already set the direction for the
@@ -4380,7 +4383,15 @@ async function loadWeeklyGoals() {
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
     const rows = await res.json();
     const row = rows[0];
-    if (!row) { weeklyGoalsPanel.hidden = true; return; }
+    // The panel always shows, so the button is reachable before the first summary exists.
+    weeklyGoalsPanel.hidden = false;
+    weeklyGenerateBtn.textContent = row ? 'update weekly summary' : 'generate weekly summary';
+    weeklyBody.hidden = !row;
+    if (!row) {
+      latestWeeklyGoals = [];
+      if (!weeklyGenerating) weeklyGenerateMsg.textContent = 'No weekly summary yet. Track for a while, then generate one.';
+      return;
+    }
 
     currentWeeklyGoalId = row.id;
     latestWeeklyGoals = row.goals || [];
@@ -4445,9 +4456,43 @@ async function loadWeeklyGoals() {
       weeklyResponseSaved.hidden = true;
       weeklyResponseInput.value = '';
     }
-    weeklyGoalsPanel.hidden = false;
   } catch (err) { console.warn('loadWeeklyGoals:', err); }
 }
+
+// "generate / update weekly summary": asks the weekly-analysis edge function (which
+// holds the OpenRouter key) to write a fresh analysis for this user from the last 7
+// days, then reloads the panel. The free models are slow and sometimes need several
+// tries, so this can take up to a couple of minutes.
+let weeklyGenerating = false;
+weeklyGenerateBtn.addEventListener('click', async () => {
+  if (weeklyGenerating) return;
+  if (!SYNC_CONFIGURED || !currentUserId) { weeklyGenerateMsg.textContent = 'The weekly summary needs cloud sync to be set up.'; return; }
+  weeklyGenerating = true;
+  weeklyGenerateBtn.disabled = true;
+  weeklyGenerateMsg.textContent = 'Working on it. The free AI service is often slow, so this can take up to two minutes…';
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 140000);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/weekly-analysis`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY },
+      body: JSON.stringify({ user_id: currentUserId })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.message || `The summary could not be generated (${res.status}).`);
+    await loadWeeklyGoals();
+    weeklyGenerateMsg.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+  } catch (err) {
+    weeklyGenerateMsg.textContent = err && err.name === 'AbortError'
+      ? 'That took too long. Try again in a moment.'
+      : (err && err.message) || 'The summary could not be generated.';
+  } finally {
+    clearTimeout(timer);
+    weeklyGenerating = false;
+    weeklyGenerateBtn.disabled = false;
+  }
+});
 
 weeklyResponseBtn.addEventListener('click', async () => {
   const reply = weeklyResponseInput.value.trim();
