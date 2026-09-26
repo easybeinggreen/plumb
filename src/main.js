@@ -2,6 +2,7 @@ import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
+import { pruneSamples, baselineFromSamples, noseRebaseDecision, parseStoredBaseline, NOSE_REBASE_SETTLE_MS } from './calibration.js';
 import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
 // ---- Supabase config ----
@@ -248,6 +249,7 @@ const BREAK_TAKEN_KEY_PREFIX = `plumb:${currentUserId}:breakTaken:`;
 const BREAK_MINUTES_KEY_PREFIX = `plumb:${currentUserId}:breakMinutes:`;
 const PRESENCE_START_KEY = `plumb:${currentUserId}:presenceStart`;
 const LAST_SESSION_END_KEY = `plumb:${currentUserId}:lastSessionEnd`;
+const CALIBRATION_KEY = `plumb:${currentUserId}:calibration`;
 
 const HYDRATION_TARGET_KEY = `plumb:${currentUserId}:hydrationTargetMl`;
 const HYDRATION_SIZES_KEY = `plumb:${currentUserId}:hydrationSizesMl`;
@@ -655,6 +657,10 @@ function endBreak(endTs = Date.now(), silent = false) {
   } else {
     addAlertToFeed('break', `Short absence ignored`);
   }
+
+  // A real break (not a blip, and not the camera being switched off): re-measure
+  // the sitting-height baseline once they have settled back in.
+  if (dur >= BREAK_MIN_SECONDS && running) noseRebaseArmedAt = Date.now();
 
   breakActive = false;
   manualBreak = false;
@@ -2289,6 +2295,7 @@ function alignPreviewFrame() {
   lastPose = result.landmarks && result.landmarks.length > 0 ? { lm: result.landmarks[0], t: Date.now() } : null;
   if (result.landmarks && result.landmarks.length > 0) {
     const lm = result.landmarks[0];
+    noteCalibrationSample(lm);
     drawPoseDots([lm[7], lm[8], lm[11], lm[12]]);
     // This alignment countdown is the ONLY point the raw video is ever
     // visible -- movePipContent() (see stopCamera/PiP wiring) sets both
@@ -3719,31 +3726,110 @@ breakToggleBtn.addEventListener('click', () => {
 // it. Deliberately NOT gated on `running` -- calibration is meant to work
 // during the pre-running alignment countdown too (see startCamera), only
 // on the model/video actually being live.
+// The baseline is the MEDIAN of the last ~2s of frames, not one frame: a single
+// frame caught mid-shift became the reference for the whole day. Both frame
+// producers (the alignment preview and the main loop) feed this buffer, and if
+// it is too thin (just started, person just arrived) calibration falls back to
+// one fresh frame as it always did.
+let calibrationSamples = [];
+// Set when a break ends: after the person has sat down again, the sitting-height
+// baseline is re-measured (see maybeRebaseNoseBaseline). null when nothing pending.
+let noseRebaseArmedAt = null;
+
+function calibrationMetrics(lm) {
+  const earMid = midpoint(lm[7], lm[8]);
+  const shMid = midpoint(lm[11], lm[12]);
+  return {
+    lateral: lateralDeviation(earMid, shMid, lm[11], lm[12]),
+    neck: neckCompressionRatio(earMid, shMid, lm[11], lm[12]),
+    shoulderWidth: shoulderWidthOf(lm[11], lm[12]),
+    eyeDist: interEyeDistanceRatio(lm[2], lm[5], lm[11], lm[12]),
+    noseY: lm[0].y,
+  };
+}
+function noteCalibrationSample(lm) {
+  const now = Date.now();
+  calibrationSamples = pruneSamples(calibrationSamples, now, 8000);
+  calibrationSamples.push({ t: now, ...calibrationMetrics(lm) });
+}
+function applyBaseline(b) {
+  baselineLateral = b.lateral;
+  baselineNeckRatio = b.neck;
+  baselineShoulderWidth = b.shoulderWidth;
+  baselineEyeDistanceRatio = b.eyeDist;
+  baselineNoseY = b.noseY;
+}
+function saveBaseline() {
+  try {
+    localStorage.setItem(CALIBRATION_KEY, JSON.stringify({
+      date: today(), lateral: baselineLateral, neck: baselineNeckRatio, shoulderWidth: baselineShoulderWidth,
+      eyeDist: baselineEyeDistanceRatio, noseY: baselineNoseY,
+    }));
+  } catch (e) { /* storage full or blocked: the baseline just won't survive a reload */ }
+}
+function markCalibrated() {
+  calibrateBtn.textContent = 'recalibrate plumb position';
+  calibrateBtn.classList.remove('needs-calibration');
+  calibrateBtn.classList.add('is-confirmed');
+  calibrateFlash.hidden = true;
+}
+// After a break, sitting down again rarely puts your head exactly where it was,
+// and the sitting-low signal compares the nose's height in the frame with the
+// calibration moment, so it read as "sitting low" for the rest of the day
+// (from 2026-09-22..25: about 23% of tracked time before the first long break,
+// about 45% after it). So once they have settled, re-measure that ONE baseline.
+// A small shift is absorbed quietly; a large one (camera moved, different chair)
+// is not guessed at: the calibrate button pulses instead. No speech either way.
+function maybeRebaseNoseBaseline() {
+  if (noseRebaseArmedAt === null || baselineNoseY === null) return;
+  const settledAt = noseRebaseArmedAt + NOSE_REBASE_SETTLE_MS;
+  if (Date.now() < settledAt) return;
+  const after = calibrationSamples.filter((s) => s.t >= settledAt);
+  const d = noseRebaseDecision(baselineNoseY, after, Number(sinkToleranceSlider.value));
+  if (!d) return;
+  noseRebaseArmedAt = null;
+  if (d.action === 'rebase') {
+    baselineNoseY = d.noseY;
+    saveBaseline();
+    addAlertToFeed('calibration', 'Sitting height re-set after your break');
+  } else {
+    calibrateBtn.classList.add('needs-calibration');
+    calibrateBtn.classList.remove('is-confirmed');
+    calibrateFlash.hidden = false;
+    addAlertToFeed('calibration', 'Your position looks different since your break — recalibrate when you are ready');
+  }
+}
+// Picks the baseline back up after a reload on the same day (it used to be lost,
+// so every reload meant recalibrating). A new day starts uncalibrated.
+(function restoreBaseline() {
+  let b = null;
+  try { b = parseStoredBaseline(localStorage.getItem(CALIBRATION_KEY), today()); } catch (e) { /* storage blocked */ }
+  if (!b) return;
+  applyBaseline(b);
+  markCalibrated();
+})();
+
 function performCalibration() {
   if (!landmarker || !video.srcObject) {
     addAlertToFeed('calibration', 'Camera not ready yet — try again in a moment');
     return false;
   }
-  const result = landmarker.detectForVideo(video, performance.now());
-  if (result.landmarks && result.landmarks.length > 0) {
-    const lm = result.landmarks[0];
-    const earMid = midpoint(lm[7], lm[8]);
-    const shMid = midpoint(lm[11], lm[12]);
-    baselineNeckRatio = neckCompressionRatio(earMid, shMid, lm[11], lm[12]);
-    baselineLateral = lateralDeviation(earMid, shMid, lm[11], lm[12]);
-    baselineShoulderWidth = shoulderWidthOf(lm[11], lm[12]);
-    baselineEyeDistanceRatio = interEyeDistanceRatio(lm[2], lm[5], lm[11], lm[12]);
-    baselineNoseY = lm[0].y;
+  let b = baselineFromSamples(calibrationSamples, Date.now());
+  if (!b) {
+    const result = landmarker.detectForVideo(video, performance.now());
+    if (result.landmarks && result.landmarks.length > 0) b = calibrationMetrics(result.landmarks[0]);
+  }
+  if (b) {
+    applyBaseline(b);
+    noseRebaseArmedAt = null;
+    saveBaseline();
     stillnessRef = null;
     lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
     speak(CALIBRATED_PHRASE, false, true);
     addAlertToFeed('calibration', 'Plumb position calibrated');
     logCalibrationEvent();
-    calibrateBtn.textContent = 'recalibrate plumb position';
-    calibrateBtn.classList.remove('needs-calibration');
-    calibrateBtn.classList.add('is-confirmed');
-    calibrateFlash.hidden = true;
+    markCalibrated();
     return true;
   } else {
     addAlertToFeed('calibration', "No person detected — make sure you're in frame, then try again");
@@ -4267,6 +4353,7 @@ function loop() {
 
     const earMid = midpoint(leftEar, rightEar);
     const shMid = midpoint(leftSh, rightSh);
+    noteCalibrationSample(lm);
 
     // eyeDistance feeds lean-in, nose.y feeds the sink ("sitting low") signal
     // below -- both real signals now, not just the debug readout. eyeTilt
@@ -4364,6 +4451,7 @@ function loop() {
       setStatus('idle', 'calibrate to begin', 'sit naturally, then calibrate');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
     } else {
+      maybeRebaseNoseBaseline();
       const latTol = Number(toleranceSlider.value);
       const compTol = Number(compressionToleranceSlider.value);
       const leanTol = Number(leanToleranceSlider.value);

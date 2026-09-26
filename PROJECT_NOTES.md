@@ -20,13 +20,15 @@ if you're that reader, this file plus git log/PRs should be enough.
   `verify_jwt` off, deliberately: the app has no user auth; protection is daily caps + CORS + server-side key).
   New table `ai_summary`. Anthropic is not used anywhere any more (secret deleted); everything AI is OpenRouter free.
 - **Demo on Wednesday 2026-09-30:** the owner sets up a separate 'Demo' login (high sensitivity: lateral tolerance
-  0.03, sustained 3s). Calibration is NOT persisted across page reloads, so recalibrate after loading.
+  0.03, sustained 3s). Calibration is now persisted per user for the same day (see "Calibration drift" below), so
+  a reload keeps the morning's baseline; press "recalibrate" before the demo anyway so it matches the demo posture.
 - **Open items, roughly by importance:**
   1. Verify in real life: the morning after a laptop sleep, the night shows grey "not tracking" (not blue away);
      the popup in the owner's real Chrome; how Angus/Matilda sound reading a real nudge.
   2. Most days read 54-74% "out of plumb" even after the artifact repair: probably the calibration baseline /
-     tolerances drifting over a day rather than real slouching. Worth investigating (recalibration prompts? drift
-     handling?).
+     tolerances drifting over a day rather than real slouching. Investigated 2026-09-26: mostly the sitting-low
+     signal drifting after breaks; mitigated on `fix/calibration-drift` (see "Calibration drift" below). Re-check
+     with the same queries after a few days on the new code.
   3. Chair-as-person presence bug: get real numbers from `plumbPresenceDiag()` (browser console on the affected
      device) after the next occurrence; don't guess a third threshold.
   4. Weekly summary text varies with whichever free model the router picks; consider comparing models on real data
@@ -53,6 +55,30 @@ if you're that reader, this file plus git log/PRs should be enough.
 - **The owner's taste (all reinforced this session):** serious/professional tone, no gimmicks (no tomato icon, no
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
+
+### Calibration drift (open item 2, investigated 2026-09-26; branch `fix/calibration-drift`)
+
+**Finding (real data, Paul, 2026-09-22..25, read from `posture_events`):** most of the 54-74% "out of plumb" was
+`sitting_low`, not slouching in general. On the three days with a single calibration it was about 23% of tracked
+time in the first two hours after calibrating and about 45% afterwards; it stepped up right after the first long
+break (18->43%, 33->52%, 21->35%). Lateral, compression and lean-in did not rise. A day with 15 calibrations
+(testing) had 9%. Cause: `sinkRatio` compares the nose's absolute height in the frame with the value at
+calibration, and sitting down again after a break never lands exactly there; nothing re-baselined it. Caveat: three
+days, one person; the data cannot fully separate drift from real afternoon sinking. Even right after calibrating
+the total was about 54% (24% sitting low, 30% other), so single-frame calibration noise and/or tight tolerances
+are probably also in play; re-run the same queries after a few days on the new code.
+
+**Changes (`src/calibration.js` = pure logic with node tests; wiring in `src/main.js`):**
+- Calibration takes the **median of the last ~2s of frames** (both the alignment preview and the main loop feed a
+  buffer) instead of one frame; if fewer than 8 fresh samples it falls back to one frame as before.
+- The baseline is **saved per user for the same day** (`plumb:<user>:calibration`); a new day, corrupt data or a
+  zero shoulder width is ignored and starts uncalibrated.
+- **After a break of 60s or more** (including a sleep gap), once the person has sat down for 5s and 2s of frames
+  are available, only the sitting-height (nose) baseline is re-measured. A shift up to 2x the sitting-low tolerance
+  is absorbed quietly ("Sitting height re-set after your break" in the alert feed); a bigger one is NOT guessed at:
+  the calibrate button pulses and the feed says to recalibrate. No speech either way (new features must not add
+  voice prompts). Not verified with a real webcam (the browser pane has none): logic tested in node, and the
+  restore-on-reload path in the browser; the live break-return path needs a real session.
 
 Full code review done ahead of a demo on Wednesday 2026-09-30, then the fixes below (branch
 `fix/demo-readiness`). The owner will use a separate **'Demo'** login (own settings row) with the
@@ -148,7 +174,8 @@ respond to leaning left/right within a few seconds.
   rather than retried forever; stale 2L/2000ml copy fixed; `onnxruntime-web` declared explicitly.
 
 **Known and deliberately left**
-- Calibration is not persisted across page reloads (recalibrate after each load, including before the demo).
+- A saved baseline is trusted for the rest of that calendar day even if the camera or its position changed (a
+  reload after switching camera reads as out of plumb until you recalibrate).
 - Hydration entries are not queued offline (a failed POST is lost at the next cloud sync); undo during an
   in-flight POST cannot delete the cloud row. Local break target and cloud-reconciled target use different maths.
 - The tab-hidden `not_tracking` handler in `visibilitychange` is unreachable while the popup exists, and in
