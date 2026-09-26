@@ -56,6 +56,28 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Popup restore (branch `fix/popup-restore`, later on 2026-09-26)
+
+The owner reported the popup "doesn't work and it was good" before the day's changes, and that in the wide window the
+dot could not use the extra width. Comparing with the last commit before that day's pushes (`55b70a0`, 2026-09-23):
+the dot-and-loop maths and the sitting-low detection were NOT changed by any of #8-#19; what changed was the popup's
+layout and size. Restored to the 09-23 versions: the fixed compact card (`#statusCard.pip-mode`: 170px wide, 96px
+glyph, instead of filling the window and scaling), the window request (200x190, no `resizeTo`), the dot's travel limit
+(dot only, not dot + ring), the drawing's default clipping and the ordinary ring pulse. Kept: the green/orange
+two-row toast (at its fixed popup size), and everything outside the popup.
+- **Sitting low now moves the dot.** The glyph used to show only side-to-side lean, neck drop and (as dot size)
+  lean-in, so a sitting-low alert showed a centred dot while the ring pulsed for minutes. The dot now also moves down
+  for sitting low, on the same scale as neck drop (at its tolerance it sits on the loop), so the ring only pulses when
+  the dot is outside the loop. `src/glyph.js` holds the maths; a node test confirms 20,000 random frames are identical
+  to the 09-23 formula when sitting low is zero or negative. Lean-in still shows only as dot size, so it can still
+  flag without the dot leaving the loop.
+- **Evidence the 13:05 "sitting low, 134s, dot centred" reading was NOT PR #20:** the sitting-low block ran 13:03:03 ->
+  13:13:26 inside one unbroken presence block (12:54:55 -> 13:13:31); a reload would have ended it, so that page was
+  still on the pre-#20 code. It followed a calibration at 12:44:47 and two short breaks: the baseline drift #20 targets.
+  Needs a hard refresh (Ctrl+Shift+R) to pick up #20.
+- Not verified in a real Chrome popup (the pane has no webcam or Document PiP): the card measures 170px / glyph 96px
+  in the pane and the maths is tested; the wide-window behaviour needs the owner's eyes.
+
 ### Calibration drift (open item 2, investigated 2026-09-26; branch `fix/calibration-drift`)
 
 **Finding (real data, Paul, 2026-09-22..25, read from `posture_events`):** most of the 54-74% "out of plumb" was
@@ -111,7 +133,7 @@ respond to leaning left/right within a few seconds.
   the report tab reads that. `deploy.yml` is push-only and uses `npm ci`. Delete the `ANTHROPIC_API_KEY` repo secret.
 - **Weekly analysis** was failing since OpenRouter retired the pinned free slug (404 on 2026-09-25); it now uses
   `openrouter/free`. The serving model is stored in `weekly_goals.model` -- check it if a week reads oddly.
-- **Popup (PiP), final state.** Stacked layout only: the dot and loop on top, the status text BELOW in its original
+- **Popup (PiP), earlier 2026-09-26 state -- the SIZE/LAYOUT parts are superseded by "Popup restore" above; the toast and colour details still hold.** Stacked layout only: the dot and loop on top, the status text BELOW in its original
   small fixed font (16px value, 11px caption). The owner rejected a side-by-side/landscape layout and larger fonts
   ("very ugly") -- don't reintroduce them. The window is requested as narrow as Chrome allows (`requestWindow`
   140x152 plus a `resizeTo(140,152)` inside the opening click, because Chrome remembers a size the user dragged

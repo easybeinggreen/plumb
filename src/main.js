@@ -2,6 +2,7 @@ import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
+import { dotPosition } from './glyph.js';
 import { pruneSamples, baselineFromSamples, noseRebaseDecision, parseStoredBaseline, NOSE_REBASE_SETTLE_MS } from './calibration.js';
 import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
@@ -2158,16 +2159,13 @@ async function requestPipWindow() {
   if (!('documentPictureInPicture' in window)) return false;
 
   try {
-    trackingPipWindow = await documentPictureInPicture.requestWindow({ width: 140, height: 152 }); // as narrow as Chrome will allow (it enforces its own minimum width)
+    trackingPipWindow = await documentPictureInPicture.requestWindow({ width: 200, height: 190 });
   } catch (err) {
     console.warn('PiP open failed:', err);
     trackingPipWindow = null;
     return false;
   }
 
-  // Chrome remembers the last size a popup was dragged to and opens the next one that big. Ask for the small
-  // size explicitly (still inside the click that opened it); Chrome ignores or clamps it if it is not allowed.
-  try { trackingPipWindow.resizeTo(140, 152); } catch (e) { /* not allowed here: keep whatever size Chrome chose */ }
   trackingPipWindow.document.title = 'plumb';
   trackingPipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
   const fontLink = document.createElement('link');
@@ -2612,22 +2610,12 @@ function setStatus(mode, text, caption) {
 const DOT_CENTER = 85, REST_Y = 50, LOOP_RX = 58, LOOP_RY = 34, GLYPH_MIN = 2, GLYPH_MAX = 168;
 const DOT_BASE_R = 13.2, DOT_LEAN_MAX_DELTA = 12, LEAN_CURVE_K = 8;
 
-function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
+function updatePostureGlyph(lateral, compression, lean, latTol, compTol, sink = 0, sinkTol = 0) {
   dzTolerance.style.rx = LOOP_RX + 'px';
   dzTolerance.style.ry = LOOP_RY + 'px';
 
-  const leanNorm = Math.tanh(Math.max(lean, 0) * LEAN_CURVE_K);
-  const dotR = DOT_BASE_R + leanNorm * DOT_LEAN_MAX_DELTA;
-
-  const latRatio = latTol > 0 ? lateral / latTol : 0;
-  const compRatio = compTol > 0 ? compression / compTol : 0;
-  // Keep the whole dot inside the 170-unit drawing on every side.
-  // The pulsing ring around the dot is drawn dotR + 5 wide (plus its stroke), so keep that whole ring inside
-  // the drawing, not just the dot: with only the dot kept in, the ring was cut off at the edge.
-  const reach = dotR + 7;
-  const xLim = Math.max(0, DOT_CENTER - GLYPH_MIN - reach);
-  const px = Math.max(-xLim, Math.min(xLim, -latRatio * LOOP_RX));
-  const py = Math.max(GLYPH_MIN + reach - REST_Y, Math.min(GLYPH_MAX - reach - REST_Y, compRatio * LOOP_RY));
+  const { px, py, dotR } = dotPosition({ lateral, compression, lean, sink, latTol, compTol, sinkTol },
+    { DOT_CENTER, REST_Y, LOOP_RX, LOOP_RY, GLYPH_MIN, GLYPH_MAX, DOT_BASE_R, DOT_LEAN_MAX_DELTA, LEAN_CURVE_K });
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (REST_Y + py) + 'px';
   dzRing.style.cx = (DOT_CENTER + px) + 'px';
@@ -4469,7 +4457,7 @@ function loop() {
       // the original three-way chain.
       const currentType = leftLean ? 'lateral_left' : rightLean ? 'lateral_right' : comp ? 'compression' : sinking ? 'sitting_low' : leaningIn ? 'lean_in' : null;
 
-      updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol);
+      updatePostureGlyph(displayLateral, displayCompression, displayLean, latTol, compTol, displaySink, sinkTol);
 
       if (!stillnessRef) {
         stillnessRef = { lateral, compression, lean, sink };

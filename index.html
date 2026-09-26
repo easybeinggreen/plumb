@@ -190,7 +190,7 @@
 
   .posture-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 24px 18px 22px; }
   .glyph-wrap { flex-shrink: 0; width: 168px; height: 168px; }
-  .glyph-wrap svg { width: 100%; height: 100%; overflow: visible; } /* the ring's pulse may extend past the drawing instead of being cut off */
+  .glyph-wrap svg { width: 100%; height: 100%; }
   .dz-tolerance { fill: none; stroke: var(--ink); stroke-opacity: 0.28; stroke-width: 1.5; stroke-dasharray: 3 5; transition: rx .3s ease, ry .3s ease; }
   .dz-crosshair { stroke: var(--ink); stroke-opacity: 0.10; stroke-width: 1; stroke-dasharray: 2 4; }
   #dzDot { fill: var(--ink); transition: cx .45s cubic-bezier(.22,.61,.36,1), cy .45s cubic-bezier(.22,.61,.36,1), fill .3s ease, r .3s ease; }
@@ -209,12 +209,6 @@
   @keyframes dz-ring-pulse-mild { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(1.6); opacity: 0; } }
   @keyframes dz-ring-pulse-sustained { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(1.9); opacity: 0; } }
 
-  /* In the small popup the pulsing ring only grows a little, so it stays inside the window even when the
-     dot is at the edge of the drawing (the main window's bigger pulse would spill out of it). */
-  @keyframes dz-ring-pulse-mild-pip { 0% { transform: scale(1); opacity: 0.5; } 100% { transform: scale(1.35); opacity: 0; } }
-  @keyframes dz-ring-pulse-sustained-pip { 0% { transform: scale(1); opacity: 0.7; } 100% { transform: scale(1.5); opacity: 0; } }
-  #statusCard.pip-mode.state-mild #dzRing { animation-name: dz-ring-pulse-mild-pip; }
-  #statusCard.pip-mode.state-sustained #dzRing { animation-name: dz-ring-pulse-sustained-pip; }
 
   .status-value { font-size: 21px; font-weight: 500; line-height: 1.15; }
   .posture-card.state-mild .status-value { color: var(--terracotta-dark); }
@@ -232,7 +226,7 @@
   #statusCard { position: relative; }
   .plumb-toast { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; white-space: pre-line; background: var(--ink); color: #FFAA66; font-size: 17px; font-weight: 600; line-height: 1.3; border-radius: inherit; opacity: 0; pointer-events: none; transition: opacity .25s ease; }
   .plumb-toast.show { opacity: 1; }
-  #statusCard.pip-mode .plumb-toast { font-size: clamp(13px, 8.2vmin, 34px); padding: 8px; }
+  #statusCard.pip-mode .plumb-toast { font-size: 13px; padding: 10px; }
 
   .call-badge { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 4; white-space: nowrap; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; background: var(--ink); color: #F0DAC7; }
   #statusCard.pip-mode .call-badge { top: 5px; font-size: 9.5px; padding: 2px 7px; }
@@ -289,26 +283,18 @@
   .why-source { font-size: 11.5px; line-height: 1.45; color: var(--ink-soft); font-style: italic; margin: 0; }
   .gym-note { font-size: 11.5px; color: var(--ink-soft); line-height: 1.45; margin: 14px 0 0; }
 
-  /* Layout used only when the card is popped into the PiP window. It fills
-     whatever size the window is and scales the glyph and text with it (vw/vh/
-     vmin resolve against the PiP window, since these styles are cloned into it).
-     It used to be a fixed 170px card with a 96px glyph, so enlarging the window
-     just added empty space around a tiny dot and loop. The default window is now
-     160x152 (20% smaller each way than the original 200x190); the clamp floors are
-     low enough that the content still fits when a window is dragged smaller. */
-  #statusCard.pip-mode {
-    padding: 3vmin 4vmin;
-    gap: 1.5vmin;
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    max-width: none;
-    flex-shrink: 1;
-    justify-content: center;
-    box-sizing: border-box;
-    word-break: break-word;
-  }
-  #statusCard.pip-mode .glyph-wrap { width: max(56px, min(70vw, 48vh)); height: max(56px, min(70vw, 48vh)); }
+  /* compact layout used only when the card is popped into the PiP window */
+ #statusCard.pip-mode {
+  padding: 12px 10px 10px;
+  gap: 5px;
+  width: 170px;
+  max-width: 90vw;
+  min-width: 170px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  word-break: break-word;
+}
+  #statusCard.pip-mode .glyph-wrap { width: min(96px, 42vw); height: min(96px, 42vh); }
   #statusCard.pip-mode .status-value { font-size: 16px; }
   #statusCard.pip-mode .status-caption { font-size: 11px; margin-top: 2px; }
   #statusCard.pip-mode .live-metrics { font-size: 10px; gap: 10px; margin-top: 5px; }
