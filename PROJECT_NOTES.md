@@ -59,6 +59,9 @@ respond to leaning left/right within a few seconds.
   (`:has()` rule) so the buttons sit directly beneath it instead of below a big empty gap. **Colours:** `break` and
   `away` are now stone/taupe (`#CFC6B6` light, `#9E9382` darker) instead of brown and blue, because neither counts
   as posture and the old hues read as bad posture; `CATEGORY_COLORS` is still the single source for every chart.
+  The chart legend's "good posture" is now just **"plumb"** (pairs with "out of plumb"). The dot's pulsing ring was
+  being clipped at the edge of the glyph when leaning far to one side (seen in a real popup, 2026-09-26): the
+  dot's travel limit now keeps the whole ring (dotR + 7) inside the drawing, and the SVG is `overflow: visible`.
   The on-screen message (toast) in the popup is now the app's text green (`--ink`, solid) with light orange text
   (`#FFAA66`, 6.1:1 contrast; the old near-black at 95% was "gloomy"), split into two balanced rows
   (`toastRows`, breaks after punctuation near the middle) and a bigger font (13px at 160x152, up from 11px).

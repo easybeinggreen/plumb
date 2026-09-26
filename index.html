@@ -190,7 +190,7 @@
 
   .posture-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 24px 18px 22px; }
   .glyph-wrap { flex-shrink: 0; width: 168px; height: 168px; }
-  .glyph-wrap svg { width: 100%; height: 100%; }
+  .glyph-wrap svg { width: 100%; height: 100%; overflow: visible; } /* the ring's pulse may extend past the drawing instead of being cut off */
   .dz-tolerance { fill: none; stroke: var(--ink); stroke-opacity: 0.28; stroke-width: 1.5; stroke-dasharray: 3 5; transition: rx .3s ease, ry .3s ease; }
   .dz-crosshair { stroke: var(--ink); stroke-opacity: 0.10; stroke-width: 1; stroke-dasharray: 2 4; }
   #dzDot { fill: var(--ink); transition: cx .45s cubic-bezier(.22,.61,.36,1), cy .45s cubic-bezier(.22,.61,.36,1), fill .3s ease, r .3s ease; }
