@@ -220,7 +220,7 @@
   #statusCard { position: relative; }
   .plumb-toast { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 14px; text-align: center; background: rgba(10,38,38,0.95); color: #F0DAC7; font-size: 15px; font-weight: 600; line-height: 1.3; border-radius: inherit; opacity: 0; pointer-events: none; transition: opacity .25s ease; }
   .plumb-toast.show { opacity: 1; }
-  #statusCard.pip-mode .plumb-toast { font-size: 13px; padding: 10px; }
+  #statusCard.pip-mode .plumb-toast { font-size: clamp(13px, 6.5vmin, 30px); padding: 10px; }
 
   .call-badge { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 4; white-space: nowrap; font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; background: var(--ink); color: #F0DAC7; }
   #statusCard.pip-mode .call-badge { top: 5px; font-size: 9.5px; padding: 2px 7px; }
@@ -271,21 +271,28 @@
   .gym-link:hover { border-bottom-color: var(--accent); }
   .gym-note { font-size: 11.5px; color: var(--ink-soft); line-height: 1.45; margin: 14px 0 0; }
 
-  /* compact layout used only when the card is popped into the PiP window */
- #statusCard.pip-mode {
-  padding: 12px 10px 10px;
-  gap: 5px;
-  width: 170px;
-  max-width: 90vw;
-  min-width: 170px;
-  flex-shrink: 0;
-  box-sizing: border-box;
-  word-break: break-word;
-}
-  #statusCard.pip-mode .glyph-wrap { width: min(96px, 42vw); height: min(96px, 42vh); }
-  #statusCard.pip-mode .status-value { font-size: 16px; }
-  #statusCard.pip-mode .status-caption { font-size: 11px; margin-top: 2px; }
-  #statusCard.pip-mode .live-metrics { font-size: 10px; gap: 10px; margin-top: 5px; }
+  /* Layout used only when the card is popped into the PiP window. It fills
+     whatever size the window is and scales the glyph and text with it (vw/vh/
+     vmin resolve against the PiP window, since these styles are cloned into it).
+     It used to be a fixed 170px card with a 96px glyph, so enlarging the window
+     just added empty space around a tiny dot and loop. The clamps floor at the
+     original 200x190 sizes, so the default window looks as it always did. */
+  #statusCard.pip-mode {
+    padding: 3vmin 4vmin;
+    gap: 1.5vmin;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    max-width: none;
+    flex-shrink: 1;
+    justify-content: center;
+    box-sizing: border-box;
+    word-break: break-word;
+  }
+  #statusCard.pip-mode .glyph-wrap { width: max(96px, min(70vw, 48vh)); height: max(96px, min(70vw, 48vh)); }
+  #statusCard.pip-mode .status-value { font-size: clamp(16px, 8.4vmin, 44px); }
+  #statusCard.pip-mode .status-caption { font-size: clamp(11px, 5.8vmin, 24px); margin-top: 0.5vmin; }
+  #statusCard.pip-mode .live-metrics { font-size: clamp(10px, 5.3vmin, 22px); gap: 3vmin; margin-top: 1.5vmin; }
 
   .section-title { font-size: 12px; font-weight: 500; color: var(--ink); margin: 0 0 12px; cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; }
   .section-title .arrow { font-size: 10px; color: var(--ink-soft); }
@@ -563,7 +570,7 @@
               <div class="hydration-fill" id="hydrationFill"></div>
               <div class="pace-marker" id="hydrationPaceMarker" hidden title="where you would be if you were drinking evenly through the day"></div>
             </div>
-            <div class="hydration-readout"><b id="hydrationConsumed">0</b> / <span id="hydrationTarget">2000</span>ml</div>
+            <div class="hydration-readout"><b id="hydrationConsumed">0</b> / <span id="hydrationTarget">1000</span>ml</div>
             <div class="hydration-readout small" id="hydrationPaceText"></div>
             <div class="hydration-buttons">
               <button class="hydration-btn" id="hydrationGlassBtn" type="button" title="glass — 300ml">
@@ -634,7 +641,7 @@
   </main>
 
   <footer>
-    voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. stats auto-sync to Supabase every ~10s. see <code>README.md</code> for setup.
+    voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. stats auto-sync to the cloud every ~10s.
   </footer>
 </div>
 

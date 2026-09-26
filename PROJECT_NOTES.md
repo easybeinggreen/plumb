@@ -8,7 +8,58 @@ what's still open. Update it when you make a decision worth remembering, not
 after every commit. Written for a reader who may have no chat history at all —
 if you're that reader, this file plus git log/PRs should be enough.
 
-## Handover — 2026-09-23 (READ THIS FIRST — supersedes 2026-09-20 below wherever they disagree)
+## Handover — 2026-09-26 (read first; the 2026-09-23 and 2026-09-20 sections below still hold unless contradicted here)
+
+Full code review done ahead of a demo on Wednesday 2026-09-30, then the fixes below (branch
+`fix/demo-readiness`). The owner will use a separate **'Demo'** login (own settings row) with the
+sensitivity set high (lateral tolerance down to 0.03, "sustained before nudge" down to 3s) to show the dot
+respond to leaning left/right within a few seconds.
+
+**What changed**
+- **Settings sync no longer clobbers.** `pushAppSettings` used to send every field from the tab's memory,
+  which is how the 2026-09-23 working-hours (08:00-16:00) and 1000ml change was reverted within a day by a
+  stale tab. Now: only changed fields are sent, nothing is sent until the first fetch finishes, and `extras`
+  is merged key-by-key onto the server copy (`scheduleSettingsPush('field' | 'extras.key')`). Verified
+  against the real database with a throwaway user (partial push leaves other columns null; a reminder added
+  from a stale page kept the server's working hours). **Any device with an old tab open must be refreshed.**
+- **`plumb:extras`, `plumb:reminderFired`, `plumb:pomodoro` are now per-user** like the other person-level keys.
+  Before, a new name on the same device inherited the previous person's reminders and working hours.
+- **Presence grace (5s).** One dropped frame used to end the presence block and restart the sitting clock;
+  51% of all logged presence rows were <=3s. Presence now ends only after `PRESENCE_LOSS_GRACE_MS` of no
+  detection, back-dated to when detection was lost. A gap of 5-60s still restarts the sitting clock (by design).
+- **Chair-as-person diagnostics are now persistent.** Previously the visibility numbers went to the 15-line
+  alert feed and were gone. Now `logPresenceDiag` keeps the newest 400 entries in localStorage
+  (`plumb:presenceDiag`); on an affected device run `plumbPresenceDiag()` in the browser console. Each entry has
+  landmark visibilities, eye gap and `dNose` (movement since the previous entry; a phantom on furniture may
+  be perfectly still). Still no threshold change: get real numbers from an occurrence first. 2026-09-25 evidence:
+  a real 12:39-12:52 break was followed by presence blocks at 12:52/13:03/13:08 although the owner was out until
+  about 13:30.
+- **AI summary now works, via OpenRouter.** The Monday job used to call Anthropic (paid) and commit
+  `public/data/summary.json` to `main`; that push never ran (a bug in the workflow) and could not have worked
+  anyway (PR-required protection, no bot bypass). It also mixed all users together. Now `ai-summary.yml` +
+  `scripts/generate-summary.cjs` write one row per user to the new `ai_summary` table (`openrouter/free`), and
+  the report tab reads that. `deploy.yml` is push-only and uses `npm ci`. Delete the `ANTHROPIC_API_KEY` repo secret.
+- **Weekly analysis** was failing since OpenRouter retired the pinned free slug (404 on 2026-09-25); it now uses
+  `openrouter/free`. The serving model is stored in `weekly_goals.model` -- check it if a week reads oddly.
+- Popup (PiP) layout scales with the window (it was a fixed 170px card / 96px glyph). Checked at several sizes
+  in a browser pane; not yet seen in a real PiP window.
+- Smaller: Alan removed from the voices; spoken weekly-goal line removed (it overlapped the morning "let's
+  calibrate"); morning greeting only 05:00-12:00; stopping the camera during a break no longer leaves a phantom
+  presence timer; a failed camera start releases the stream; events the server rejects with a 4xx are dropped
+  rather than retried forever; stale 2L/2000ml copy fixed; `onnxruntime-web` declared explicitly.
+
+**Known and deliberately left**
+- Calibration is not persisted across page reloads (recalibrate after each load, including before the demo).
+- Hydration entries are not queued offline (a failed POST is lost at the next cloud sync); undo during an
+  in-flight POST cannot delete the cloud row. Local break target and cloud-reconciled target use different maths.
+- The tab-hidden `not_tracking` handler in `visibilitychange` is unreachable while the popup exists, and in
+  browsers without Document PiP returning to the tab stops the camera. Chrome desktop (the owner's setup) is fine.
+- The anon key has full rights on the core tables (documented as accepted). `default` user rows and stray
+  `app_settings` rows (`''`, `ZZ_DEBUG_DELETE_ME`) still exist -- owner said leave them.
+- `voice-gen/` (dead ElevenLabs tooling) and `~/.claude.json.bak-before-supabase-removal` were approved for
+  deletion but the tooling refused the delete; remove by hand.
+
+## Handover — 2026-09-23 (supersedes 2026-09-20 below wherever they disagree; read after the 2026-09-26 section above)
 
 Written because the owner may be about to move to a different Claude account, which would lose this
 conversation's memory and the claude.ai doc referenced below -- everything that matters from this session is

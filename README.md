@@ -22,18 +22,6 @@ you a weekly AI-written summary of your trends.
   needs to serve the *build output*, not your raw source files. See step 2
   below — you'll need to flip one setting.
 
-## Migrating your existing repo
-
-You already pushed the v1 files. For this version:
-
-1. Delete the old `logs/`, `data/`, and `.github/workflows/weekly-summary.yml`
-   from your repo (they're superseded by the files here).
-2. Copy everything in this folder into your repo, replacing `index.html`,
-   `summary.html`, and `README.md`, and adding the new `package.json`,
-   `vite.config.js`, `.gitignore`, `.env.example`, `src/`, and the updated
-   `.github/workflows/deploy.yml`.
-3. Commit and push as normal.
-
 ## Setup
 
 ### 1. Supabase (the "no manual sync" database)
@@ -62,8 +50,7 @@ Repo Settings → Secrets and variables → Actions → New repository secret, a
 | `VITE_SUPABASE_ANON_KEY` | your anon public key | No — same as above |
 | `SUPABASE_URL` | your Project URL (same value again) | No |
 | `SUPABASE_SERVICE_KEY` | your service_role key | **Yes — keep private** |
-| `ANTHROPIC_API_KEY` | from console.anthropic.com | **Yes — keep private** |
-| `OPENROUTER_API_KEY` | from openrouter.ai/keys (used by the weekly analysis) | **Yes — keep private** |
+| `OPENROUTER_API_KEY` | from openrouter.ai/keys (used by the weekly analysis and the weekly ai summary, both on free models) | **Yes — keep private** |
 | `CALENDAR_ICS_URL` | your calendar's private iCal link (optional; enables call detection) | **Yes — anyone with it can read your whole calendar** |
 
 The AI camera review runs as a Supabase Edge Function and needs its **own** copy of
@@ -77,10 +64,10 @@ change it to **"GitHub Actions"** (not "Deploy from a branch" like before).
 
 ### 4. Push, then check the Actions tab
 
-Pushing to `main` triggers a build + deploy automatically. The AI summary step
-only runs on the Monday schedule or when you manually trigger the workflow
-(Actions tab → "Summarize, build, and deploy" → Run workflow) — useful for
-testing without waiting for Monday.
+Pushing to `main` triggers a build + deploy automatically. The weekly AI summary
+is a separate workflow ("Weekly AI summary") that runs Mondays and writes to the
+`ai_summary` table; trigger it manually from the Actions tab (Run workflow) to
+test without waiting for Monday.
 
 ### 5. Local development (optional)
 

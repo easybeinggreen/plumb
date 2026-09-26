@@ -1,0 +1,29 @@
+name: Weekly AI summary
+
+on:
+  schedule:
+    # Monday 08:00 UTC = 6pm Monday Brisbane. Writes one row per user into
+    # public.ai_summary (via OpenRouter, free models only); the app's report
+    # "ai summary" tab reads it from there. Nothing is committed to the repo,
+    # because main requires pull requests and the Actions bot cannot bypass that.
+    - cron: '0 8 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  summarise:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate AI summaries
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: node scripts/generate-summary.cjs

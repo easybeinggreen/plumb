@@ -38,6 +38,7 @@ tool) and run the real client or workflow once. Direct SQL cannot catch a missin
 | `light_readings` | ~280 | all | select | Ambient brightness/skew sample every ~5 min while tracking. |
 | `app_settings` | 1 | select, insert, update | none | One row per user: tolerances, timings, hydration sizes, plus `extras` jsonb (see below). |
 | `weekly_goals` | 1 | select, insert, update | all | The Friday weekly analysis: `patterns`, `goals` (jsonb), `question`, the user's `user_response`. Unique on (user_id, week_start). |
+| `ai_summary` | 0 (new 2026-09-26) | select | select, insert, update | The Monday "ai summary" tab: one row per user (`summary` text, `stats` jsonb, `model`, `generated_at`). Written by `scripts/generate-summary.cjs` via OpenRouter; read by the report's "ai summary" tab. |
 | `calendar_events` | 21 | **none** | all | Meeting **times only** (never titles), `is_call` flag. Synced hourly from a private iCal link. |
 | `camera_review_usage` | 2 | **none** | all | Per-user and global (`__all__`) daily counters that cap the AI camera review. |
 
@@ -77,7 +78,7 @@ Columns worth knowing (not exhaustive):
 
 ## Edge function
 
-`camera-review` (Deno, `supabase/functions/camera-review/`, currently version 6,
+`camera-review` (Deno, `supabase/functions/camera-review/`, currently version 7,
 `verify_jwt` off because there is no user auth and the publishable key is not a
 JWT). Takes one 640px JPEG plus a user label, asks a vision model on OpenRouter
 about hair / clothing / background / things behind the head, returns four short
@@ -92,13 +93,14 @@ files in the repo are the source of truth, keep them in sync when redeploying.
 
 | Workflow | When | What |
 |---|---|---|
-| `deploy.yml` | every push to `main`, plus Monday 08:00 UTC | Builds and deploys to GitHub Pages. The Monday run also tries `scripts/generate-summary.cjs` (the older, dormant AI summary; it fails harmlessly with `continue-on-error`). |
+| `deploy.yml` | every push to `main` | Builds (`npm ci`) and deploys to GitHub Pages. |
+| `ai-summary.yml` | Monday 08:00 UTC (6pm Brisbane) | `scripts/generate-summary.cjs`: OpenRouter summary of each user's last 14 days into `ai_summary`. Nothing is committed to the repo: `main` requires pull requests and the Actions bot has no bypass (an earlier version tried to commit `public/data/summary.json` and could never have worked). |
 | `rollup.yml` | 02:00 Brisbane nightly | Recomputes `posture_daily_summary`. |
 | `weekly-analysis.yml` | Friday 16:00 Brisbane | OpenRouter analysis of the week into `weekly_goals`. |
 | `calendar-sync.yml` | hourly | Reads the private iCal link, writes `calendar_events`. |
 
 Repository secrets in use: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`,
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `OPENROUTER_API_KEY`,
-`CALENDAR_ICS_URL`, `ANTHROPIC_API_KEY` (only used by the dormant summary script).
+`CALENDAR_ICS_URL`. Nothing uses Anthropic any more; `ANTHROPIC_API_KEY` can be deleted from the repo secrets.
 GitHub secrets are write-only: they cannot be read back, only used by workflows.
 The Supabase function has its own separate copy of the OpenRouter key.

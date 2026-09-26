@@ -27,9 +27,8 @@ greeting is the one exception, picked at random).
 
 - Calibrated. That's set your good posture.
 
-**Weekly goal** -- can't be pre-recorded, the goal text is AI-written.
-
-- Good to see you. This week, keeping an eye on: {weekly goal}
+**Weekly goal** -- no longer spoken (removed 2026-09-26: it overlapped the morning "let's calibrate" line). The goal
+is still shown in the "this week" panel.
 
 ## 2. Posture nudges
 

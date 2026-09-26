@@ -171,6 +171,8 @@ let baselineShoulderWidth = null;
 let baselineEyeDistanceRatio = null;
 let baselineNoseY = null;
 let faceMissingSince = null;
+let personLostSince = null; // when detection was last lost; presence only ends after PRESENCE_LOSS_GRACE_MS of it
+const PRESENCE_LOSS_GRACE_MS = 5000;
 let lastFrameTime = performance.now();
 
 let slouchStartedAt = null;
@@ -291,8 +293,12 @@ let hydrationLastClickMl = 0;
 // Synced through app_settings.extras so they follow you across devices; the
 // logic itself lives in companion.js (pure + tested). Kept up here so it is
 // initialised before renderHydration() first runs.
-const EXTRAS_KEY = 'plumb:extras';
-const REMINDER_FIRED_KEY = 'plumb:reminderFired';
+// Per-user like every other person-level key above. These used to be shared
+// ('plumb:extras'), so switching to a new name on a device inherited the
+// previous person's reminders and working hours, and the first settings push
+// wrote them into the new person's row.
+const EXTRAS_KEY = `plumb:${currentUserId}:extras`;
+const REMINDER_FIRED_KEY = `plumb:${currentUserId}:reminderFired`;
 const MAX_REMINDERS = 20;
 function defaultExtras() { return { hydrationPace: { on: true, start: '08:00', end: '16:00' }, reminders: [], pomodoro: { focus: 25, short: 5, long: 15, rounds: 4 }, wrap: { on: true, time: '17:30' }, voice: '' }; }
 function normaliseExtras(s) {
@@ -331,7 +337,7 @@ let lastHydrationNudgeMs = 0;
 let hydrationNudgeVariant = 0;
 const hydrationPaceMarker = document.getElementById('hydrationPaceMarker');
 const hydrationPaceText = document.getElementById('hydrationPaceText');
-const POMO_KEY = 'plumb:pomodoro';
+const POMO_KEY = `plumb:${currentUserId}:pomodoro`;
 let pomo = (() => {
   try { return rolloverPomodoro(JSON.parse(localStorage.getItem(POMO_KEY) || 'null'), dateForTimestamp(Date.now())); }
   catch (e) { return newPomodoroState(dateForTimestamp(Date.now())); }
@@ -401,7 +407,14 @@ async function flushEvents() {
 
     if (!res.ok) {
       console.error('Event upload:', res.status, await res.text());
-      eventBuffer.push(...toSend);
+      // A 4xx (other than "timed out" / "slow down") means the batch itself is
+      // rejected and always will be: re-queuing it would block every later
+      // event forever. Server errors and network failures are retried.
+      if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+        addAlertToFeed('sync', `Dropped ${toSend.length} event(s) the server rejected (${res.status})`);
+      } else {
+        eventBuffer.push(...toSend);
+      }
       setSyncStatus('err', `Cloud sync: ${res.status}`);
     } else {
       setSyncStatus('ok', `Cloud sync: last synced ${new Date().toLocaleTimeString()}`);
@@ -731,7 +744,6 @@ function stopBgSilentAudio() {
 function updateVoiceReady(ready) { voiceReady.classList.toggle('ready', ready); }
 
 const PIPER_VOICES = [
-  { id: 'en_GB-alan-medium', name: 'Alan — UK male, steady' },
   { id: 'en_GB-northern_english_male-medium', name: 'Nathan — UK male, northern' },
   { id: 'en_GB-alba-medium', name: 'Alba — UK female, warm' },
   { id: 'en_GB-southern_english_female-low', name: 'Southern — UK female, light' },
@@ -814,9 +826,10 @@ function populateVoiceList() {
     localStorage.setItem('plumb:voice', currentVoiceId);
   } else if (hasStoredChoice || !voicesStillLoading) {
     // Falls here when the browser's own female voice genuinely isn't
-    // available on this system -- PIPER_VOICES[0] is Alan (male), so
-    // defaulting to it silently handed out a male voice by accident.
-    // Prefer the first female-labeled Piper voice instead.
+    // available on this system (or a saved voice was removed from the roster,
+    // as Alan was) -- PIPER_VOICES[0] is a male voice, so defaulting to it
+    // silently handed out a male voice by accident. Prefer the first
+    // female-labeled Piper voice instead.
     const fallbackVoice = PIPER_VOICES.find(v => /female/i.test(v.name)) || PIPER_VOICES[0];
     currentVoiceId = fallbackVoice.id;
     voiceSelect.value = currentVoiceId;
@@ -829,7 +842,7 @@ voiceSelect.addEventListener('change', () => {
   currentVoiceId = voiceSelect.value;
   localStorage.setItem('plumb:voice', currentVoiceId);
   extras.voice = currentVoiceId;
-  saveExtras();
+  saveExtras('voice');
   testVoiceBtn.textContent = 'test voice';
   updateVoiceReady(false);
 });
@@ -904,6 +917,8 @@ function resetLightWidget() {
   lightBrightnessHistory = [];
   lightSkewStartedAt = null;
   lightSkewSide = null;
+  lightLevelStartedAt = null;
+  lightLevelSide = null;
 }
 
 // Recolors the actual sampled frame (40x30, dim->bright per pixel) and
@@ -1093,7 +1108,7 @@ hydrationTargetInput.addEventListener('change', () => {
   hydrationTargetMl = Math.max(100, Number(hydrationTargetInput.value) || 1000);
   localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl));
   renderHydration();
-  scheduleSettingsPush();
+  scheduleSettingsPush('hydration_target_ml');
 });
 
 // Purely local, unlike the sliders above -- device_label describes THIS
@@ -1112,7 +1127,7 @@ Object.entries(hydrationSizeInputs).forEach(([key, input]) => {
     hydrationSizes[key] = Math.max(10, Number(input.value) || hydrationSizes[key]);
     localStorage.setItem(HYDRATION_SIZES_KEY, JSON.stringify(hydrationSizes));
     hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`;
-    scheduleSettingsPush();
+    scheduleSettingsPush(`${key}_ml`);
   });
 });
 renderHydration();
@@ -1417,9 +1432,11 @@ function maybeNudgeHydration() {
 }
 
 // ---- Reminders --------------------------------------------------------------
-function saveExtras() {
+// keys = the top-level extras keys that actually changed (hydrationPace,
+// reminders, pomodoro, wrap, voice). Only those are merged onto the remote copy.
+function saveExtras(...keys) {
   localStorage.setItem(EXTRAS_KEY, JSON.stringify(extras));
-  scheduleSettingsPush();
+  scheduleSettingsPush(...(keys.length ? keys : Object.keys(extras)).map((k) => `extras.${k}`));
 }
 
 function checkReminders() {
@@ -1474,7 +1491,7 @@ function renderRemindersList() {
     on.type = 'checkbox';
     on.checked = r.enabled;
     on.title = 'on/off';
-    on.addEventListener('change', () => { r.enabled = on.checked; saveExtras(); });
+    on.addEventListener('change', () => { r.enabled = on.checked; saveExtras('reminders'); });
     const text = document.createElement('span');
     text.className = 'r-text';
     text.textContent = r.text;
@@ -1489,7 +1506,7 @@ function renderRemindersList() {
     del.addEventListener('click', () => {
       extras.reminders = extras.reminders.filter((x) => x.id !== r.id);
       delete reminderFired[r.id];
-      saveExtras();
+      saveExtras('reminders');
       renderRemindersList();
     });
     row.append(on, text, when, del);
@@ -1515,7 +1532,7 @@ function addReminder(fields) {
   if (extras.reminders.length >= MAX_REMINDERS) return `That's the maximum of ${MAX_REMINDERS} reminders.`;
   const id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   extras.reminders.push({ id, text: fields.text.trim().slice(0, 80), kind: fields.kind, time: fields.time, everyMin: fields.everyMin, weekdaysOnly: fields.weekdaysOnly, enabled: true });
-  saveExtras();
+  saveExtras('reminders');
   renderRemindersList();
   return null;
 }
@@ -1536,13 +1553,13 @@ reminderAddBtn.addEventListener('click', () => {
   reminderMsg.textContent = err || `Added: "${text}"`;
   if (!err) reminderText.value = '';
 });
-paceOnInput.addEventListener('change', () => { extras.hydrationPace.on = paceOnInput.checked; saveExtras(); renderPace(); });
+paceOnInput.addEventListener('change', () => { extras.hydrationPace.on = paceOnInput.checked; saveExtras('hydrationPace'); renderPace(); });
 [paceStartInput, paceEndInput].forEach((el) => el.addEventListener('change', () => {
   const s = hhmmToMinutes(paceStartInput.value), e = hhmmToMinutes(paceEndInput.value);
   if (s === null || e === null || e <= s) { paceStartInput.value = extras.hydrationPace.start; paceEndInput.value = extras.hydrationPace.end; return; }
   extras.hydrationPace.start = paceStartInput.value;
   extras.hydrationPace.end = paceEndInput.value;
-  saveExtras();
+  saveExtras('hydrationPace');
   renderPace();
 }));
 renderExtrasUI();
@@ -1722,14 +1739,14 @@ Object.entries(POMO_INPUT_IDS).forEach(([key, id]) => {
     const [lo, hi] = POMO_LIMITS[key];
     if (!(n >= lo && n <= hi)) { el.value = extras.pomodoro[key]; return; }
     extras.pomodoro[key] = n;
-    saveExtras();
+    saveExtras('pomodoro');
   });
 });
-document.getElementById('wrapOnInput').addEventListener('change', (e) => { extras.wrap.on = e.target.checked; saveExtras(); });
+document.getElementById('wrapOnInput').addEventListener('change', (e) => { extras.wrap.on = e.target.checked; saveExtras('wrap'); });
 document.getElementById('wrapTimeInput').addEventListener('change', (e) => {
   if (hhmmToMinutes(e.target.value) === null) { e.target.value = extras.wrap.time; return; }
   extras.wrap.time = e.target.value;
-  saveExtras();
+  saveExtras('wrap');
 });
 renderExtrasUI();
 
@@ -1888,6 +1905,31 @@ function checkFaceVisibility(lm) {
   const ok = values.every(v => typeof v !== 'number' || v >= FACE_VISIBILITY_MIN);
   return { ok, nose, leftEye, rightEye };
 }
+// Persistent record of what the pose model reported each time presence was
+// confirmed, plus a sample every 90s while present -- for diagnosing a chair
+// (or anything else) being taken for a person. Local only, newest 400 entries.
+// Read it in the browser console with: plumbPresenceDiag()
+// dNose is how far the nose landmark moved since the previous entry: a real
+// person is never perfectly still, a phantom on furniture may be.
+const PRESENCE_DIAG_KEY = 'plumb:presenceDiag';
+const PRESENCE_DIAG_MAX = 400;
+const PRESENCE_DIAG_SAMPLE_MS = 90 * 1000;
+let lastPresenceDiagAt = 0;
+let lastPresenceDiagNose = null;
+function logPresenceDiag(lm, why) {
+  try {
+    const vis = (p) => (p && typeof p.visibility === 'number' ? Math.round(p.visibility * 100) / 100 : null);
+    const nose = lm[0];
+    const dNose = lastPresenceDiagNose ? Math.round(Math.hypot(nose.x - lastPresenceDiagNose.x, nose.y - lastPresenceDiagNose.y) * 1000) / 1000 : null;
+    lastPresenceDiagNose = { x: nose.x, y: nose.y };
+    lastPresenceDiagAt = Date.now();
+    const log = JSON.parse(localStorage.getItem(PRESENCE_DIAG_KEY) || '[]');
+    log.push({ t: new Date().toISOString(), why, nose: vis(lm[0]), lEye: vis(lm[2]), rEye: vis(lm[5]), lSh: vis(lm[11]), rSh: vis(lm[12]), eyeGap: Math.round(Math.hypot(lm[2].x - lm[5].x, lm[2].y - lm[5].y) * 1000) / 1000, dNose });
+    localStorage.setItem(PRESENCE_DIAG_KEY, JSON.stringify(log.slice(-PRESENCE_DIAG_MAX)));
+  } catch (e) { /* diagnostics must never break tracking */ }
+}
+window.plumbPresenceDiag = () => JSON.parse(localStorage.getItem(PRESENCE_DIAG_KEY) || '[]');
+
 function drawExperimentalReadout(eyeTilt, eyeDist, noseOff) {
   ctx.font = '11px Karla, sans-serif';
   const lines = [
@@ -2156,7 +2198,6 @@ async function startCamera() {
     }
     alignPreviewActive = false;
     alignBadge.hidden = true;
-    maybeSpeakDailyCheckin();
 
     const pipOpened = pipRequested && movePipContent();
     if (pipOpened) {
@@ -2182,6 +2223,7 @@ logStartupGap();
     breakStartedAt = null;
     breakPreSittingSeconds = 0;
     isPersonPresent = false;
+    personLostSince = null;
     breakToggleBtn.textContent = 'take a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId);
@@ -2191,6 +2233,10 @@ logStartupGap();
     nextFrame();
   } catch (err) {
     cameraStarting = false;
+    alignPreviewActive = false;
+    alignBadge.hidden = true;
+    // Don't leave the camera light on after a failed start.
+    if (video.srcObject) { video.srcObject.getTracks().forEach(t => t.stop()); video.srcObject = null; }
     placeholder.textContent = `camera error: ${err.message}`;
     cameraToggleBtn.textContent = 'start camera';
     cameraToggleBtn.classList.add('start-camera');
@@ -2276,6 +2322,10 @@ function stopCamera(reason = 'manual') {
   breakToggleBtn.classList.remove('break-active', 'break-due');
 
   if (breakActive) endBreak();
+  // endBreak() restarts a presence timer, but nothing is being tracked now --
+  // left set, closing the tab later would log phantom presence from this moment.
+  setPresenceStart(null);
+  personLostSince = null;
   stopBgSilentAudio();
   flushEvents();
 
@@ -2439,7 +2489,10 @@ function maybeSwitchDay() {
     hydrationLastClickMl = 0;
     renderHydration();
     renderBreakGauge();
-    speak(MORNING_PHRASES[Math.floor(Math.random() * MORNING_PHRASES.length)]);
+    // The greeting is for the morning. With tracking left running past midnight
+    // this used to announce "good morning, let's calibrate" at 00:00 to an empty room.
+    const hour = new Date().getHours();
+    if (hour >= 5 && hour < 12) speak(MORNING_PHRASES[Math.floor(Math.random() * MORNING_PHRASES.length)]);
   }
 }
 
@@ -3397,15 +3450,22 @@ async function renderAiSummary() {
   panelNumeric.classList.remove('active');
   panelAi.classList.add('active');
   try {
-    const res = await fetch('./data/summary.json', { cache: 'no-store' });
-    const data = await res.json();
-    if (!data.summary) {
-      aiSummaryText.textContent = "no summary yet — this fills in after the weekly GitHub Action runs.";
+    // Written weekly by scripts/generate-summary.cjs into public.ai_summary, one row per user.
+    const res = SYNC_CONFIGURED
+      ? await fetch(`${SUPABASE_URL}/rest/v1/ai_summary?user_id=eq.${encodeURIComponent(currentUserId)}&select=generated_at,summary,stats&limit=1`, {
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+      })
+      : null;
+    if (res && !res.ok) throw new Error(`${res.status}`);
+    const row = res ? (await res.json())[0] : null;
+    if (!row || !row.summary || !row.stats) {
+      aiSummaryText.textContent = "no summary yet — this fills in each Monday evening, once there's a few days of tracking.";
       aiMeta.textContent = '';
       aiStatGrid.innerHTML = '';
       if (aiChart) { aiChart.destroy(); aiChart = null; }
       return;
     }
+    const data = { summary: row.summary, generatedAt: row.generated_at, stats: row.stats };
     aiSummaryText.textContent = data.summary;
     aiMeta.textContent = data.generatedAt ? `generated ${new Date(data.generatedAt).toLocaleString()} · based on ${data.stats.daysLogged} logged days` : '';
     const s = data.stats;
@@ -4014,6 +4074,8 @@ function loop() {
     }
   }
   if (lm && faceOk) {
+    personLostSince = null;
+    if (isPersonPresent && Date.now() - lastPresenceDiagAt > PRESENCE_DIAG_SAMPLE_MS) logPresenceDiag(lm, 'sample');
     const leftEar = lm[7], rightEar = lm[8], leftSh = lm[11], rightSh = lm[12];
     drawPoseDots([leftEar, rightEar, leftSh, rightSh]);
 
@@ -4066,10 +4128,10 @@ function loop() {
       // on something that isn't actually a person (a chair, reportedly,
       // even with the visibility check in place), this is what lets that
       // get diagnosed with real numbers next time instead of guessed at
-      // again -- see the long comment on checkFaceVisibility.
-      if (faceCheck) {
-        addAlertToFeed('presence_debug', `Presence confirmed — visibility nose ${faceCheck.nose?.toFixed(2) ?? 'n/a'}, L-eye ${faceCheck.leftEye?.toFixed(2) ?? 'n/a'}, R-eye ${faceCheck.rightEye?.toFixed(2) ?? 'n/a'}`);
-      }
+      // again -- see the long comment on checkFaceVisibility. Goes to a
+      // persistent local log, not the alert feed: the feed keeps only 15
+      // lines, and this used to push every real alert out of it.
+      logPresenceDiag(lm, 'confirmed');
       setPresenceStart(Date.now());
       stillnessRef = null;
       lastMovementAt = null;
@@ -4208,8 +4270,15 @@ function loop() {
       }
     }
   } else {
-    if (isPersonPresent && !breakActive) {
-      finalizePresenceBlock('person_left');
+    // One frame (or a couple of seconds) with no usable face -- a head turn, a
+    // detection dropout -- must not count as "left". Before this grace, every
+    // dropout ended the presence block and restarted the sitting clock: about
+    // half of all logged presence blocks were 3 seconds or shorter, the break
+    // timer measured time since the last dropout, and "longest sit" was understated.
+    // The block and the absence are both back-dated to when detection was lost.
+    if (personLostSince === null) personLostSince = Date.now();
+    if (isPersonPresent && !breakActive && Date.now() - personLostSince >= PRESENCE_LOSS_GRACE_MS) {
+      finalizePresenceBlock('person_left', personLostSince);
       // A slouch block that's still open when the person leaves frame was
       // never being closed here -- it could sit stuck in memory and keep
       // absorbing active-frame time from a LATER, unrelated presence block
@@ -4219,12 +4288,12 @@ function loop() {
       // tracked presence -- only possible if it bridged across gaps like
       // this one instead of closing when the person first stepped away.
       if (slouchStartedAt) {
-        logPostureEvent(slouchType, slouchStartedAt, Date.now());
+        logPostureEvent(slouchType, slouchStartedAt, personLostSince);
         slouchStartedAt = null;
         slouchAccumulatedMs = 0;
       }
       isPersonPresent = false;
-      absenceStartedAt = Date.now();
+      absenceStartedAt = personLostSince;
       breakStartedAt = null;
       setStatus('idle', 'no one detected', 'step into frame to resume');
       updatePostureGlyph(0, 0, 0, Number(toleranceSlider.value), Number(compressionToleranceSlider.value));
@@ -4296,29 +4365,11 @@ async function computeDailyCheckinText(firstGoal) {
   return `Today so far: ${timeLabel} tracked, ${pct}% slouching, ${breaks} break${breaks === 1 ? '' : 's'}.${goalRef}`;
 }
 
-// Speaking the weekly goal once when tracking actually starts for the day
-// is the "bring it to attention" half of the daily check-in -- the visual
-// panel is passive (only seen if you open the app and look), this is the
-// one place Plumb already announces things out loud. Gated to once per
-// calendar day per device via localStorage, not tied to whether you've
-// already seen the panel, so it doesn't repeat every time you restart
-// tracking within the same day.
-async function maybeSpeakDailyCheckin() {
-  if (!SYNC_CONFIGURED || !voiceNudgesEnabled) return;
-  const key = `plumb:${currentUserId}:dailyCheckinSpoken`;
-  if (localStorage.getItem(key) === today()) return;
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/weekly_goals?user_id=eq.${encodeURIComponent(currentUserId)}&order=week_start.desc&limit=1&select=goals`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (!res.ok) return;
-    const rows = await res.json();
-    const firstGoal = rows[0]?.goals?.[0];
-    if (!firstGoal) return;
-    speak(`Good to see you. This week, keeping an eye on: ${firstGoal}`);
-    localStorage.setItem(key, today());
-  } catch (err) { console.warn('maybeSpeakDailyCheckin:', err); }
-}
+// The weekly goal used to be spoken aloud once a day when tracking started
+// ("Good to see you. This week, keeping an eye on: ..."). Removed 2026-09-26:
+// it landed on top of the morning "let's calibrate" line and the owner didn't
+// want the goal restated. The goal is still shown in the "this week" panel and
+// in the on-screen daily check-in above.
 
 async function loadWeeklyGoals() {
   if (!SYNC_CONFIGURED) return;
@@ -4513,7 +4564,8 @@ function loadTuning() {
   } catch (e) { console.warn(e); }
 }
 let pushSettingsTimer = null;
-function saveTuning() {
+// col = the app_settings column this slider maps to (see settingColumnValue).
+function saveTuning(col) {
   localStorage.setItem(TUNING_KEY, JSON.stringify({
     tolerance: toleranceSlider.value,
     compression: compressionToleranceSlider.value,
@@ -4523,44 +4575,74 @@ function saveTuning() {
     breakInterval: breakSlider.value,
     stillness: stillnessSlider.value
   }));
-  scheduleSettingsPush();
+  scheduleSettingsPush(col);
 }
 
-// ---- app_settings sync: one shared row (id=1), latest change wins everywhere.
-// Unlike posture data, settings are a single "current state" -- overwrite-on-sync
-// is the *correct* pattern here, not a bug. Debounced so dragging a slider doesn't
-// fire a request per frame.
-function scheduleSettingsPush() {
+// ---- app_settings sync: one row per user, latest change wins per field.
+// A push used to send EVERY field from whatever this tab had in memory, so a tab
+// left open on old values (or one that hadn't finished loading yet) silently
+// overwrote settings changed elsewhere -- that is how the 2026-09-23 working-hours
+// and 1000ml change got reverted within a day. Now only the fields that were
+// actually changed here are sent, nothing is sent until the first fetch from the
+// server has finished, and `extras` (one jsonb column) is merged key-by-key onto
+// the server's current copy rather than replaced wholesale.
+// Debounced so dragging a slider doesn't fire a request per frame.
+const dirtySettings = new Set();
+let settingsSyncReady = !SYNC_CONFIGURED;
+function settingColumnValue(col) {
+  switch (col) {
+    case 'tolerance': return Number(toleranceSlider.value);
+    case 'compression': return Number(compressionToleranceSlider.value);
+    case 'lean': return Number(leanToleranceSlider.value);
+    case 'sink': return Number(sinkToleranceSlider.value);
+    case 'sustain': return Number(sustainSlider.value);
+    case 'break_interval': return Number(breakSlider.value);
+    case 'stillness': return Number(stillnessSlider.value);
+    case 'hydration_target_ml': return hydrationTargetMl;
+    case 'glass_ml': return hydrationSizes.glass;
+    case 'mug_ml': return hydrationSizes.mug;
+    case 'can_ml': return hydrationSizes.can;
+    case 'bottle_ml': return hydrationSizes.bottle;
+    default: return undefined;
+  }
+}
+// fields: column names, or 'extras.<key>' for one key inside the extras blob.
+function scheduleSettingsPush(...fields) {
   if (!SYNC_CONFIGURED) return;
+  fields.forEach((f) => dirtySettings.add(f));
+  if (!settingsSyncReady) return; // flushed by fetchAndApplyAppSettings once it has finished
   clearTimeout(pushSettingsTimer);
   pushSettingsTimer = setTimeout(pushAppSettings, 600);
 }
 async function pushAppSettings() {
-  if (!SYNC_CONFIGURED) return;
+  if (!SYNC_CONFIGURED || !settingsSyncReady || dirtySettings.size === 0) return;
+  const fields = [...dirtySettings];
+  dirtySettings.clear();
+  const headers = { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
   try {
+    const body = { user_id: currentUserId, updated_at: new Date().toISOString() };
+    fields.filter((f) => !f.startsWith('extras.')).forEach((col) => {
+      const v = settingColumnValue(col);
+      if (v !== undefined) body[col] = v;
+    });
+    const extraKeys = fields.filter((f) => f.startsWith('extras.')).map((f) => f.slice(7));
+    if (extraKeys.length) {
+      const cur = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?user_id=eq.${encodeURIComponent(currentUserId)}&select=extras`, { headers });
+      if (!cur.ok) throw new Error(`read extras: ${cur.status}`);
+      const remote = (await cur.json())[0]?.extras;
+      body.extras = { ...(remote && typeof remote === 'object' ? remote : {}) };
+      extraKeys.forEach((k) => { body.extras[k] = extras[k]; });
+    }
     const res = await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`, Prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify([{
-        user_id: currentUserId,
-        tolerance: Number(toleranceSlider.value),
-        compression: Number(compressionToleranceSlider.value),
-        lean: Number(leanToleranceSlider.value),
-        sink: Number(sinkToleranceSlider.value),
-        sustain: Number(sustainSlider.value),
-        break_interval: Number(breakSlider.value),
-        stillness: Number(stillnessSlider.value),
-        hydration_target_ml: hydrationTargetMl,
-        glass_ml: hydrationSizes.glass,
-        mug_ml: hydrationSizes.mug,
-        can_ml: hydrationSizes.can,
-        bottle_ml: hydrationSizes.bottle,
-        extras,
-        updated_at: new Date().toISOString()
-      }])
+      headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([body])
     });
     if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  } catch (err) { console.warn('pushAppSettings:', err); }
+  } catch (err) {
+    console.warn('pushAppSettings:', err);
+    fields.forEach((f) => dirtySettings.add(f)); // keep it for the next attempt
+  }
 }
 async function fetchAndApplyAppSettings() {
   if (!SYNC_CONFIGURED) return;
@@ -4596,7 +4678,7 @@ async function fetchAndApplyAppSettings() {
         updateVoiceReady(false);
       } else if (!extras.voice && currentVoiceId) {
         extras.voice = currentVoiceId;
-        scheduleSettingsPush();
+        scheduleSettingsPush('extras.voice');
       }
       localStorage.setItem(EXTRAS_KEY, JSON.stringify(extras));
       renderExtrasUI();
@@ -4617,7 +4699,14 @@ async function fetchAndApplyAppSettings() {
     Object.entries(hydrationSizeInputs).forEach(([key, input]) => { input.value = hydrationSizes[key]; hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`; });
     [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
     renderHydration();
-  } catch (err) { console.warn('fetchAndApplyAppSettings:', err); }
+  } catch (err) {
+    console.warn('fetchAndApplyAppSettings:', err);
+  } finally {
+    // Pushes are held back until now so a tab can't overwrite the server with
+    // defaults it hasn't replaced yet. Anything changed while loading goes out now.
+    settingsSyncReady = true;
+    if (dirtySettings.size) scheduleSettingsPush();
+  }
 }
 
 loadTuning();
@@ -4634,38 +4723,38 @@ stillnessVal.textContent = `${stillnessSlider.value} min`;
 toleranceSlider.addEventListener('input', () => {
   toleranceVal.textContent = toleranceSlider.value;
   paintSliderTrack(toleranceSlider);
-  saveTuning();
+  saveTuning('tolerance');
 });
 compressionToleranceSlider.addEventListener('input', () => {
   compressionToleranceVal.textContent = compressionToleranceSlider.value;
   paintSliderTrack(compressionToleranceSlider);
-  saveTuning();
+  saveTuning('compression');
 });
 leanToleranceSlider.addEventListener('input', () => {
   leanToleranceVal.textContent = leanToleranceSlider.value;
   paintSliderTrack(leanToleranceSlider);
-  saveTuning();
+  saveTuning('lean');
 });
 sinkToleranceSlider.addEventListener('input', () => {
   sinkToleranceVal.textContent = sinkToleranceSlider.value;
   paintSliderTrack(sinkToleranceSlider);
-  saveTuning();
+  saveTuning('sink');
 });
 sustainSlider.addEventListener('input', () => {
   sustainVal.textContent = `${sustainSlider.value}s`;
   paintSliderTrack(sustainSlider);
-  saveTuning();
+  saveTuning('sustain');
 });
 breakSlider.addEventListener('input', () => {
   breakVal.textContent = `${breakSlider.value} min`;
   paintSliderTrack(breakSlider);
   renderBreakGauge();
-  saveTuning();
+  saveTuning('break_interval');
 });
 stillnessSlider.addEventListener('input', () => {
   stillnessVal.textContent = `${stillnessSlider.value} min`;
   paintSliderTrack(stillnessSlider);
-  saveTuning();
+  saveTuning('stillness');
 });
 
 // ---- research-rationale popovers ----
@@ -4716,8 +4805,8 @@ const RESEARCH_INFO = {
   },
   hydrationTarget: {
     title: 'daily hydration target',
-    short: '2 litres sits at the lower end of what major health bodies cite \u2014 a reasonable default, but not a precise target everyone should hit exactly.',
-    long: "EFSA's adequate-intake figures are 2.0 L/day for women and 2.5 L/day for men (total water, including food \u2014 food typically supplies 20\u201330% of that). The IOM's figures are higher: 2.7 L/day women, 3.7 L/day men. The famous \u201c8 glasses a day\u201d rule doesn't trace back to a specific trial \u2014 it's a simplification of older guidance that included food-derived water. Thirst and urine colour are generally more reliable day-to-day signals than any fixed number.",
+    short: 'The default of 1 litre is roughly half the usual daily guidance, sized for a working day of about eight hours \u2014 a reasonable starting point, not a precise target everyone should hit exactly.',
+    long: "Plumb's target covers your working hours only, so it starts at about half of the full-day figures below. EFSA's adequate-intake figures are 2.0 L/day for women and 2.5 L/day for men (total water, including food \u2014 food typically supplies 20\u201330% of that). The IOM's figures are higher: 2.7 L/day women, 3.7 L/day men. The famous \u201c8 glasses a day\u201d rule doesn't trace back to a specific trial \u2014 it's a simplification of older guidance that included food-derived water. Thirst and urine colour are generally more reliable day-to-day signals than any fixed number.",
     source: 'Source: EFSA, \u201cDietary reference values for water\u201d (2010); Institute of Medicine (2004).'
   },
   brightness: {

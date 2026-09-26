@@ -8,16 +8,17 @@
 //
 // Requires SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENROUTER_API_KEY as secrets.
 //
-// Pinned to a specific free model rather than the `openrouter/free` router:
-// that router picks a different underlying model every call, and testing
-// showed real quality swings run to run -- one draft called an afternoon
-// brightness *peak* a "dip" and built a goal on that backwards premise.
-// deepseek/deepseek-v4-flash-0731:free was the most reliable of several
-// tested on this exact task (see PROJECT_NOTES.md for the comparison).
-// Free-tier availability can still change; if this model disappears,
-// re-run the same comparison before picking a replacement -- don't just
-// swap in whatever's newest.
-const MODEL = 'deepseek/deepseek-v4-flash-0731:free';
+// Uses OpenRouter's `openrouter/free` router, which picks a currently-available
+// free model per call. This used to be pinned to
+// deepseek/deepseek-v4-flash-0731:free (the most reliable of several tested on
+// this task), but OpenRouter retired that free slug on 2026-09-25 and the
+// Friday run 404'd. The router can't 404 that way, at the cost of the
+// underlying model varying call to call -- earlier testing saw real quality
+// swings (one draft called an afternoon brightness *peak* a "dip" and built a
+// goal on that backwards premise). The result records which model served it
+// (`weekly_goals.model`), so check that if a week's analysis reads oddly, and
+// consider re-pinning a specific free model once one has been compared on real data.
+const MODEL = 'openrouter/free';
 
 // Same reasoning as rollup-summary.cjs's cutoffDate(): the runner's ambient
 // clock is UTC, but "a week" needs to mean the same thing it does on the
