@@ -1490,7 +1490,9 @@ function renderPace() {
   if (!extras.hydrationPace.on || !(hydrationTargetMl > 0)) { hydrationPaceMarker.hidden = true; hydrationPaceText.textContent = ''; return; }
   const st = currentPace();
   hydrationPaceMarker.hidden = st.state === 'before';
-  hydrationPaceMarker.style.bottom = Math.max(0, Math.min(100, (st.expectedMl / hydrationTargetMl) * 100)) + '%';
+  // Capped at 96%: a line at 100% sits on the gauge's rim and is clipped away, so from about 15:50 (the end of
+  // the working day) it vanished. The text beside the gauge still gives the exact amount behind.
+  hydrationPaceMarker.style.bottom = Math.max(0, Math.min(96, (st.expectedMl / hydrationTargetMl) * 100)) + '%';
   hydrationPaceText.textContent = paceLabel(st);
 }
 
