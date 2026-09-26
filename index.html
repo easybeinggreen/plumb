@@ -71,6 +71,10 @@
      context. Real analysis stays exclusively in "view report". */
   .tracking-summary { position: absolute; inset: 0; background: var(--paper); padding: 20px; display: flex; flex-direction: column; }
   .tracking-summary[hidden] { display: none; }
+  /* While the summary is showing, the box is only as tall as its content. It used to keep the
+     4:3 shape of the live video, leaving a large empty gap above the buttons. */
+  .video-wrap:has(.tracking-summary:not([hidden])) { aspect-ratio: auto; }
+  .video-wrap:has(.tracking-summary:not([hidden])) .tracking-summary { position: relative; inset: auto; }
   .ts-heading { font-size: 12px; font-weight: 500; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 4px; }
   .ts-subheading { font-size: 11.5px; font-weight: 300; color: var(--ink-soft); margin-bottom: 18px; }
   .ts-hero { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
@@ -91,7 +95,8 @@
   .privacy-note { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-soft); margin-top: 10px; }
   .privacy-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
 
-  .control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .control-row { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .control-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .icon-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
   button { font-family: var(--sans); cursor: pointer; }
 
@@ -269,6 +274,12 @@
   .gym-what { font-size: 13px; line-height: 1.55; color: var(--ink-soft); margin: 0 0 6px; }
   .gym-link { font-size: 12.5px; font-weight: 500; color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
   .gym-link:hover { border-bottom-color: var(--accent); }
+  .why-item { padding: 12px 0; border-bottom: 1px solid var(--ink-faint); }
+  .why-item:first-child { padding-top: 4px; }
+  .why-title { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+  .why-short { font-size: 13px; line-height: 1.55; color: var(--ink); margin: 0 0 6px; }
+  .why-long { font-size: 12.5px; line-height: 1.55; color: var(--ink-soft); margin: 0 0 6px; }
+  .why-source { font-size: 11.5px; line-height: 1.45; color: var(--ink-soft); font-style: italic; margin: 0; }
   .gym-note { font-size: 11.5px; color: var(--ink-soft); line-height: 1.45; margin: 14px 0 0; }
 
   /* Layout used only when the card is popped into the PiP window. It fills
@@ -294,6 +305,17 @@
   #statusCard.pip-mode .status-value { font-size: clamp(12px, 8.4vmin, 44px); }
   #statusCard.pip-mode .status-caption { font-size: clamp(9px, 5.8vmin, 24px); margin-top: 0.5vmin; }
   #statusCard.pip-mode .live-metrics { font-size: clamp(10px, 5.3vmin, 22px); gap: 3vmin; margin-top: 1.5vmin; }
+
+  /* Chrome can keep the popup wider than tall (it enforces a minimum width and remembers a size that was
+     dragged). When it is, put the glyph and the text side by side and fill the window instead of
+     leaving empty bands on either side. */
+  @media (min-aspect-ratio: 5/4) {
+    #statusCard.pip-mode { flex-direction: row; gap: 5vmin; padding: 3vmin 6vmin; text-align: left; }
+    #statusCard.pip-mode .glyph-wrap { width: max(56px, min(46vw, 86vh)); height: max(56px, min(46vw, 86vh)); }
+    #statusCard.pip-mode .posture-text { text-align: left; min-width: 0; }
+    #statusCard.pip-mode .status-value { font-size: clamp(13px, 11vmin, 46px); }
+    #statusCard.pip-mode .status-caption { font-size: clamp(10px, 6.5vmin, 26px); }
+  }
 
   .section-title { font-size: 12px; font-weight: 500; color: var(--ink); margin: 0 0 12px; cursor: pointer; user-select: none; display: flex; align-items: center; justify-content: space-between; }
   .section-title .arrow { font-size: 10px; color: var(--ink-soft); }
@@ -499,13 +521,13 @@
         <canvas id="overlay"></canvas>
         <div class="video-placeholder" id="placeholder">camera is off — press start camera to begin</div>
         <div class="align-badge" id="alignBadge" hidden></div>
-        <div class="calibrate-flash" id="calibrateFlash" hidden>calibrate your posture now</div>
+        <div class="calibrate-flash" id="calibrateFlash" hidden>calibrate your plumb position now</div>
         <div class="tracking-summary" id="trackingSummary" hidden>
           <div class="ts-heading">tracking in popup</div>
           <div class="ts-subheading">leave it open — here's how today's going</div>
           <div class="ts-hero">
             <div class="ts-hero-num" id="tsHeroNum">—</div>
-            <div class="ts-hero-lbl">sitting well today</div>
+            <div class="ts-hero-lbl">sitting plumb today</div>
           </div>
           <div class="ts-timeline-wrap"><canvas id="tsTimelineChart"></canvas></div>
           <div class="ts-stats" id="tsStats">— monitored</div>
@@ -515,29 +537,33 @@
       <div class="privacy-note"><span class="dot"></span> video stays on this device — only small numbers ever get saved</div>
 
       <div class="control-row">
-        <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
-        <button id="breakToggleBtn" disabled title="take a break or end it">take a break</button>
-        <button id="pomodoroBtn" title="a distraction-free focus block: every alert pauses until it ends, then a short break"><svg class="tomato" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="14" r="8" fill="#D2452F"/><path d="M12 6.6c-.4 1.5-1.8 2.5-3.8 2.7 1.3.4 2.6.2 3.8-.6 1.2.8 2.5 1 3.8.6-2-.2-3.4-1.2-3.8-2.7z" fill="#2E7D4F"/><path d="M12 6.6V3.8" stroke="#2E7D4F" stroke-width="1.6" stroke-linecap="round"/></svg><span id="pomodoroBtnLabel">focus</span></button>
-        <button id="deskGymBtn" title="five quick seated stretches, each with a short note and a demo video search">desk gym</button>
-        <button id="calibrateBtn" disabled title="sit naturally, then press this to set your good-posture baseline">calibrate posture</button>
-        <button id="ergoWizardBtn" title="a one-off walkthrough of your desk: eye height against the screen, distance, lighting, desk basics -- then calibrate">workstation setup</button>
-        <button id="closeupBtn" title="a live mirror and quick check of how you look and sound to others, before a video call">are you camera ready?</button>
-
-        <div class="switch-group">
-          <div class="switch-item">
-            <button id="muteBtn" class="switch" aria-pressed="false" title="mute voice nudges"></button>
-            <span class="switch-caption">voice nudges</span>
+        <div class="control-line">
+          <button id="cameraToggleBtn" class="btn start-camera">start camera</button>
+          <button id="calibrateBtn" disabled title="sit naturally, then press this to set your plumb position: the posture everything else is measured against">calibrate plumb position</button>
+          <button id="breakToggleBtn" disabled title="start a break, or end the one you are on">start a break</button>
+          <button id="pomodoroBtn" title="a distraction-free focus block: every alert pauses until it ends, then a short break"><svg class="tomato" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="14" r="8" fill="#D2452F"/><path d="M12 6.6c-.4 1.5-1.8 2.5-3.8 2.7 1.3.4 2.6.2 3.8-.6 1.2.8 2.5 1 3.8.6-2-.2-3.4-1.2-3.8-2.7z" fill="#2E7D4F"/><path d="M12 6.6V3.8" stroke="#2E7D4F" stroke-width="1.6" stroke-linecap="round"/></svg><span id="pomodoroBtnLabel">focus</span></button>
+          <div class="switch-group">
+            <div class="switch-item">
+              <button id="muteBtn" class="switch" aria-pressed="false" title="turn the spoken nudges on or off"></button>
+              <span class="switch-caption" id="muteCaption">nudges on</span>
+            </div>
           </div>
         </div>
-
-        <div class="icon-group">
-          <button id="pipBtn" class="icon-btn" title="pop out a small always-on-top status window" type="button" hidden>
+        <div class="control-line">
+          <button id="ergoWizardBtn" title="a one-off walkthrough of your desk: eye height against the screen, distance, lighting, desk basics -- then calibrate">workstation setup</button>
+          <button id="deskGymBtn" title="five quick seated stretches, each with a short note and a demo video search">desk gym</button>
+          <button id="closeupBtn" title="a live mirror and quick check of how you look and sound to others, before a video call">how do I look?</button>
+          <div class="icon-group">
+            <button id="pipBtn" class="icon-btn" title="pop out a small always-on-top status window" type="button" hidden>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
           </button>
-
-          <button id="gearBtn" class="icon-btn" title="settings" type="button">
+            <button id="whyBtn" class="icon-btn" title="why Plumb nudges you the way it does: the reasoning and evidence behind each alert" aria-label="why the alerts are set this way" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5v-15z"/><path d="M4 20.5A2.5 2.5 0 006.5 18H20v3H6.5A2.5 2.5 0 014 20.5z"/><line x1="8.5" y1="7.5" x2="15.5" y2="7.5"/></svg>
+          </button>
+            <button id="gearBtn" class="icon-btn" title="settings" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34H9a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55 1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87V9a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>
           </button>
+          </div>
         </div>
       </div>
 
@@ -761,7 +787,7 @@
         good-posture baseline. Sit the way you'd normally work, then click next.</p>
       <p style="font-size:12px;">You don't need to start the camera first --
         the next step turns it on for you. (For a quick look before a
-        video call, use <b>are you camera ready?</b> instead -- that one is about how you look to others, this one is about how the desk suits you.)</p>
+        video call, use <b>how do I look?</b> instead -- that one is about how you look to others, this one is about how the desk suits you.)</p>
     </div>
 
     <div class="ergo-step" data-ergo-step="1" hidden>
@@ -856,6 +882,15 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="rationaleOverlay">
+  <div class="modal" style="max-width: 560px;">
+    <button class="modal-close" id="rationaleClose">&times;</button>
+    <h2 class="modal-title">why the alerts are set this way</h2>
+    <p class="gym-intro">Each nudge and its default setting, with the reasoning and how strong the evidence really is. The same notes sit behind the small "i" buttons beside each setting.</p>
+    <div id="rationaleList"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="deskGymOverlay">
   <div class="modal" style="max-width: 480px;">
     <button class="modal-close" id="deskGymClose">&times;</button>
@@ -877,7 +912,7 @@
 <div class="modal-overlay" id="closeupOverlay">
   <div class="modal" style="max-width: 480px;">
     <button class="modal-close" id="closeupClose">&times;</button>
-    <h2 class="modal-title">are you camera ready?</h2>
+    <h2 class="modal-title">how do I look?</h2>
     <p style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:-8px 0 14px;">A live mirror plus a quick check of your framing, lighting and microphone before a call. Those checks all happen on this device. The optional AI review below is the only part that sends anything, and only when you press its button.</p>
     <div id="closeupNeedsCamera">
       <button id="closeupStartCameraBtn" class="btn" type="button">start camera</button>

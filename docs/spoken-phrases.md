@@ -25,7 +25,7 @@ greeting is the one exception, picked at random).
 
 **After calibrating**
 
-- Calibrated. That's set your good position.
+- Calibrated, that's your plumb position.
 
 **Weekly goal** -- no longer spoken (removed 2026-09-26: it overlapped the morning "let's calibrate" line). The goal
 is still shown in the "this week" panel.

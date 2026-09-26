@@ -662,7 +662,7 @@ function endBreak(endTs = Date.now(), silent = false) {
   breakPreSittingSeconds = 0;
   setPresenceStart(Date.now());
   renderBreakGauge();
-  breakToggleBtn.textContent = 'take a break';
+  breakToggleBtn.textContent = 'start a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 }
 
@@ -1816,7 +1816,7 @@ renderExtrasUI();
 // voice, so a repeat is instant, and the calibration line is generated ahead of time as soon
 // as the voice is ready. Synthesis is also strictly one at a time: two overlapping runs of the
 // model were part of the old "speech on top of speech" problem.
-const CALIBRATED_PHRASE = "Calibrated. That's set your good position.";
+const CALIBRATED_PHRASE = "Calibrated, that's your plumb position.";
 const PHRASE_CACHE_MAX = 40;
 const phraseCache = new Map(); // `${voiceId}|${text}` -> decoded AudioBuffer
 const phraseKey = (voiceId, text) => `${voiceId}|${text}`;
@@ -2344,7 +2344,7 @@ async function startCamera() {
     // that dead window instead of just disguising it.
     calibrateBtn.disabled = false;
     if (baselineLateral === null) {
-      calibrateBtn.textContent = 'calibrate posture';
+      calibrateBtn.textContent = 'calibrate plumb position';
       calibrateBtn.classList.add('needs-calibration');
       calibrateBtn.classList.remove('is-confirmed');
       calibrateFlash.hidden = false;
@@ -2400,7 +2400,7 @@ logStartupGap();
     isPersonPresent = false;
     personLostSince = null;
     lastLoopWallMs = 0;
-    breakToggleBtn.textContent = 'take a break';
+    breakToggleBtn.textContent = 'start a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId);
     await ensureAudioUnlocked();
@@ -2490,11 +2490,11 @@ function stopCamera(reason = 'manual') {
   // A calibrated baseline persists across a stop/restart in this tab (no
   // need to redo it every time you toggle the camera), so reflect that in
   // the button instead of blanking it back to an unstyled "not done" look.
-  calibrateBtn.textContent = baselineLateral === null ? 'calibrate posture' : 'recalibrate posture';
+  calibrateBtn.textContent = baselineLateral === null ? 'calibrate plumb position' : 'recalibrate plumb position';
   calibrateBtn.classList.toggle('is-confirmed', baselineLateral !== null);
   calibrateBtn.classList.remove('needs-calibration');
   calibrateFlash.hidden = true;
-  breakToggleBtn.textContent = 'take a break';
+  breakToggleBtn.textContent = 'start a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
 
   if (breakActive) endBreak();
@@ -2766,8 +2766,8 @@ const CATEGORY_COLORS = {
   slump: '#C1622E',
   lean: '#1F8A6C',
   sink: '#5A3E96',
-  break: '#8F5220',
-  away: '#0F6690',
+  break: '#CFC6B6', // light stone/taupe: not posture, so deliberately close to the page background
+  away: '#9E9382', // darker mushroom stone: same reasoning, one step darker than break
   not_tracking: '#F0EDE6',
   future: 'transparent'
 };
@@ -3734,9 +3734,9 @@ function performCalibration() {
     lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
     speak(CALIBRATED_PHRASE, false, true);
-    addAlertToFeed('calibration', 'Posture calibrated');
+    addAlertToFeed('calibration', 'Plumb position calibrated');
     logCalibrationEvent();
-    calibrateBtn.textContent = 'recalibrate posture';
+    calibrateBtn.textContent = 'recalibrate plumb position';
     calibrateBtn.classList.remove('needs-calibration');
     calibrateBtn.classList.add('is-confirmed');
     calibrateFlash.hidden = true;
@@ -4286,7 +4286,7 @@ function loop() {
           breakStartedAt = null;
           manualBreak = false;
           breakPreSittingSeconds = 0;
-          breakToggleBtn.textContent = 'take a break';
+          breakToggleBtn.textContent = 'start a break';
           breakToggleBtn.classList.remove('break-active', 'break-due');
         }
       } else if (absenceStartedAt) {
@@ -4328,7 +4328,7 @@ function loop() {
       breakToggleBtn.textContent = 'time for a break';
     } else if (!breakActive) {
       breakToggleBtn.classList.remove('break-due');
-      breakToggleBtn.textContent = 'take a break';
+      breakToggleBtn.textContent = 'start a break';
     }
     renderBreakGauge(continuousMin);
 
@@ -4733,9 +4733,12 @@ window.addEventListener('beforeunload', () => {
 
 testVoiceBtn.addEventListener('click', () => speak('This is what a nudge sounds like.', true));
 
+const muteCaption = document.getElementById('muteCaption');
 function renderMuteBtn() {
   muteBtn.textContent = voiceNudgesEnabled ? 'mute' : 'unmute';
   muteBtn.classList.toggle('is-on', voiceNudgesEnabled);
+  muteBtn.setAttribute('aria-pressed', String(voiceNudgesEnabled));
+  if (muteCaption) muteCaption.textContent = voiceNudgesEnabled ? 'nudges on' : 'nudges muted';
 }
 // Muting only silences speak() (see its own !voiceNudgesEnabled check) --
 // it doesn't pause the sustain/cooldown tracking underneath. Glare and
@@ -5089,3 +5092,27 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeInfoPopover();
 });
+
+// ---- "why the alerts are set this way" (the book icon) ----------------------------------
+// Same content as the small "i" popovers beside each setting (RESEARCH_INFO), gathered into one
+// readable panel: what each setting does, why its default is what it is, and how strong the
+// evidence actually is.
+const rationaleOverlay = document.getElementById('rationaleOverlay');
+function openRationale() {
+  const list = document.getElementById('rationaleList');
+  if (!list.childElementCount) {
+    Object.values(RESEARCH_INFO).forEach((info) => {
+      const item = document.createElement('div');
+      item.className = 'why-item';
+      const title = document.createElement('h3'); title.className = 'why-title'; title.textContent = info.title;
+      const short = document.createElement('p'); short.className = 'why-short'; short.textContent = info.short;
+      const long = document.createElement('p'); long.className = 'why-long'; long.textContent = info.long;
+      const source = document.createElement('p'); source.className = 'why-source'; source.textContent = info.source;
+      item.append(title, short, long, source);
+      list.appendChild(item);
+    });
+  }
+  rationaleOverlay.classList.add('open');
+}
+document.getElementById('whyBtn').addEventListener('click', openRationale);
+document.getElementById('rationaleClose').addEventListener('click', () => rationaleOverlay.classList.remove('open'));
