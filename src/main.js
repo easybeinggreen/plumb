@@ -1393,9 +1393,25 @@ async function ensurePiperVoice(voiceId) {
 // isn't always on. 3s minimum, a little longer for long messages.
 const plumbToast = document.getElementById('plumbToast');
 let plumbToastTimer = null;
+// Splits a message into two balanced rows, preferring to break after punctuation (a full stop,
+// dash, colon or comma) near the middle. Very short messages stay on one row. Rows that are
+// still too wide for a small popup simply wrap (the toast uses white-space: pre-line).
+function toastRows(text) {
+  const t = String(text).trim();
+  if (t.length < 14 || !t.includes(' ')) return t;
+  const mid = t.length / 2;
+  let best = -1, bestScore = Infinity;
+  for (let i = 1; i < t.length - 1; i++) {
+    if (t[i] !== ' ') continue;
+    const score = Math.abs(i - mid) - (/[.!?:;,—–]/.test(t[i - 1]) ? t.length * 0.2 : 0);
+    if (score < bestScore) { bestScore = score; best = i; }
+  }
+  return best === -1 ? t : `${t.slice(0, best).trim()}
+${t.slice(best + 1).trim()}`;
+}
 function showToast(text) {
   if (!plumbToast || !text) return;
-  plumbToast.textContent = text;
+  plumbToast.textContent = toastRows(text);
   plumbToast.classList.add('show');
   clearTimeout(plumbToastTimer);
   plumbToastTimer = setTimeout(() => plumbToast.classList.remove('show'), Math.max(3000, text.length * 45));
@@ -2072,7 +2088,7 @@ async function requestPipWindow() {
   if (!('documentPictureInPicture' in window)) return false;
 
   try {
-    trackingPipWindow = await documentPictureInPicture.requestWindow({ width: 200, height: 190 });
+    trackingPipWindow = await documentPictureInPicture.requestWindow({ width: 160, height: 152 }); // 20% smaller each way than the original 200x190 (owner: it took up too much screen)
   } catch (err) {
     console.warn('PiP open failed:', err);
     trackingPipWindow = null;
