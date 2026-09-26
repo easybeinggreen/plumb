@@ -43,6 +43,17 @@ respond to leaning left/right within a few seconds.
   `openrouter/free`. The serving model is stored in `weekly_goals.model` -- check it if a week reads oddly.
 - Popup (PiP) layout scales with the window (it was a fixed 170px card / 96px glyph). Checked at several sizes
   in a browser pane; not yet seen in a real PiP window.
+- **Angus and Matilda never made a sound (fixed 2026-09-26, found by reproducing in a browser pane).** They
+  downloaded and synthesised fine, but `auPcm2Wav` wrote its four WAV chunk tags as big-endian integers, storing
+  "FFIR"/"EVAW" instead of "RIFF"/"WAVE", so `decodeAudioData` rejected every clip ("Unable to decode audio data").
+  The 2026-09-23 note that they "work" only ever verified the download. Tags are now written as ASCII. Verified:
+  Matilda's calibration and test lines decode to valid 2.25s / 1.75s audio and play. Still an open QUALITY question
+  (literary reading style) -- the owner has not yet heard them speak a real Plumb nudge.
+- **Instant calibration confirmation.** "Calibrated. That's set your good posture." arrived seconds after the
+  button because Piper synthesises on demand. Now every spoken line's audio is cached per voice (a repeat plays
+  ~1ms after the trigger), the calibration line is pre-generated as soon as the voice is ready, synthesis runs one
+  at a time, and a line that finishes after a newer one has started is dropped instead of playing over it.
+  Voices: Alba stays the default; Alan and Cori removed (8 Piper voices + Angus and Matilda now).
 - **Sleep-gap artifacts (found from the week report showing 98% slouching, one day at 250%, and "16h 40m away").**
   When the laptop slept with Plumb open, whatever was open was closed at WAKE-UP time: a slouch block became a
   single 15.33h `compression` event (id 17171, 2026-09-22 16:45 -> 09-23 08:05) and four overnight absences became

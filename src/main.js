@@ -785,7 +785,6 @@ const PIPER_VOICES = [
   { id: 'en_GB-northern_english_male-medium', name: 'Nathan — UK male, northern' },
   { id: 'en_GB-alba-medium', name: 'Alba — UK female, warm' },
   { id: 'en_GB-southern_english_female-low', name: 'Southern — UK female, light' },
-  { id: 'en_GB-cori-medium', name: 'Cori — UK female, crisp' },
   { id: 'en_GB-jenny_dioco-medium', name: 'Jenny — UK female, bright' },
   { id: 'en_GB-aru-medium', name: 'Aru — UK, low & brisk' },
   { id: 'en_GB-semaine-medium', name: 'Semaine — UK, measured' },
@@ -1215,12 +1214,17 @@ let auOrt = null, auPhonemize = null, auOnnxSession = null, auModelConfig = null
 function auPcm2Wav(buffer, sampleRate) {
   const headerLength = 44;
   const view = new DataView(new ArrayBuffer(buffer.length * 2 + headerLength));
-  view.setUint32(0, 0x46464952, false); view.setUint32(4, view.buffer.byteLength - 8, true);
-  view.setUint32(8, 0x45564157, false); view.setUint32(12, 0x20746d66, false);
+  // The four chunk tags are written as plain ASCII bytes. They were originally written as
+  // big-endian integers (0x46464952 with littleEndian=false), which stores "FFIR"/"EVAW"
+  // instead of "RIFF"/"WAVE", so the browser rejected every clip ("Unable to decode audio
+  // data") and Angus and Matilda downloaded but never made a sound.
+  const tag = (offset, text) => { for (let i = 0; i < 4; i++) view.setUint8(offset + i, text.charCodeAt(i)); };
+  tag(0, 'RIFF'); view.setUint32(4, view.buffer.byteLength - 8, true);
+  tag(8, 'WAVE'); tag(12, 'fmt ');
   view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true); view.setUint32(28, 2 * sampleRate, true);
   view.setUint16(32, 2, true); view.setUint16(34, 16, true);
-  view.setUint32(36, 0x61746164, false); view.setUint32(40, 2 * buffer.length, true);
+  tag(36, 'data'); view.setUint32(40, 2 * buffer.length, true);
   let p = headerLength;
   for (let i = 0; i < buffer.length; i++) {
     const v = buffer[i];
@@ -1329,6 +1333,7 @@ async function ensurePiperVoice(voiceId) {
         piperSessionVoice = voiceId;
         testVoiceBtn.textContent = 'test voice';
         updateVoiceReady(true);
+        prewarmPhrase(voiceId, CALIBRATED_PHRASE);
       }
       return session;
     } catch (err) {
@@ -1370,6 +1375,7 @@ async function ensurePiperVoice(voiceId) {
       piperSessionVoice = voiceId;
       testVoiceBtn.textContent = 'test voice';
       updateVoiceReady(true);
+      prewarmPhrase(voiceId, CALIBRATED_PHRASE);
     }
     return session;
   } catch (err) {
@@ -1788,6 +1794,45 @@ document.getElementById('wrapTimeInput').addEventListener('change', (e) => {
 });
 renderExtrasUI();
 
+// ---- Spoken-line cache ------------------------------------------------------------
+// Piper takes a second or more to synthesise a line, which made the "Calibrated" confirmation
+// arrive long after the button press (it felt broken). Every line's audio is now kept per
+// voice, so a repeat is instant, and the calibration line is generated ahead of time as soon
+// as the voice is ready. Synthesis is also strictly one at a time: two overlapping runs of the
+// model were part of the old "speech on top of speech" problem.
+const CALIBRATED_PHRASE = "Calibrated. That's set your good posture.";
+const PHRASE_CACHE_MAX = 40;
+const phraseCache = new Map(); // `${voiceId}|${text}` -> decoded AudioBuffer
+const phraseKey = (voiceId, text) => `${voiceId}|${text}`;
+let synthChain = Promise.resolve();
+let speakSeq = 0;
+
+function synthesise(session, voiceId, text) {
+  const run = async () => {
+    const key = phraseKey(voiceId, text);
+    if (phraseCache.has(key)) return phraseCache.get(key);
+    const wav = await session.predict(text);
+    await ensureAudioUnlocked();
+    const buffer = await audioCtx.decodeAudioData(await wav.arrayBuffer());
+    if (phraseCache.size >= PHRASE_CACHE_MAX) phraseCache.delete(phraseCache.keys().next().value);
+    phraseCache.set(key, buffer);
+    return buffer;
+  };
+  const p = synthChain.then(run);
+  synthChain = p.catch(() => {}); // a failed line must not block the ones after it
+  return p;
+}
+
+// Generates a fixed line for the voice that just became ready, so the first time it is needed
+// it plays immediately. Best effort: never throws, never blocks anything.
+async function prewarmPhrase(voiceId, text) {
+  try {
+    if (!isPiperVoiceId(voiceId) || piperSessionVoice !== voiceId || !piperSession) return;
+    if (phraseCache.has(phraseKey(voiceId, text))) return;
+    await synthesise(piperSession, voiceId, text);
+  } catch (e) { console.warn('prewarmPhrase:', e); }
+}
+
 async function speak(text, force = false, userInitiated = false, kind = 'nudge') {
   if (!force && !userInitiated && alertsSuppressed(kind)) return;
   if (!force && !userInitiated && kind !== 'pomodoro' && kind !== 'wrap') countAlert();
@@ -1796,6 +1841,7 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
   // testing the voice is exactly the case where muted shouldn't apply, and
   // silently doing nothing on click was indistinguishable from "broken".
   if (!voiceNudgesEnabled && !force) return;
+  const mySeq = ++speakSeq;
   await ensureAudioUnlocked();
   const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v => v.name === currentVoiceId);
   if (isBrowserVoice) {
@@ -1809,10 +1855,19 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
     }
   }
   try {
-    const session = await ensurePiperVoice(currentVoiceId);
-    if (session) {
-      const wav = await session.predict(text);
-      const buffer = await audioCtx.decodeAudioData(await wav.arrayBuffer());
+    // A line spoken before with this voice (or pre-generated, see prewarmPhrase) plays at
+    // once: no model needs to run. Otherwise it is synthesised, which takes a second or
+    // more, and remembered for next time.
+    const voiceId = currentVoiceId;
+    let buffer = phraseCache.get(phraseKey(voiceId, text));
+    if (!buffer) {
+      const session = await ensurePiperVoice(voiceId);
+      if (session) buffer = await synthesise(session, voiceId, text);
+    }
+    if (buffer) {
+      // A newer line started while this one was being made: drop this one rather than
+      // let a late-finishing older line play over, or cut off, the newer one.
+      if (mySeq !== speakSeq) return;
       // Unlike speechSynthesis (cancelled above), nothing was stopping a
       // still-playing Piper buffer before starting the next one -- two
       // nudges close together (e.g. a break-end message landing right as a
@@ -3596,7 +3651,7 @@ function performCalibration() {
     stillnessRef = null;
     lastMovementAt = null;
     statusCaption.textContent = 'calibrated to your desk';
-    speak("Calibrated. That's set your good posture.", false, true);
+    speak(CALIBRATED_PHRASE, false, true);
     addAlertToFeed('calibration', 'Posture calibrated');
     logCalibrationEvent();
     calibrateBtn.textContent = 'recalibrate posture';
