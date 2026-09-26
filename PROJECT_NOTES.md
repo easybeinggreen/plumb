@@ -61,6 +61,27 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Summary panel (right-hand column, branch `feat/summary-panel`, 2026-09-26)
+
+The old "this week" panel (587px) and the alert feed (76px) were replaced by one tight panel, "summary", with two tabs:
+- **today** (computed from the raw events on demand, NO AI): the wrap's headline and six rows (tracked, sitting plumb vs
+  yesterday, breaks, longest sit, most common, roughest hour). Loads on page load, on selecting the tab, and every 3
+  minutes while it is showing. Uses `buildDayWrap` (the same maths as the "today's wrap" window; `renderDayWrapInto` is
+  shared). The old one-line "Today so far" check-in was removed.
+- **this week**: first "the numbers behind it" (`buildWeekDrivers` in `src/companion.js`, computed from the same week's
+  raw events: tracked time and days, out-of-plumb % split by type, roughest/steadiest hour of day pooled over the week,
+  breaks a day, longest sit), then the AI's three goals, its question (reply hidden behind a "reply" link), and the AI's
+  three pattern lines collapsed under "the AI's reading". The AI's coverage sentence (`tracker_reminder`) is no longer
+  shown (the numbers already say it; the column is still written). "update weekly summary" only shows on this tab.
+  When the biggest share of out-of-plumb is sitting low, the numbers carry a caution: it can read high after a break.
+- **recent activity**: the alert feed is now a collapsed link at the bottom of the panel (it is not important, and it
+  is wiped on reload anyway). The panel is always visible (it no longer waits for the weekly fetch).
+Measured at 1280x800 with Paul's real data (camera off): today tab 270px, this week tab 483px, against 663px before;
+the page's scroll height went 1448px -> 1041px (today) / 1254px (week). Not verified: the panel in a narrow window,
+the AI generation button end to end (unchanged code path, not re-run), or the reply save.
+The AI recommendation ("take a break at 1pm") is still built from the sitting-low hour pattern, which was inflated by
+the baseline drift fixed in PR #20; expect it to change after a week on the new calibration.
+
 ### "today" panel layout (branch `fix/today-panel-layout`, 2026-09-26) + a parked popup issue
 
 **Panel (hydration / ambient brightness / break ring):** owner's list, all done. A "Hydration" heading now sits over
