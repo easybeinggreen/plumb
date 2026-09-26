@@ -89,6 +89,18 @@ logged. Model is `openrouter/free` with retries inside a 115s budget (named free
 models failed almost every call). Deployment is through the Supabase tooling; the
 files in the repo are the source of truth, keep them in sync when redeploying.
 
+`weekly-analysis` (Deno, `supabase/functions/weekly-analysis/`, `verify_jwt` off for the
+same reason as `camera-review`). The app's "generate / update weekly summary" button in
+the "this week" panel. Takes `{user_id}`, runs the same analysis as the Friday job for
+that one user over the 7 days ending today, and upserts `weekly_goals`. `analysis.js` is
+the single shared implementation: `scripts/generate-weekly-analysis.cjs` imports the same
+file, so the prompt and aggregation exist once. Fires 3 model requests in parallel and
+takes the first valid answer (the free router often picks a slow reasoning model).
+Protections: 6 summaries/user/day and 150/day overall via `camera_review_take` under a
+`summary:<user>` key (a failed run is refunded), needs at least 10 tracked minutes, CORS
+as `camera-review`. Ignores any single slouch block over 2 hours (a laptop-asleep
+artifact). Deployment is through the Supabase tooling; keep the repo files in sync.
+
 ## Scheduled jobs (GitHub Actions)
 
 | Workflow | When | What |
