@@ -309,7 +309,7 @@
 
   .gauge-col { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; }
   .hydration-gauge {
-    width: 56px; height: 150px; border-radius: 16px 16px 9px 9px; background: #fff;
+    width: 56px; height: 124px; border-radius: 16px 16px 9px 9px; background: #fff; flex-shrink: 0;
     border: 1.5px solid var(--ink-faint-2); position: relative; overflow: hidden;
     box-shadow: inset 0 2px 6px rgba(10,38,38,0.06);
   }
@@ -339,6 +339,9 @@
   .break-ring-fill.due { stroke: var(--terracotta); }
   .break-ring-center { position: absolute; display: flex; flex-direction: column; align-items: center; padding: 0 8px; }
   .break-ring-center b { font-weight: 700; font-size: 21px; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1; text-align: center; }
+  /* Words in the ring ("break due", "on a break") are wider than the digits and
+     used to spill over the ring; the countdown digits keep their size. */
+  .break-ring-center b.is-text { font-size: 18px; }
   .break-ring-center span { font-size: 10px; font-weight: 500; color: var(--ink-soft); margin-top: 3px; text-align: center; }
 
   /* Sits next to the 150px-tall hydration gauge -- pushed down so the box's
@@ -346,7 +349,12 @@
      both top-aligning and leaving the shorter box looking stranded near the
      top. Margin is smaller than the box's own offset would suggest because
      .gauge-heading above it already eats into that space. */
-  .gauge-col-light { margin-top: 8px; }
+  .gauge-col-light { margin-top: 0; }
+  /* The three columns line up on the gauge's midpoint: the hydration column has a heading, so the shorter
+     brightness box and the ring are nudged down to sit level with the gauge. */
+  .gauge-col-light .light-box { margin-top: 17px; }
+  .gauge-col-light .hydration-readout { max-width: 100px; }
+  .gauge-col-break { margin-top: 20px; }
   .gauge-heading { font-size: 11px; font-weight: 600; color: var(--ink-soft); text-align: center; }
   .light-box {
     width: 90px; height: 90px; border-radius: 14px; border: 1.5px solid var(--ink-faint-2);
@@ -365,16 +373,24 @@
   .hydration-readout b { color: var(--ink); font-size: 14px; font-weight: 600; }
   .hydration-readout.small { font-size: 10.5px; opacity: .85; }
 
+  /* Hydration column: the numbers sit to the LEFT of the gauge (this used to be
+     a tall stack: gauge, then numbers, then tiles), and the four size buttons are
+     icon-then-label pills in a 2x2 grid, to save vertical space. */
+  .hydration-col { width: 150px; }
+  .hydration-main { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .hydration-numbers { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; }
+  .hydration-numbers .hydration-readout { text-align: right; }
+  .hydration-numbers .hydration-readout b { font-size: 17px; }
   .hydration-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; width: 100%; margin-top: 2px; }
   .hydration-btn {
-    display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 4px 3px;
-    border-radius: 7px; border: 1.5px solid var(--ink-faint-2); background: transparent;
+    display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 5px; padding: 4px 6px;
+    border-radius: 999px; border: 1.5px solid var(--ink-faint-2); background: transparent;
     transition: border-color .15s ease, background .15s ease, transform .05s ease;
   }
   .hydration-btn:hover { border-color: var(--water); background: rgba(62,124,166,0.06); }
   .hydration-btn:active { transform: scale(0.95); }
-  .hydration-btn svg { width: 12px; height: 12px; color: var(--water); }
-  .hydration-btn-label { font-size: 8px; font-weight: 500; color: var(--ink-soft); }
+  .hydration-btn svg { width: 13px; height: 13px; color: var(--water); flex-shrink: 0; }
+  .hydration-btn-label { font-size: 10px; font-weight: 500; color: var(--ink-soft); }
 
   .hydration-undo { align-self: center; font-size: 11px; color: var(--ink-soft); background: none; border: none; text-decoration: underline; padding: 2px 4px; cursor: pointer; }
   .hydration-undo:hover { color: var(--ink); }
@@ -574,13 +590,19 @@
       <div class="panel hydration-card">
         <div class="section-title" style="cursor:default;">today</div>
         <div class="gauges-row">
-          <div class="gauge-col">
-            <div class="hydration-gauge">
-              <div class="hydration-fill" id="hydrationFill"></div>
-              <div class="pace-marker" id="hydrationPaceMarker" hidden title="where you would be if you were drinking evenly through the day"></div>
+          <div class="gauge-col hydration-col">
+            <div class="gauge-heading">Hydration</div>
+            <div class="hydration-main">
+              <div class="hydration-numbers">
+                <div class="hydration-readout"><b id="hydrationConsumed">0</b></div>
+                <div class="hydration-readout small">/ <span id="hydrationTarget">1000</span>ml</div>
+                <div class="hydration-readout small" id="hydrationPaceText"></div>
+              </div>
+              <div class="hydration-gauge">
+                <div class="hydration-fill" id="hydrationFill"></div>
+                <div class="pace-marker" id="hydrationPaceMarker" hidden title="where you would be if you were drinking evenly through the day"></div>
+              </div>
             </div>
-            <div class="hydration-readout"><b id="hydrationConsumed">0</b> / <span id="hydrationTarget">1000</span>ml</div>
-            <div class="hydration-readout small" id="hydrationPaceText"></div>
             <div class="hydration-buttons">
               <button class="hydration-btn" id="hydrationGlassBtn" type="button" title="glass — 300ml">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10l-1.4 16.8a1.2 1.2 0 01-1.2 1.2H9.6a1.2 1.2 0 01-1.2-1.2L7 3z"/><line x1="7.6" y1="8" x2="16.4" y2="8"/></svg>
@@ -610,7 +632,7 @@
             </div>
             <div class="hydration-readout small" id="lightReadout">no camera yet</div>
           </div>
-          <div class="gauge-col">
+          <div class="gauge-col gauge-col-break">
             <div class="break-ring-wrap">
               <svg width="130" height="130" viewBox="0 0 130 130">
                 <circle class="break-ring-track" cx="65" cy="65" r="54"/>
