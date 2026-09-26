@@ -630,9 +630,11 @@ function startBreak(manual = false) {
   breakToggleBtn.classList.remove('break-due');
 }
 
-function endBreak() {
+// endTs/silent are for handleLoopGap: a break interrupted by the device sleeping ends at the
+// last frame seen (not when it woke up), and nobody should be greeted for a nap.
+function endBreak(endTs = Date.now(), silent = false) {
   if (!breakActive || !breakStartedAt) return;
-  const end = Date.now();
+  const end = endTs;
   const dur = (end - breakStartedAt) / 1000;
 
   if (dur >= BREAK_MIN_SECONDS) {
@@ -643,7 +645,7 @@ function endBreak() {
       let msg = '';
       if (dur >= 300) { msg = BREAK_RETURN_LONG_PHRASES[breakReturnLongIdx % BREAK_RETURN_LONG_PHRASES.length]; breakReturnLongIdx++; }
       else if (dur >= 60) { msg = BREAK_RETURN_SHORT_PHRASES[breakReturnShortIdx % BREAK_RETURN_SHORT_PHRASES.length]; breakReturnShortIdx++; }
-      if (msg) speak(msg);
+      if (msg && !silent) speak(msg);
       const mins = Math.round(dur / 60);
       addAlertToFeed('break', `Break ended (${mins > 0 ? mins + ' min' : Math.round(dur) + ' sec'})`);
     } else {
@@ -662,6 +664,42 @@ function endBreak() {
   renderBreakGauge();
   breakToggleBtn.textContent = 'take a break';
   breakToggleBtn.classList.remove('break-active', 'break-due');
+}
+
+// The frame loop normally runs many times a second. If there is a long gap between two
+// frames the app was not running at all -- the laptop slept, the lid was closed, the
+// popup was suspended. Before this, whatever was open at that moment was closed at the
+// WAKE-UP time: a slouch block became one 15-hour "compression" event (2026-09-22) and an
+// overnight absence became a 15-hour "away" (four of them, 62 hours of "away" in total),
+// which flattened the report (98% slouching, 250% one day, "16h away"). Now everything
+// open ends at the last frame actually seen, and the gap itself is logged honestly as
+// not_tracking.
+const LOOP_GAP_MS = 30 * 1000;
+let lastLoopWallMs = 0;
+function handleLoopGap(gapStart, gapEnd) {
+  const mins = Math.round((gapEnd - gapStart) / 60000);
+  addAlertToFeed('not_tracking', `Tracking was paused for ${mins >= 60 ? Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + ' min'} (device asleep or window suspended)`);
+
+  if (slouchStartedAt) {
+    logPostureEvent(slouchType, slouchStartedAt, gapStart);
+    slouchStartedAt = null;
+    slouchAccumulatedMs = 0;
+  }
+  // Ends any break/away that was in progress at the moment frames stopped (silently).
+  if (breakActive && breakStartedAt) endBreak(gapStart, true);
+  // A person-left absence that had not yet reached a break is simply dropped.
+  finalizePresenceBlock('suspended', gapStart);
+  logNotTrackingEvent(gapStart, gapEnd);
+
+  isPersonPresent = false;
+  setPresenceStart(null);
+  absenceStartedAt = null;
+  personLostSince = null;
+  faceMissingSince = null;
+  stillnessRef = null;
+  lastMovementAt = null;
+  lastBreakNudgeAt = gapEnd;
+  renderBreakGauge();
 }
 
 let hiddenAt = null;
@@ -2224,6 +2262,7 @@ logStartupGap();
     breakPreSittingSeconds = 0;
     isPersonPresent = false;
     personLostSince = null;
+    lastLoopWallMs = 0;
     breakToggleBtn.textContent = 'take a break';
     breakToggleBtn.classList.remove('break-active', 'break-due');
     ensurePiperVoice(currentVoiceId);
@@ -2326,6 +2365,7 @@ function stopCamera(reason = 'manual') {
   // left set, closing the tab later would log phantom presence from this moment.
   setPresenceStart(null);
   personLostSince = null;
+  lastLoopWallMs = 0;
   stopBgSilentAudio();
   flushEvents();
 
@@ -4039,6 +4079,11 @@ function loop() {
   // losing that stretch of the day. handleCameraLost() closes it down
   // cleanly instead, the same way a manual stop does.
   try {
+  // Before anything else, so a woken-up laptop closes yesterday's blocks against
+  // yesterday's date and last night's last frame.
+  const wallNow = Date.now();
+  if (lastLoopWallMs && wallNow - lastLoopWallMs > LOOP_GAP_MS) handleLoopGap(lastLoopWallMs, wallNow);
+  lastLoopWallMs = wallNow;
   const now = performance.now();
   const dt = Math.min((now - lastFrameTime) / 1000, 0.5);
   lastFrameTime = now;
