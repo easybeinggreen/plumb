@@ -425,9 +425,6 @@
   .hydration-btn svg { width: 13px; height: 13px; color: var(--water); flex-shrink: 0; }
   .hydration-btn-label { font-size: 10px; font-weight: 500; color: var(--ink-soft); }
 
-  .hydration-undo { align-self: center; font-size: 11px; color: var(--ink-soft); background: none; border: none; text-decoration: underline; padding: 2px 4px; cursor: pointer; }
-  .hydration-undo:hover { color: var(--ink); }
-  .hydration-undo[hidden] { display: none; }
 
   .hydration-size-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .hydration-size-row:last-child { margin-bottom: 0; }
@@ -499,6 +496,13 @@
   .legend-swatch { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
   .day-rows-caption { font-size: 11px; color: var(--ink-soft); margin-bottom: 10px; }
   .day-rows { display: flex; flex-direction: column; gap: 7px; }
+  /* Column headings: the same widths as the row cells below so each heading sits over its chart */
+  .day-rows-heads { display: flex; gap: 10px; margin: 2px 0 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--ink-soft); white-space: nowrap; }
+  .day-rows-heads .h-label { flex: 0 0 76px; }
+  .day-rows-heads .h-totals { flex: 0 0 110px; }
+  .day-rows-heads .h-strip { flex: 1 1 auto; min-width: 0; }
+  .day-rows-heads .h-meta { flex: 0 0 66px; }
+  .day-rows-heads .h-hyd { flex: 0 0 50px; min-width: 0; text-align: center; font-size: 9px; letter-spacing: 0; }
   .day-row { display: flex; align-items: center; gap: 10px; }
   .day-row-label { flex: 0 0 76px; font-size: 11.5px; font-weight: 500; color: var(--ink); white-space: nowrap; }
   .day-row-totals { flex: 0 0 110px; height: 16px; border-radius: 3px; display: block; }
@@ -656,7 +660,6 @@
                 <span class="hydration-btn-label">bottle</span>
               </button>
             </div>
-            <button class="hydration-undo" id="hydrationUndoBtn" type="button" hidden>undo last</button>
           </div>
           <div class="gauge-col gauge-col-light">
             <div class="gauge-heading">Ambient brightness</div>
@@ -1030,6 +1033,9 @@
       <div id="weekDayRows" style="display:none;">
         <div class="day-rows-legend" id="weekDayRowsLegend"></div>
         <div class="day-rows-caption">click a day for full detail</div>
+        <div class="day-rows-heads" aria-hidden="true">
+          <span class="h-label"></span><span class="h-totals">Daily summary</span><span class="h-strip">Minute by minute</span><span class="h-meta"></span><span class="h-hyd">Hydration</span>
+        </div>
         <div class="day-rows" id="weekDayRowsList"></div>
       </div>
       <div class="chart-container" style="margin-top:12px;"><canvas id="todayTimelineChart" style="display:none;"></canvas></div>

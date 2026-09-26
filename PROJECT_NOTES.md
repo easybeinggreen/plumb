@@ -84,6 +84,11 @@ the AI generation button end to end (unchanged code path, not re-run), or the re
 The AI recommendation ("take a break at 1pm") is still built from the sitting-low hour pattern, which was inflated by
 the baseline drift fixed in PR #20; expect it to change after a week on the new calibration.
 
+**Also 2026-09-26 (owner):** the "undo last" hydration button under the gauge was removed to save space (a wrong tap can no
+longer be undone in the app; a row can be deleted from `hydration_events` if it matters). The report's week view has column
+headings, "Daily summary", "Minute by minute" and "Hydration", aligned to the three chart columns (measured: identical left
+edge and width to the row cells).
+
 ### "today" panel layout (branch `fix/today-panel-layout`, 2026-09-26) + a parked popup issue
 
 **Panel (hydration / ambient brightness / break ring):** owner's list, all done. A "Hydration" heading now sits over
