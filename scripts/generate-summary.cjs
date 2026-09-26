@@ -75,7 +75,7 @@ async function askModel(apiKey, stats) {
     `${JSON.stringify(stats.days, null, 2)}\n\n` +
     `Write a short (4-6 sentence) plain-prose summary. Note any real patterns (specific days that are worse, ` +
     `whether things are trending better or worse across the period), and end with exactly one small, concrete ` +
-    `suggestion. Be warm and honest, not preachy, and do not use bullet points or headers. Do not diagnose any ` +
+    `suggestion. Be warm and honest, not preachy, and do not use bullet points or headers. The app's own term for slouching is "out of plumb" (slouchMinutes is minutes out of plumb); use that phrase rather than "slouching". Do not diagnose any ` +
     `medical condition or make clinical claims — this is a casual self-tracking tool, not a health device.`;
 
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {

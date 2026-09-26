@@ -3109,7 +3109,7 @@ function renderTodayTimeline(events, canvas, referenceDate) {
         let sum = 0;
         for (let m = seg.startMin; m < seg.endMin; m++) sum += slouchFrac[m];
         const avgPct = Math.round((sum / (seg.endMin - seg.startMin)) * 100);
-        if (avgPct > 0) extra = ` · ${avgPct}% slouching`;
+        if (avgPct > 0) extra = ` · ${avgPct}% out of plumb`;
       }
 
       canvas.title = `${labels[seg.state]}${extra}\n${startLabel} – ${endLabel}\n${formatMinutes(seg.endMin - seg.startMin)}`;
@@ -3367,7 +3367,7 @@ async function showReport(range) {
 
   reportSummary.innerHTML = `
     <div class="metric"><div class="value">${formatMinutes(overall / 60)}</div><div class="label">monitored</div></div>
-    <div class="metric"><div class="value">${slouchPct}%</div><div class="label">time slouching</div></div>
+    <div class="metric"><div class="value">${slouchPct}%</div><div class="label">out of plumb</div></div>
     <div class="metric"><div class="value">${totalBreaks}</div><div class="label">breaks</div></div>
     <div class="metric"><div class="value">${formatMinutes(avgBreak)}</div><div class="label">avg break</div></div>
     ${totalAway > 0 ? `<div class="metric"><div class="value">${formatMinutes(totalAway / 60)}</div><div class="label">time away</div></div>` : ''}
@@ -3511,7 +3511,7 @@ async function renderAiSummary() {
     const s = data.stats;
     aiStatGrid.innerHTML = `
       <div class="metric"><div class="value">${formatMinutes(s.totalSessionMinutes || 0)}</div><div class="label">tracked time</div></div>
-      <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">time slouching</div></div>
+      <div class="metric"><div class="value">${s.slouchRatePct || 0}%</div><div class="label">out of plumb</div></div>
       <div class="metric"><div class="value">${s.totalBreaksTaken || 0}</div><div class="label">breaks taken</div></div>
     `;
     const days = s.days || [];
@@ -3520,7 +3520,7 @@ async function renderAiSummary() {
       type: 'bar',
       data: {
         labels: days.map(d => d.date),
-        datasets: [{ label: 'slouching', data: days.map(d => d.slouchMinutes || 0), backgroundColor: CATEGORY_COLORS.slump, borderRadius: 4 }]
+        datasets: [{ label: 'out of plumb', data: days.map(d => d.slouchMinutes || 0), backgroundColor: CATEGORY_COLORS.slump, borderRadius: 4 }]
       },
       options: {
         responsive: true,
@@ -4410,7 +4410,7 @@ async function computeDailyCheckinText(firstGoal) {
   const mins = Math.round(session / 60);
   const timeLabel = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
   const goalRef = firstGoal ? ` This week: ${firstGoal}` : '';
-  return `Today so far: ${timeLabel} tracked, ${pct}% slouching, ${breaks} break${breaks === 1 ? '' : 's'}.${goalRef}`;
+  return `Today so far: ${timeLabel} tracked, ${pct}% out of plumb, ${breaks} break${breaks === 1 ? '' : 's'}.${goalRef}`;
 }
 
 // The weekly goal used to be spoken aloud once a day when tracking started

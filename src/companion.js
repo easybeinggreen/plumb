@@ -217,7 +217,7 @@ export function buildDayWrap({ events, hydrationMl, targetMl, tomatoes = 0, aler
 
   const topType = Object.entries(byType).sort((a, b) => b[1] - a[1])[0];
   if (topType && slouch >= 120) {
-    rows.push({ label: 'most common', value: SLOUCH_LABELS[topType[0]], note: `${Math.round((topType[1] / slouch) * 100)}% of slouch time` });
+    rows.push({ label: 'most common', value: SLOUCH_LABELS[topType[0]], note: `${Math.round((topType[1] / slouch) * 100)}% of your time out of plumb` });
   }
 
   const hours = Object.keys(hourTracked).map(Number).filter((h) => hourTracked[h] >= 15 * 60)
