@@ -81,22 +81,34 @@ async function askModel(apiKey, stats) {
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: MODEL, max_tokens: 500, messages: [{ role: 'user', content: prompt }] })
+    // Generous max_tokens: the free router often lands on a reasoning model that spends
+    // its budget thinking first, and with a small cap it returns an empty reply.
+    body: JSON.stringify({ model: MODEL, max_tokens: 2500, messages: [{ role: 'user', content: prompt }] })
   });
   if (!response.ok) throw new Error(`OpenRouter error ${response.status}: ${await response.text()}`);
   const data = await response.json();
-  const text = (data.choices?.[0]?.message?.content || '').trim();
-  if (!text) throw new Error('OpenRouter returned an empty reply');
+  const choice = data.choices?.[0];
+  // Some models wrap their thinking in <think> tags inside the content.
+  const text = (choice?.message?.content || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  if (!text) {
+    const hadReasoning = !!(choice?.message?.reasoning || choice?.message?.reasoning_content);
+    throw new Error(`OpenRouter returned an empty reply (model ${data.model || '?'}, finish_reason ${choice?.finish_reason || '?'}, reasoning present: ${hadReasoning})`);
+  }
   return { text, model: data.model || MODEL };
 }
 
-// Free models are flaky (empty replies, timeouts, 429s): one retry, then give up on this user.
+// Free models are flaky (empty replies, timeouts, 429s), and the router picks a
+// different one each call, so a few tries usually finds one that answers.
 async function summarise(apiKey, stats) {
-  try {
-    return await askModel(apiKey, stats);
-  } catch (e) {
-    console.warn(`First attempt failed (${e.message}) -- retrying once.`);
-    return await askModel(apiKey, stats);
+  const ATTEMPTS = 4;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await askModel(apiKey, stats);
+    } catch (e) {
+      if (attempt >= ATTEMPTS) throw e;
+      console.warn(`Attempt ${attempt}/${ATTEMPTS} failed (${e.message}) -- retrying.`);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
   }
 }
 
