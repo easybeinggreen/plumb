@@ -59,14 +59,26 @@ if you're that reader, this file plus git log/PRs should be enough.
 ### "today" panel layout (branch `fix/today-panel-layout`, 2026-09-26) + a parked popup issue
 
 **Panel (hydration / ambient brightness / break ring):** owner's list, all done. A "Hydration" heading now sits over
-the gauge (same style as "Ambient brightness"); the numbers ("550 / 1000ml", pace text) moved to the LEFT of the
-gauge, which is 124px tall (was 150); the four size buttons are icon-then-label pills in a 2x2 grid under it. The
+the gauge (same style as "Ambient brightness"); the numbers moved to the LEFT of the gauge as a fraction (consumed, a rule, the target) with the pace wording
+under it in the same small text as the brightness caption (it sits in the space beside the gauge, so it costs no
+height; putting it under the gauge instead made the card 20px taller). The gauge is 124px tall (was 150); the four size buttons are icon-then-label pills in a 2x2 grid under it. The
 three columns line up on the gauge's midpoint. The brightness readout now says how much: "brighter on left by 14%"
 (percentage points on the same 0-100 scale as "71% bright" and the 12% glare-nudge threshold in settings). In the
 break ring the words ("break due", "on a break") are 18px (was 21px, which spilled over the ring: 105px of text in
 about 100px); the countdown digits are unchanged. Measured at a 1280x800 viewport: the card is 280px tall, was 349px
 (69px / about 20% less), and the row fits (436 of 436px). Not verified: real data in the gauge/brightness box (the
 pane has no webcam; values were injected into the DOM) or the ring's words via the real render path.
+
+**Ambient brightness and camera exposure: DECIDED, leave as is (owner, 2026-09-26).** The owner would like the light
+read before the webcam's auto-exposure compensates (the camera's own light does not help with eye strain from a
+window), but chose not to pursue it: it may vary from camera to camera and is not worth the complexity. Do not restart
+this without asking. What was learned, in case it is ever revisited: the laptop camera (HP Wide Vision 5MP, 640x480
+stream) exposes `exposureTime` (about 1 ms to 250 ms, in Chrome's 100-microsecond units), `exposureMode`
+(continuous/manual), `exposureCompensation` and `brightness` through `getCapabilities()`, with no ISO or gain. Its
+reported `exposureTime` was 9.765625, the minimum, in a bright scene, so at that moment the camera had no room left to
+shorten the exposure. Never tested: whether that value updates live in continuous mode (a 25-second cover-the-lens
+console test was offered and not run). Locking manual exposure would change how "how do I look?" sees the face and
+may persist in the camera for other apps.
 
 **PARKED by the owner (do not start without asking): the dot's range in the popup.** The drawing is 170 units wide, the
 loop's edge is 58 out from the centre and the wall (dot edge at the drawing's edge) is 69.8, i.e. only 1.2x the
