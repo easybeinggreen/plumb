@@ -1634,7 +1634,6 @@ function goalReminderText(goal) {
 // (see pomodoroBlocksAlert); tracking and logging carry on untouched.
 const pomodoroBtn = document.getElementById('pomodoroBtn');
 const pomodoroBtnLabel = document.getElementById('pomodoroBtnLabel');
-const TOMATO_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><circle cx="12" cy="14" r="8" fill="#D2452F"/><path d="M12 6.6c-.4 1.5-1.8 2.5-3.8 2.7 1.3.4 2.6.2 3.8-.6 1.2.8 2.5 1 3.8.6-2-.2-3.4-1.2-3.8-2.7z" fill="#2E7D4F"/><path d="M12 6.6V3.8" stroke="#2E7D4F" stroke-width="1.6" stroke-linecap="round"/></svg>';
 const pomoCfg = () => extras.pomodoro;
 function savePomo() { localStorage.setItem(POMO_KEY, JSON.stringify(pomo)); }
 
@@ -1644,15 +1643,14 @@ function renderStatusPill() {
   if (!callBadge) return;
   const parts = [];
   const remaining = formatMmSs(pomodoroRemainingMs(pomo, Date.now()));
-  if (pomo.phase === 'focus') parts.push({ tomato: true, text: `focus ${remaining}` });
-  else if (pomo.phase === 'short' || pomo.phase === 'long') parts.push({ tomato: true, text: `break ${remaining}` });
+  if (pomo.phase === 'focus') parts.push({ text: `focus ${remaining}` });
+  else if (pomo.phase === 'short' || pomo.phase === 'long') parts.push({ text: `break ${remaining}` });
   const inCall = inCallNow && muteDuringCalls;
   if (inCall) parts.push({ text: parts.length ? 'in a call' : 'in a call · alerts paused' });
   callBadge.hidden = parts.length === 0;
   callBadge.textContent = '';
   parts.forEach((p, i) => {
     if (i > 0) { const sep = document.createElement('span'); sep.textContent = '·'; callBadge.appendChild(sep); }
-    if (p.tomato) { const ic = document.createElement('span'); ic.style.display = 'inline-flex'; ic.innerHTML = TOMATO_SVG; callBadge.appendChild(ic); }
     const t = document.createElement('span'); t.textContent = p.text; callBadge.appendChild(t);
   });
 }
@@ -2154,13 +2152,16 @@ async function requestPipWindow() {
   if (!('documentPictureInPicture' in window)) return false;
 
   try {
-    trackingPipWindow = await documentPictureInPicture.requestWindow({ width: 160, height: 152 }); // 20% smaller each way than the original 200x190 (owner: it took up too much screen)
+    trackingPipWindow = await documentPictureInPicture.requestWindow({ width: 140, height: 152 }); // as narrow as Chrome will allow (it enforces its own minimum width)
   } catch (err) {
     console.warn('PiP open failed:', err);
     trackingPipWindow = null;
     return false;
   }
 
+  // Chrome remembers the last size a popup was dragged to and opens the next one that big. Ask for the small
+  // size explicitly (still inside the click that opened it); Chrome ignores or clamps it if it is not allowed.
+  try { trackingPipWindow.resizeTo(140, 152); } catch (e) { /* not allowed here: keep whatever size Chrome chose */ }
   trackingPipWindow.document.title = 'plumb';
   trackingPipWindow.document.head.appendChild(document.getElementById('appStyles').cloneNode(true));
   const fontLink = document.createElement('link');
