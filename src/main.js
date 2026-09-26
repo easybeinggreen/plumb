@@ -1333,7 +1333,7 @@ async function ensurePiperVoice(voiceId) {
         piperSessionVoice = voiceId;
         testVoiceBtn.textContent = 'test voice';
         updateVoiceReady(true);
-        prewarmPhrase(voiceId, CALIBRATED_PHRASE);
+        prewarmStartupPhrases(voiceId);
       }
       return session;
     } catch (err) {
@@ -1375,7 +1375,7 @@ async function ensurePiperVoice(voiceId) {
       piperSessionVoice = voiceId;
       testVoiceBtn.textContent = 'test voice';
       updateVoiceReady(true);
-      prewarmPhrase(voiceId, CALIBRATED_PHRASE);
+      prewarmStartupPhrases(voiceId);
     }
     return session;
   } catch (err) {
@@ -1849,19 +1849,75 @@ async function prewarmPhrase(voiceId, text) {
   } catch (e) { console.warn('prewarmPhrase:', e); }
 }
 
+// The next line in whichever phrase list `text` came from (lists are used in order), so it can be
+// generated in the background while nothing else is happening.
+function nextPhraseAfter(text) {
+  const groups = [LEFT_PHRASES, RIGHT_PHRASES, SLUMP_PHRASES, LEAN_PHRASES, SINK_PHRASES, BREAK_PROMPT_PHRASES,
+    STILLNESS_PHRASES, BREAK_RETURN_LONG_PHRASES, BREAK_RETURN_SHORT_PHRASES, GLARE_LEFT_PHRASES, GLARE_RIGHT_PHRASES,
+    DIM_LIGHT_PHRASES, BRIGHT_LIGHT_PHRASES];
+  for (const g of groups) {
+    const i = g.indexOf(text);
+    if (i >= 0) return g[(i + 1) % g.length];
+  }
+  return null;
+}
+
+// Number of spoken lines currently being generated for someone waiting to hear them; background
+// pre-generation stands aside while this is above zero.
+let liveSynthPending = 0;
+
+// Background pre-generation of spoken lines. Each line takes a second or more of processing on the
+// page's main thread (Piper runs there), so it must never compete with the tracking loop: a line is
+// only made while tracking isn't running, nobody is in front of the camera, or a break is on, and
+// never while a line is being generated for someone waiting to hear it. One line per 3 seconds.
+const prewarmQueue = []; // { voiceId, text }
+let prewarmBusy = false;
+function queuePrewarm(voiceId, text) {
+  if (!text || phraseCache.has(phraseKey(voiceId, text))) return;
+  if (prewarmQueue.some((q) => q.voiceId === voiceId && q.text === text)) return;
+  prewarmQueue.push({ voiceId, text });
+}
+async function pumpPrewarm() {
+  if (prewarmBusy || liveSynthPending > 0 || !prewarmQueue.length) return;
+  if (running && isPersonPresent && !breakActive) return; // tracking someone right now: stay out of the way
+  const { voiceId, text } = prewarmQueue.shift();
+  if (piperSessionVoice !== voiceId) return; // the voice was changed meanwhile
+  prewarmBusy = true;
+  try { await prewarmPhrase(voiceId, text); } finally { prewarmBusy = false; }
+}
+setInterval(pumpPrewarm, 3000);
+
+// The lines most likely to be needed first: the calibration confirmation, then the first line of each
+// posture nudge. Queued as soon as the voice is ready (which is normally during the pre-tracking
+// countdown, when nothing else needs the processor).
+function prewarmStartupPhrases(voiceId) {
+  [CALIBRATED_PHRASE, LEFT_PHRASES[0], RIGHT_PHRASES[0], SLUMP_PHRASES[0], LEAN_PHRASES[0], SINK_PHRASES[0]]
+    .forEach((line) => queuePrewarm(voiceId, line));
+  pumpPrewarm();
+}
+
+// After a line plays, queue the next one from the same list so its turn is instant too.
+function scheduleNextPrewarm(voiceId, text) { queuePrewarm(voiceId, nextPhraseAfter(text)); }
+
 async function speak(text, force = false, userInitiated = false, kind = 'nudge') {
   if (!force && !userInitiated && alertsSuppressed(kind)) return;
   if (!force && !userInitiated && kind !== 'pomodoro' && kind !== 'wrap') countAlert();
-  showToast(text);
   // force=true (the test-voice button) bypasses mute -- deliberately
   // testing the voice is exactly the case where muted shouldn't apply, and
   // silently doing nothing on click was indistinguishable from "broken".
-  if (!voiceNudgesEnabled && !force) return;
+  if (!voiceNudgesEnabled && !force) { showToast(text); return; } // muted: nothing to wait for
   const mySeq = ++speakSeq;
+  // The popup text and the voice start together. A line that still has to be generated used to show
+  // its text immediately and then speak a second or two later; now the text waits for the audio
+  // (unless the voice is still loading or unavailable, when the text shows at once so the alert
+  // is never invisible).
+  let toasted = false;
+  const toast = () => { if (!toasted) { toasted = true; showToast(text); } };
   await ensureAudioUnlocked();
   const isBrowserVoice = window.speechSynthesis && [...window.speechSynthesis.getVoices()].some(v => v.name === currentVoiceId);
   if (isBrowserVoice) {
     if ('speechSynthesis' in window) {
+      toast();
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       const voice = window.speechSynthesis.getVoices().find(v => v.name === currentVoiceId);
@@ -1877,13 +1933,21 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
     const voiceId = currentVoiceId;
     let buffer = phraseCache.get(phraseKey(voiceId, text));
     if (!buffer) {
-      const session = await ensurePiperVoice(voiceId);
-      if (session) buffer = await synthesise(session, voiceId, text);
+      const voiceReady = !!piperSession && piperSessionVoice === voiceId;
+      if (!voiceReady) toast(); // the voice is still downloading/loading: show the text now
+      // Counted from before the voice loads, so the background pre-generation that starts the
+      // moment the voice is ready stands aside for this line instead of queueing ahead of it.
+      liveSynthPending++;
+      try {
+        const session = await ensurePiperVoice(voiceId);
+        if (session) buffer = await synthesise(session, voiceId, text);
+      } finally { liveSynthPending--; }
     }
     if (buffer) {
       // A newer line started while this one was being made: drop this one rather than
       // let a late-finishing older line play over, or cut off, the newer one.
       if (mySeq !== speakSeq) return;
+      toast();
       // Unlike speechSynthesis (cancelled above), nothing was stopping a
       // still-playing Piper buffer before starting the next one -- two
       // nudges close together (e.g. a break-end message landing right as a
@@ -1896,9 +1960,11 @@ async function speak(text, force = false, userInitiated = false, kind = 'nudge')
       currentPiperSource = src;
       src.onended = () => { if (currentPiperSource === src) currentPiperSource = null; };
       src.start(0);
+      scheduleNextPrewarm(voiceId, text);
       return;
     }
   } catch (e) { console.warn('Piper fallback:', e); }
+  if (mySeq === speakSeq) toast(); // no audio could be made: still show the alert
   if (isPiperVoiceId(currentVoiceId)) { noteVoiceUnavailable(); return; }
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();

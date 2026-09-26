@@ -61,6 +61,14 @@ respond to leaning left/right within a few seconds.
   ~1ms after the trigger), the calibration line is pre-generated as soon as the voice is ready, synthesis runs one
   at a time, and a line that finishes after a newer one has started is dropped instead of playing over it.
   Voices: Alba stays the default; Alan and Cori removed (8 Piper voices + Angus and Matilda now).
+  **Popup text and voice start together (2026-09-26).** `speak()` used to show the popup text at once and speak
+  after Piper had generated the audio (a second or more later). Now the text is shown at the moment the audio
+  starts (measured: TOAST and PLAY within the same millisecond for a cached line). If the voice is still loading or
+  no audio can be made, the text shows immediately so an alert is never invisible. Piper runs on the page's main
+  thread and takes ~2-4s of processing per line, so background pre-generation (`queuePrewarm`/`pumpPrewarm`) is
+  restricted to idle moments -- tracking not running, nobody in frame, or on a break -- and never runs while a
+  line is being generated for someone waiting; the queue holds the calibration line, the first line of each posture
+  nudge, and the next line of any list after one is spoken. A line someone is waiting for always goes first.
   **Spoken lines must avoid the word "posture"** -- every Piper voice mispronounces it (owner, 2026-09-26). Say
   "position" instead ("Calibrated. That's set your good position.", "Reset your position.", morning greeting
   now just "a new day of tracking"). On-screen labels (e.g. "calibrate posture") are unaffected.
