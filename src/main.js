@@ -1015,7 +1015,10 @@ function updateLightWidget(leftAvg, rightAvg) {
   lightTrendEl.textContent = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '';
 
   const skew = rightAvg - leftAvg;
-  const side = Math.abs(skew) < LIGHT_SKEW_TOLERANCE ? 'evenly lit' : skew > 0 ? 'brighter on right' : 'brighter on left';
+  // The size of the difference, in the same 0-100% units as the "71% bright" figure
+  // and the 12% nudge threshold in settings, so they can be compared directly.
+  const diffPct = Math.round(Math.abs(skew) * 100);
+  const side = Math.abs(skew) < LIGHT_SKEW_TOLERANCE ? 'evenly lit' : `brighter on ${skew > 0 ? 'right' : 'left'} by ${diffPct}%`;
   lightReadoutEl.textContent = side;
 }
 
@@ -1182,6 +1185,7 @@ function renderBreakGauge(liveContinuousMin = 0) {
     breakRingFill.style.strokeDashoffset = BREAK_RING_CIRCUMFERENCE + 'px';
     breakRingFill.classList.remove('due');
     breakTakenEl.textContent = 'on a break';
+    breakTakenEl.classList.add('is-text');
     breakTargetEl.textContent = '';
   } else {
     const pct = intervalMin > 0 ? Math.max(0, Math.min(100, (liveContinuousMin / intervalMin) * 100)) : 0;
@@ -1190,9 +1194,11 @@ function renderBreakGauge(liveContinuousMin = 0) {
     if (remainingMin <= 0) {
       breakRingFill.classList.add('due');
       breakTakenEl.textContent = 'break due';
+      breakTakenEl.classList.add('is-text');
       breakTargetEl.textContent = '';
     } else {
       breakRingFill.classList.remove('due');
+      breakTakenEl.classList.remove('is-text');
       const mm = Math.floor(remainingMin);
       const ss = Math.round((remainingMin - mm) * 60);
       breakTakenEl.textContent = `${mm}:${String(ss).padStart(2, '0')}`;

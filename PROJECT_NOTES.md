@@ -56,6 +56,29 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### "today" panel layout (branch `fix/today-panel-layout`, 2026-09-26) + a parked popup issue
+
+**Panel (hydration / ambient brightness / break ring):** owner's list, all done. A "Hydration" heading now sits over
+the gauge (same style as "Ambient brightness"); the numbers ("550 / 1000ml", pace text) moved to the LEFT of the
+gauge, which is 124px tall (was 150); the four size buttons are icon-then-label pills in a 2x2 grid under it. The
+three columns line up on the gauge's midpoint. The brightness readout now says how much: "brighter on left by 14%"
+(percentage points on the same 0-100 scale as "71% bright" and the 12% glare-nudge threshold in settings). In the
+break ring the words ("break due", "on a break") are 18px (was 21px, which spilled over the ring: 105px of text in
+about 100px); the countdown digits are unchanged. Measured at a 1280x800 viewport: the card is 280px tall, was 349px
+(69px / about 20% less), and the row fits (436 of 436px). Not verified: real data in the gauge/brightness box (the
+pane has no webcam; values were injected into the DOM) or the ring's words via the real render path.
+
+**PARKED by the owner (do not start without asking): the dot's range in the popup.** The drawing is 170 units wide, the
+loop's edge is 58 out from the centre and the wall (dot edge at the drawing's edge) is 69.8, i.e. only 1.2x the
+tolerance: at lateral tolerance 0.07 the dot is on the ring at a 0.07 lean and against the wall at about 0.084, so a
+small head lean puts it outside the ring and leaning the whole body barely moves it further. The constants are
+identical to 09-23, so restoring older code does not change this; something about the inputs did (the sensitivity
+slider, last saved 11:48 on 2026-09-26; the calibration baseline; or the device: the owner had been on a desktop with
+a webcam and is now on a laptop, which changes framing and distance). Options put to the owner: (a) shrink the loop
+to about 40% of the drawing so the wall sits at 2-3x tolerance, narrow window kept; (b) let the drawing use a wide
+window's full width, which needs the card to fill the window again. The owner thinks this may be much of why the
+"out of plumb" score reads so high. Also ask what the lateral slider reads now.
+
 ### Popup restore (branch `fix/popup-restore`, later on 2026-09-26)
 
 The owner reported the popup "doesn't work and it was good" before the day's changes, and that in the wide window the
