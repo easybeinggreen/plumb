@@ -248,6 +248,33 @@
   .reminder-form select { font-size: 12.5px; padding: 5px 7px; border-radius: 7px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); }
   .reminder-form input[type=number] { width: 56px; }
   .reminder-form label { font-size: 12px; color: var(--ink-soft); display: flex; align-items: center; gap: 4px; }
+  /* "today" / "this week" summary: one tight panel; the activity log is a collapsed link at the bottom */
+  .summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
+  .summary-tabs { display: flex; gap: 4px; }
+  .summary-tab { font-size: 12.5px; font-weight: 500; padding: 4px 12px; border-radius: 999px; border: 1.5px solid transparent; background: transparent; color: var(--ink-soft); cursor: pointer; }
+  .summary-tab.active { border-color: var(--ink-faint-2); color: var(--ink); background: rgba(10,38,38,0.04); }
+  .summary-panel .btn-compact { padding: 4px 10px; font-size: 12px; }
+  .summary-msg { font-size: 11.5px; color: var(--ink-soft); margin: 0 0 8px; }
+  .summary-msg:empty { display: none; }
+  .summary-empty { font-size: 12.5px; color: var(--ink-soft); }
+  .summary-panel .wrap-headline { font-size: 13.5px; line-height: 1.4; margin: 0 0 6px; }
+  .summary-panel .wrap-row { padding: 4px 0; font-size: 12.5px; }
+  .summary-panel .wrap-row .n { display: inline; margin-left: 6px; }
+  .summary-panel #weeklyDrivers .wrap-row { display: block; }
+  .summary-panel #weeklyDrivers .wrap-row .v { text-align: left; }
+  .summary-sub { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); margin: 10px 0 4px; }
+  .summary-sub:first-child { margin-top: 0; }
+  .summary-ai { font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
+  .summary-goals { margin: 0 0 8px; padding-left: 18px; font-size: 12.5px; line-height: 1.45; }
+  .summary-question { font-size: 12.5px; font-weight: 600; margin: 6px 0; }
+  .link-btn { background: none; border: none; padding: 0; font-size: 11.5px; color: var(--ink-soft); text-decoration: underline; cursor: pointer; }
+  .link-btn:hover { color: var(--ink); }
+  .summary-panel #weeklyDrivers .wrap-row .n { display: block; margin: 0; font-size: 11px; }
+  .summary-details { margin-top: 8px; }
+  .summary-details summary { font-size: 11.5px; color: var(--ink-soft); cursor: pointer; }
+  .summary-details .summary-ai { margin-top: 4px; }
+  .summary-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--ink-faint); }
+  .summary-foot .alert-feed { margin-top: 6px; }
   .goal-remind { margin-left: 6px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink-soft); font-size: 10.5px; padding: 1px 8px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
   .goal-remind:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
 
@@ -656,28 +683,37 @@
         </div>
       </div>
 
-      <div class="panel" id="weeklyGoalsPanel" hidden>
-        <div class="section-title" style="cursor:default;">this week <button id="weeklyGenerateBtn" class="btn-compact" type="button" title="reads your last 7 days of tracking and writes a fresh summary and goals -- takes up to a couple of minutes">generate weekly summary</button></div>
-        <div id="weeklyGenerateMsg" style="font-size:11.5px;color:var(--ink-soft);margin:-6px 0 10px;min-height:14px;" role="status" aria-live="polite"></div>
-        <div id="weeklyBody">
-        <div id="dailyCheckin" style="font-size:13px;font-weight:600;margin:-6px 0 12px;padding-bottom:12px;border-bottom:1px solid var(--ink-faint);"></div>
-        <div id="weeklyPatterns" style="font-size:13px;color:var(--ink-soft);line-height:1.5;margin:0 0 14px;"></div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);margin-bottom:4px;">goals for next week</div>
-        <ul id="weeklyGoalsList" style="margin:0 0 14px;padding-left:18px;font-size:13px;line-height:1.5;"></ul>
-        <div style="font-size:13px;font-weight:600;margin-bottom:8px;" id="weeklyQuestion"></div>
-        <div id="weeklyResponseRow" style="display:flex;gap:6px;">
-          <input type="text" id="weeklyResponseInput" placeholder="your reply" maxlength="300"
-            style="flex:1;font-family:var(--sans);font-size:13px;padding:8px 10px;border-radius:8px;border:1.5px solid var(--ink-faint-2);background:var(--paper);color:var(--ink);" />
-          <button id="weeklyResponseBtn" class="btn-compact" type="button">save</button>
+      <div class="panel summary-panel" id="weeklyGoalsPanel">
+        <div class="summary-head">
+          <div class="summary-tabs" role="tablist">
+            <button class="summary-tab active" id="tabToday" type="button" data-tab="today" role="tab">today</button>
+            <button class="summary-tab" id="tabWeek" type="button" data-tab="week" role="tab">this week</button>
+          </div>
+          <button id="weeklyGenerateBtn" class="btn-compact" type="button" hidden title="reads your last 7 days of tracking and writes a fresh summary and goals -- takes up to a couple of minutes">generate weekly summary</button>
         </div>
-        <div id="weeklyResponseSaved" style="font-size:12px;color:var(--ink-soft);margin-top:8px;" hidden></div>
-        <p style="font-size:11.5px;color:var(--ink-soft);margin:14px 0 0;" id="weeklyTrackerReminder"></p>
+        <div id="weeklyGenerateMsg" class="summary-msg" role="status" aria-live="polite"></div>
+        <div id="summaryToday"><div class="summary-empty">working it out…</div></div>
+        <div id="summaryWeek" hidden>
+          <div class="summary-sub" id="weeklyDriversTitle">the numbers behind it</div>
+          <div id="weeklyDrivers"></div>
+          <div id="weeklyBody">
+            <div class="summary-sub">goals for next week</div>
+            <ul id="weeklyGoalsList" class="summary-goals"></ul>
+            <div id="weeklyQuestion" class="summary-question"></div>
+            <button id="weeklyReplyLink" class="link-btn" type="button">reply</button>
+            <div id="weeklyResponseRow" style="display:flex;gap:6px;" hidden>
+              <input type="text" id="weeklyResponseInput" placeholder="your reply" maxlength="300"
+                style="flex:1;font-family:var(--sans);font-size:12.5px;padding:6px 9px;border-radius:8px;border:1.5px solid var(--ink-faint-2);background:var(--paper);color:var(--ink);" />
+              <button id="weeklyResponseBtn" class="btn-compact" type="button">save</button>
+            </div>
+            <div id="weeklyResponseSaved" style="font-size:12px;color:var(--ink-soft);margin-top:6px;" hidden></div>
+            <details class="summary-details"><summary>the AI's reading</summary><div id="weeklyPatterns" class="summary-ai"></div></details>
+          </div>
         </div>
-      </div>
-
-      <div class="panel">
-        <div class="section-title" style="cursor:default;">alert feed</div>
-        <div id="alertFeed" class="alert-feed"><div style="color:var(--ink-soft);">no alerts yet</div></div>
+        <div class="summary-foot">
+          <button id="activityToggle" class="link-btn" type="button" aria-expanded="false">recent activity</button>
+          <div id="alertFeed" class="alert-feed" hidden><div style="color:var(--ink-soft);">no alerts yet</div></div>
+        </div>
       </div>
     </div>
   </main>
