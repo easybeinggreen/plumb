@@ -4630,11 +4630,10 @@ async function loadWeeklyGoals() {
     const row = rows[0];
     // The panel always shows, so the button is reachable before the first summary exists.
     weeklyGoalsPanel.hidden = false;
-    weeklyGenerateBtn.textContent = row ? 'update weekly summary' : 'generate weekly summary';
     weeklyBody.hidden = !row;
     if (!row) {
       latestWeeklyGoals = [];
-      if (!weeklyGenerating) weeklyGenerateMsg.textContent = 'No weekly summary yet. Track for a while, then generate one.';
+      if (!weeklyGenerating) weeklyGenerateMsg.textContent = 'No 7 days summary yet. Track for a while, then press 7 days summary.';
       loadWeekDrivers(dateForTimestamp(Date.now() - 6 * 86400000), today());
       return;
     }
@@ -4708,7 +4707,7 @@ async function loadWeeklyGoals() {
 let weeklyGenerating = false;
 weeklyGenerateBtn.addEventListener('click', async () => {
   if (weeklyGenerating) return;
-  if (!SYNC_CONFIGURED || !currentUserId) { weeklyGenerateMsg.textContent = 'The weekly summary needs cloud sync to be set up.'; return; }
+  if (!SYNC_CONFIGURED || !currentUserId) { weeklyGenerateMsg.textContent = 'The 7 days summary needs cloud sync to be set up.'; return; }
   weeklyGenerating = true;
   weeklyGenerateBtn.disabled = true;
   weeklyGenerateMsg.textContent = 'Working on it. The free AI service is often slow, so this can take up to two minutes…';

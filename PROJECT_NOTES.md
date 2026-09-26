@@ -64,6 +64,8 @@ if you're that reader, this file plus git log/PRs should be enough.
 ### Summary panel (right-hand column, branch `feat/summary-panel`, 2026-09-26)
 
 The old "this week" panel (587px) and the alert feed (76px) were replaced by one tight panel, "summary", with two tabs:
+(Renamed by the owner afterwards: the tabs read "today so far" and "last 7 days", the AI button "7 days summary", and the goals
+heading "goals for the next 7 days"; the code and ids still say `today` / `week` / `weekly`.)
 - **today** (computed from the raw events on demand, NO AI): the wrap's headline and six rows (tracked, sitting plumb vs
   yesterday, breaks, longest sit, most common, roughest hour). Loads on page load, on selecting the tab, and every 3
   minutes while it is showing. Uses `buildDayWrap` (the same maths as the "today's wrap" window; `renderDayWrapInto` is
