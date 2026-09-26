@@ -10,6 +10,50 @@ if you're that reader, this file plus git log/PRs should be enough.
 
 ## Handover — 2026-09-26 (read first; the 2026-09-23 and 2026-09-20 sections below still hold unless contradicted here)
 
+### START HERE (state at the end of the 2026-09-26 session)
+
+- **Merged and live:** PRs #8-#18 (settings-sync fix, per-user keys, presence grace, OpenRouter AI summary,
+  generate/update weekly summary button, sleep-gap fix + data repair, out-of-plumb wording, voices, popup, main
+  panel). PRs and their reasoning are in `git log`; this section is the map. Site: https://easybeinggreen.github.io/plumb/
+  (deploys on every push to `main`; the live bundle file name should equal a local `npm run build` of `main`).
+- **Supabase project** `keacpowuykzcnwwdbjkd`. Edge functions: `camera-review` v7, `weekly-analysis` v2 (both
+  `verify_jwt` off, deliberately: the app has no user auth; protection is daily caps + CORS + server-side key).
+  New table `ai_summary`. Anthropic is not used anywhere any more (secret deleted); everything AI is OpenRouter free.
+- **Demo on Wednesday 2026-09-30:** the owner sets up a separate 'Demo' login (high sensitivity: lateral tolerance
+  0.03, sustained 3s). Calibration is NOT persisted across page reloads, so recalibrate after loading.
+- **Open items, roughly by importance:**
+  1. Verify in real life: the morning after a laptop sleep, the night shows grey "not tracking" (not blue away);
+     the popup in the owner's real Chrome; how Angus/Matilda sound reading a real nudge.
+  2. Most days read 54-74% "out of plumb" even after the artifact repair: probably the calibration baseline /
+     tolerances drifting over a day rather than real slouching. Worth investigating (recalibration prompts? drift
+     handling?).
+  3. Chair-as-person presence bug: get real numbers from `plumbPresenceDiag()` (browser console on the affected
+     device) after the next occurrence; don't guess a third threshold.
+  4. Weekly summary text varies with whichever free model the router picks; consider comparing models on real data
+     and re-pinning one. The button (generate / update weekly summary) exists as the workaround.
+  5. Known and left: hydration isn't queued offline; local vs cloud break-target maths differ; the tab-hidden
+     `not_tracking` handler is unreachable; stray `app_settings` rows (`''`, `ZZ_DEBUG_DELETE_ME`) and the old
+     `default` user's rows (which have the same overnight-away artifacts) were left for the owner to decide.
+  6. Owner-only cleanups: delete the untracked `voice-gen/` folder and `~/.claude.json.bak-before-supabase-removal`
+     by hand (the tooling refused the delete).
+- **How to work here (the owner's process):** branch -> PR -> the owner says "merge N" -> squash merge. Never merge
+  without that explicit go-ahead. Pushes straight to `main` are blocked for everyone but the owner. Keep changes
+  small, say plainly what was and wasn't verified, and never guess URLs or data.
+- **Verifying UI changes:** `npm run build`, then run `npx vite preview --port 5173 --host 127.0.0.1 --strictPort`
+  in the background and open `http://localhost:5173/plumb/` in the browser pane (use `localhost`, not 127.0.0.1). Set
+  `localStorage 'plumb:userId'` to a throwaway name (`preview-test`) and delete any test rows afterwards (the app
+  talks to the REAL database). To try the popup, put `#statusCard` (with class `pip-mode`) alone in the body and resize
+  the viewport. Stop the server afterwards (PowerShell: find the PID listening on 5173 and `Stop-Process`).
+- **Gotchas learned:** large bash heredocs containing quotes break -- write patch scripts to files and run them;
+  `preview_start` launches the CAPS app when the session's directory is CAPS (serve Plumb by hand as above);
+  browser-pane click coordinates are in the screenshot's frame, not CSS pixels; audio needs a real click (a scripted
+  `.click()` doesn't unlock the AudioContext); the Supabase query tool is read-only (use `apply_migration`, and
+  deploying an edge function means pasting the file contents); `posture_daily_summary` is a cache the rollup only adds
+  to, so delete stale rows before rebuilding it.
+- **The owner's taste (all reinforced this session):** serious/professional tone, no gimmicks (no tomato icon, no
+  mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
+  by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
+
 Full code review done ahead of a demo on Wednesday 2026-09-30, then the fixes below (branch
 `fix/demo-readiness`). The owner will use a separate **'Demo'** login (own settings row) with the
 sensitivity set high (lateral tolerance down to 0.03, "sustained before nudge" down to 3s) to show the dot
@@ -41,38 +85,35 @@ respond to leaning left/right within a few seconds.
   the report tab reads that. `deploy.yml` is push-only and uses `npm ci`. Delete the `ANTHROPIC_API_KEY` repo secret.
 - **Weekly analysis** was failing since OpenRouter retired the pinned free slug (404 on 2026-09-25); it now uses
   `openrouter/free`. The serving model is stored in `weekly_goals.model` -- check it if a week reads oddly.
-- Popup (PiP) layout scales with the window (it was a fixed 170px card / 96px glyph). Checked at several sizes
-  in a browser pane; not yet seen in a real PiP window. Default size is now **160x152** (owner asked for 20% less
-  in each dimension than the original 200x190, 2026-09-26). Chrome treats the requested size as a hint: it may
-  enforce a minimum and remembers a size the user has dragged the window to, so an already-open or previously
-  resized popup can stay bigger; the content now scales down to any size. A real Chrome popup on the owner's
-  Windows machine was seen (screenshot 2026-09-26) staying about 1.6:1 wide-to-tall despite the 160x152 request
-  (Chrome enforces a minimum width and/or remembered a dragged size), so when the window is wider than 5:4 the
-  glyph and text now sit side by side (`@media (min-aspect-ratio: 5/4)` under `pip-mode`) instead of leaving empty bands.
-  **Main panel and controls (2026-09-26, owner's list):** two button rows -- row 1: start camera, calibrate plumb
-  position, start a break, focus timer, nudges on/muted switch; row 2: workstation setup, desk gym, how do I look?
-  (was "are you camera ready?"), then the icons: pop-out, book, settings. The **book icon** opens "why the alerts are
-  set this way", a single readable panel built from `RESEARCH_INFO` (the same notes as the small "i" buttons beside
-  each setting in Settings, which is where that text always lived). Calibration line is now "Calibrated, that's your
-  plumb position." The hero under the tracking-in-popup title reads "sitting plumb today" (and the wrap's
-  "sitting well" rows became "sitting plumb"). While the summary shows, its box is only as tall as its content
-  (`:has()` rule) so the buttons sit directly beneath it instead of below a big empty gap. **Colours:** `break` and
-  `away` are now stone/taupe (`#CFC6B6` light, `#9E9382` darker) instead of brown and blue, because neither counts
-  as posture and the old hues read as bad posture; `CATEGORY_COLORS` is still the single source for every chart.
-  The chart legend's "good posture" is now just **"plumb"** (pairs with "out of plumb"). The dot's pulsing ring was
-  being clipped at the edge of the glyph when leaning far to one side (seen in a real popup, 2026-09-26): the
-  dot's travel limit now keeps the whole ring (dotR + 7) inside the drawing, and the SVG is `overflow: visible`.
-  The on-screen message (toast) in the popup is now the app's text green (`--ink`, solid) with light orange text
-  (`#FFAA66`, 6.1:1 contrast; the old near-black at 95% was "gloomy"), split into two balanced rows
-  (`toastRows`, breaks after punctuation near the middle) and a bigger font (13px at 160x152, up from 11px).
-  Orange text on the brighter accent green (`--accent`) fails contrast (best ~3:1), so don't use that pairing.
+- **Popup (PiP), final state.** Stacked layout only: the dot and loop on top, the status text BELOW in its original
+  small fixed font (16px value, 11px caption). The owner rejected a side-by-side/landscape layout and larger fonts
+  ("very ugly") -- don't reintroduce them. The window is requested as narrow as Chrome allows (`requestWindow`
+  140x152 plus a `resizeTo(140,152)` inside the opening click, because Chrome remembers a size the user dragged
+  the window to and enforces its own minimum width; the owner's Windows Chrome kept it about 1.6:1 wide). The glyph
+  scales with the window (`max(56px, min(70vw, 48vh))`), the ring's pulse is deliberately small in the popup
+  (1.35x / 1.5x keyframes `dz-ring-pulse-*-pip`) so it stays inside the window, and the dot's travel limit keeps the
+  whole ring (dotR + 7) inside the drawing (`updatePostureGlyph`). Checked at 140x152 and 300x190 in a browser
+  pane; the owner has confirmed the layout in a real popup screenshot.
+  **The popup's on-screen message (toast)** is the app's text green (`--ink`, solid) with light orange text (`#FFAA66`,
+  6.1:1 contrast), split into two balanced rows (`toastRows`) and larger (13px at the small size). Orange on the
+  brighter accent green (`--accent`) fails contrast (~3:1), so don't use that pairing.
+  **Main panel and controls (owner's list):** two button rows -- row 1: start camera, calibrate plumb position,
+  start a break, nudges on/muted switch; row 2: focus, workstation setup, desk gym, how do I look? (was "are you
+  camera ready?"), then the icons pop-out, book, settings. No tomato icon anywhere (dropped at the owner's request).
+  The **book icon** opens "why the alerts are set this way", built from `RESEARCH_INFO` (the same notes as the small
+  "i" buttons beside each setting in Settings). The hero under the tracking-in-popup heading reads "sitting plumb
+  today" (the wrap's "sitting well" rows became "sitting plumb"; the report tile says "out of plumb"; the chart
+  legend's "good posture" is just "plumb"). While the summary shows, its box is only as tall as its content (`:has()`
+  rule) so the buttons sit directly beneath it. **Colours:** `break` and `away` are stone/taupe (`#CFC6B6` light,
+  `#9E9382` darker) -- neither counts as posture and the old brown/blue read as bad posture; `CATEGORY_COLORS` is the
+  single source for every chart.
 - **Angus and Matilda never made a sound (fixed 2026-09-26, found by reproducing in a browser pane).** They
   downloaded and synthesised fine, but `auPcm2Wav` wrote its four WAV chunk tags as big-endian integers, storing
   "FFIR"/"EVAW" instead of "RIFF"/"WAVE", so `decodeAudioData` rejected every clip ("Unable to decode audio data").
   The 2026-09-23 note that they "work" only ever verified the download. Tags are now written as ASCII. Verified:
   Matilda's calibration and test lines decode to valid 2.25s / 1.75s audio and play. Still an open QUALITY question
   (literary reading style) -- the owner has not yet heard them speak a real Plumb nudge.
-- **Instant calibration confirmation.** "Calibrated. That's set your good posture." arrived seconds after the
+- **Instant calibration confirmation.** The calibration line (now "Calibrated, that's your plumb position.") arrived seconds after the
   button because Piper synthesises on demand. Now every spoken line's audio is cached per voice (a repeat plays
   ~1ms after the trigger), the calibration line is pre-generated as soon as the voice is ready, synthesis runs one
   at a time, and a line that finishes after a newer one has started is dropped instead of playing over it.
@@ -86,8 +127,8 @@ respond to leaning left/right within a few seconds.
   line is being generated for someone waiting; the queue holds the calibration line, the first line of each posture
   nudge, and the next line of any list after one is spoken. A line someone is waiting for always goes first.
   **Spoken lines must avoid the word "posture"** -- every Piper voice mispronounces it (owner, 2026-09-26). Say
-  "position" instead ("Calibrated. That's set your good position.", "Reset your position.", morning greeting
-  now just "a new day of tracking"). On-screen labels (e.g. "calibrate posture") are unaffected.
+  "position" instead ("Reset your position.", morning greeting now just "a new day of tracking"). On-screen text may
+  still say posture. The calibration confirmation is now "Calibrated, that's your plumb position."
 - **Sleep-gap artifacts (found from the week report showing 98% slouching, one day at 250%, and "16h 40m away").**
   When the laptop slept with Plumb open, whatever was open was closed at WAKE-UP time: a slouch block became a
   single 15.33h `compression` event (id 17171, 2026-09-22 16:45 -> 09-23 08:05) and four overnight absences became
