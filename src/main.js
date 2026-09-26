@@ -2614,9 +2614,12 @@ function updatePostureGlyph(lateral, compression, lean, latTol, compTol) {
   const latRatio = latTol > 0 ? lateral / latTol : 0;
   const compRatio = compTol > 0 ? compression / compTol : 0;
   // Keep the whole dot inside the 170-unit drawing on every side.
-  const xLim = Math.max(0, DOT_CENTER - GLYPH_MIN - dotR);
+  // The pulsing ring around the dot is drawn dotR + 5 wide (plus its stroke), so keep that whole ring inside
+  // the drawing, not just the dot: with only the dot kept in, the ring was cut off at the edge.
+  const reach = dotR + 7;
+  const xLim = Math.max(0, DOT_CENTER - GLYPH_MIN - reach);
   const px = Math.max(-xLim, Math.min(xLim, -latRatio * LOOP_RX));
-  const py = Math.max(GLYPH_MIN + dotR - REST_Y, Math.min(GLYPH_MAX - dotR - REST_Y, compRatio * LOOP_RY));
+  const py = Math.max(GLYPH_MIN + reach - REST_Y, Math.min(GLYPH_MAX - reach - REST_Y, compRatio * LOOP_RY));
   dzDot.style.cx = (DOT_CENTER + px) + 'px';
   dzDot.style.cy = (REST_Y + py) + 'px';
   dzRing.style.cx = (DOT_CENTER + px) + 'px';
@@ -2772,7 +2775,7 @@ const CATEGORY_COLORS = {
   future: 'transparent'
 };
 const CATEGORY_LABELS = {
-  good: 'good posture',
+  good: 'plumb',
   left: 'leaning left',
   right: 'leaning right',
   slump: 'neck dropping',
