@@ -45,7 +45,20 @@ respond to leaning left/right within a few seconds.
   in a browser pane; not yet seen in a real PiP window. Default size is now **160x152** (owner asked for 20% less
   in each dimension than the original 200x190, 2026-09-26). Chrome treats the requested size as a hint: it may
   enforce a minimum and remembers a size the user has dragged the window to, so an already-open or previously
-  resized popup can stay bigger; the content now scales down to any size.
+  resized popup can stay bigger; the content now scales down to any size. A real Chrome popup on the owner's
+  Windows machine was seen (screenshot 2026-09-26) staying about 1.6:1 wide-to-tall despite the 160x152 request
+  (Chrome enforces a minimum width and/or remembered a dragged size), so when the window is wider than 5:4 the
+  glyph and text now sit side by side (`@media (min-aspect-ratio: 5/4)` under `pip-mode`) instead of leaving empty bands.
+  **Main panel and controls (2026-09-26, owner's list):** two button rows -- row 1: start camera, calibrate plumb
+  position, start a break, focus timer, nudges on/muted switch; row 2: workstation setup, desk gym, how do I look?
+  (was "are you camera ready?"), then the icons: pop-out, book, settings. The **book icon** opens "why the alerts are
+  set this way", a single readable panel built from `RESEARCH_INFO` (the same notes as the small "i" buttons beside
+  each setting in Settings, which is where that text always lived). Calibration line is now "Calibrated, that's your
+  plumb position." The hero under the tracking-in-popup title reads "sitting plumb today" (and the wrap's
+  "sitting well" rows became "sitting plumb"). While the summary shows, its box is only as tall as its content
+  (`:has()` rule) so the buttons sit directly beneath it instead of below a big empty gap. **Colours:** `break` and
+  `away` are now stone/taupe (`#CFC6B6` light, `#9E9382` darker) instead of brown and blue, because neither counts
+  as posture and the old hues read as bad posture; `CATEGORY_COLORS` is still the single source for every chart.
   The on-screen message (toast) in the popup is now the app's text green (`--ink`, solid) with light orange text
   (`#FFAA66`, 6.1:1 contrast; the old near-black at 95% was "gloomy"), split into two balanced rows
   (`toastRows`, breaks after punctuation near the middle) and a bigger font (13px at 160x152, up from 11px).

@@ -211,7 +211,7 @@ export function buildDayWrap({ events, hydrationMl, targetMl, tomatoes = 0, aler
   const pctWell = Math.max(0, Math.min(100, Math.round((1 - Math.min(slouch, tracked) / tracked) * 100)));
   const rows = [];
   rows.push({ label: 'tracked', value: formatDuration(tracked) });
-  rows.push({ label: 'sitting well', value: `${pctWell}%`, note: prevPctWell != null ? `yesterday ${prevPctWell}%` : null });
+  rows.push({ label: 'sitting plumb', value: `${pctWell}%`, note: prevPctWell != null ? `yesterday ${prevPctWell}%` : null });
   rows.push({ label: 'breaks', value: breaks > 0 ? `${breaks} (${formatDuration(breakSec)} in total)` : 'none taken' });
   rows.push({ label: 'longest sit', value: formatDuration(longestSit), note: longestSit >= 90 * 60 ? 'worth breaking up' : null });
 
@@ -235,7 +235,7 @@ export function buildDayWrap({ events, hydrationMl, targetMl, tomatoes = 0, aler
   if (tomatoes > 0) rows.push({ label: 'focus blocks', value: String(tomatoes) });
   if (alertsCount !== null) rows.push({ label: 'alerts from Plumb', value: String(alertsCount), note: alertsCount === 0 ? 'quiet day' : null });
 
-  let headline = `Sitting well ${pctWell}% of ${formatDuration(tracked)} tracked.`;
+  let headline = `Sitting plumb ${pctWell}% of ${formatDuration(tracked)} tracked.`;
   if (prevPctWell != null && Math.abs(pctWell - prevPctWell) >= 3) {
     headline += ` ${Math.abs(pctWell - prevPctWell)} points ${pctWell > prevPctWell ? 'better' : 'lower'} than yesterday.`;
   }
