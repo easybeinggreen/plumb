@@ -125,7 +125,6 @@ const aiStatGrid = document.getElementById('aiStatGrid');
 const hydrationFill = document.getElementById('hydrationFill');
 const hydrationConsumedEl = document.getElementById('hydrationConsumed');
 const hydrationTargetEl = document.getElementById('hydrationTarget');
-const hydrationUndoBtn = document.getElementById('hydrationUndoBtn');
 const hydrationTargetInput = document.getElementById('hydrationTargetInput');
 const hydrationSizeInputs = {
   glass: document.getElementById('hydrationGlassInput'),
@@ -896,7 +895,6 @@ function renderHydration() {
   hydrationFill.style.height = pct + '%';
   hydrationConsumedEl.textContent = hydrationConsumedMl;
   hydrationTargetEl.textContent = hydrationTargetMl;
-  hydrationUndoBtn.hidden = hydrationLastClickMl === 0;
   renderPace();
 }
 
@@ -920,24 +918,7 @@ async function logHydration(ml, drinkType) {
   } catch (err) { console.warn('logHydration sync:', err); }
 }
 
-async function undoHydration() {
-  if (!hydrationLastClickMl) return;
-  hydrationConsumedMl = Math.max(0, hydrationConsumedMl - hydrationLastClickMl);
-  hydrationLastClickMl = 0;
-  localStorage.setItem(HYDRATION_LOG_PREFIX + today(), String(hydrationConsumedMl));
-  renderHydration();
-  if (SYNC_CONFIGURED && lastHydrationEventId != null) {
-    try {
-      await fetch(`${SUPABASE_URL}/rest/v1/hydration_events?id=eq.${lastHydrationEventId}`, {
-        method: 'DELETE',
-        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-      });
-    } catch (err) { console.warn('undoHydration sync:', err); }
-    lastHydrationEventId = null;
-  }
-}
 Object.entries(hydrationButtons).forEach(([key, btn]) => btn.addEventListener('click', () => logHydration(hydrationSizes[key], key)));
-hydrationUndoBtn.addEventListener('click', undoHydration);
 
 function lerpRgbArr(t, from, to) {
   return [
