@@ -5203,6 +5203,13 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeInfoPopover();
 });
 
+// ---- Privacy statement -- reachable from the sign-in screen and the footer once signed in --
+const privacyOverlay = document.getElementById('privacyOverlay');
+function openPrivacy() { privacyOverlay.classList.add('open'); }
+document.getElementById('userPrivacyLink').addEventListener('click', openPrivacy);
+document.getElementById('footerPrivacyLink').addEventListener('click', openPrivacy);
+document.getElementById('privacyClose').addEventListener('click', () => privacyOverlay.classList.remove('open'));
+
 // ---- "why the alerts are set this way" (the book icon) ----------------------------------
 // Same content as the small "i" popovers beside each setting (RESEARCH_INFO), gathered into one
 // readable panel: what each setting does, why its default is what it is, and how strong the

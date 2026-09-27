@@ -113,6 +113,49 @@ happens automatically when the camera starts, in browsers that support it. Remov
 `const pipBtn` line. Verified: no remaining reference to `pipBtn` in the repo; the icon row now shows tour / manual /
 settings; no console errors.
 
+### Sign-in wording and a privacy statement (branch `feat/privacy-and-wording`, 2026-09-27)
+
+- **Sign-in title changed at the owner's request:** "who's using this?" -> "Welcome to Plumb --  please enter your
+  name". Body copy unchanged apart from removing the now-redundant "Type your name." lead-in.
+- **New privacy statement**, a plain modal (`#privacyOverlay`) reachable two ways: a "privacy" link under the
+  continue button on the sign-in screen, and one in the page footer once signed in (same modal, `openPrivacy()`).
+  Content, checked against the real code and `docs/database-schema.md` rather than written generically: video never
+  leaves the device except the one frame sent to OpenRouter when "get a fuller AI review" is pressed; only small
+  numbers (posture state durations, hydration ml, light readings, settings) sync to Supabase every ~10s; the 7 day
+  summary sends recent numbers (never images) to OpenRouter; a connected calendar exposes only meeting times, never
+  titles; the name+PIN is explicitly NOT an account (no email, no password reset, PIN is a courtesy lock against
+  casual impersonation, not encryption -- see the PIN section above for the real limit: the data API itself still
+  accepts the public key in the page); no analytics or tracking scripts exist in the codebase (checked by grep).
+- Verified in the browser: the sign-in title reads exactly as asked; the privacy link opens over the sign-in modal
+  without closing it, and closes cleanly leaving sign-in open; the footer link opens the same modal once signed in;
+  no console errors. Not verified: wording review by a lawyer or against any specific jurisdiction's requirements --
+  this is a plain-English statement of what the app actually does, not a legal document.
+
+### Firefox compatibility -- not tested live, a code-review prediction only (2026-09-27)
+
+The owner has not tried Plumb in Firefox. Checked by reading the code, not by running Firefox (this environment has
+no Firefox to test with):
+- **The pop-out window (Document Picture-in-Picture) will not appear.** Firefox does not implement this API at all.
+  The code already guards for this (`if (!('documentPictureInPicture' in window)) return false;`) and camera
+  tracking, calibration and nudges all continue normally in the tab -- this is the same code path already confirmed
+  silent-and-harmless when the API call itself fails (see the owner's incognito report below), not a new risk.
+- **The custom slider thumbs will look like Firefox's plain default control.** `input[type=range]` styling in
+  `index.html` only defines `-webkit-appearance`/`::-webkit-slider-thumb`; there is no `::-moz-range-thumb` rule, so
+  every sensitivity/timing/hydration slider in Settings will show Firefox's stock thumb instead of the app's small
+  circular one. Purely cosmetic -- the sliders still work.
+- Everything else checked (MediaPipe tasks-vision, onnxruntime-web/WASM for Piper, `getUserMedia`, `fetch` to
+  Supabase, `localStorage`, the `:has()` selector used for the video panel) is standard and should work the same;
+  `:has()` has shipped in Firefox since December 2023. Not a guarantee -- genuinely not run in Firefox.
+
+### Pop-out window did not appear in Incognito (owner report, 2026-09-27, not yet root-caused)
+
+The owner signed in and took the tour in an Incognito Chrome window; the small always-on-top status window never
+appeared when the camera started. `requestPipWindow()` fails silently by design (`catch` -> `console.warn('PiP open
+failed:', err)` -> returns false -> tracking continues in the tab as normal), so nothing broke, but the exact reason
+is unconfirmed -- possible causes not distinguished yet: Chrome disabling or restricting the API in Incognito
+specifically, a lost user-gesture chain, or something else. **Next step if revisited:** open DevTools in an
+Incognito window and read the actual warning after starting the camera; the browser's own error name will say why.
+
 ### First-run tour (`feat/tour`, then `feat/tour-v2`, 2026-09-27)
 
 A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
