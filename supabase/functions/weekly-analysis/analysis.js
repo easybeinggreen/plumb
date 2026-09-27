@@ -181,8 +181,34 @@ export function buildSlumpSummary(postureRows, presenceRows) {
     morning_before_12: period(5, 11),
     lunchtime_12_to_1pm: period(12, 12),
     afternoon_1pm_to_6pm: period(13, 18),
+    biggestIncreaseAfterLunch: (() => {
+      const m = period(5, 11), a = period(13, 18);
+      if (!m || !a) return null;
+      return a.sittingLowPct - m.sittingLowPct >= a.neckDroppingPct - m.neckDroppingPct ? 'sitting low' : 'neck dropping';
+    })(),
     byHour
   };
+}
+
+// How the sitting is broken up, morning against afternoon. A "stretch" is one presence block (an unbroken sit).
+// Without this the model reaches for "take more breaks" whether or not that is the problem: on 2026-09-27 the
+// owner's afternoons were the worse period yet already had MORE breaks (25 against 10) and SHORTER stretches.
+export function buildSittingSummary(presenceRows, breakRows) {
+  const periodOf = (iso) => { const h = brisbaneHour(iso); return h < 12 ? 'morning_before_12' : h >= 13 && h <= 18 ? 'afternoon_1pm_to_6pm' : null; };
+  const out = { morning_before_12: { stretches: [], breaks: 0 }, afternoon_1pm_to_6pm: { stretches: [], breaks: 0 } };
+  presenceRows.forEach((r) => { const p = r.start_time && periodOf(r.start_time); if (p && (r.duration_seconds || 0) >= 60) out[p].stretches.push(r.duration_seconds); });
+  breakRows.forEach((r) => { const p = r.start_time && periodOf(r.start_time); if (p) out[p].breaks += 1; });
+  const summarise = (x) => {
+    if (x.stretches.length === 0) return null;
+    const total = x.stretches.reduce((a, d) => a + d, 0), long = x.stretches.filter((d) => d >= 3600).reduce((a, d) => a + d, 0);
+    return { sittingStretches: x.stretches.length, averageStretchMin: Math.round(total / x.stretches.length / 60), longestStretchMin: Math.round(Math.max(...x.stretches) / 60), pctOfTimeInStretchesOver1h: pctOf(long, total), breaksTaken: x.breaks };
+  };
+  const m = summarise(out.morning_before_12), a = summarise(out.afternoon_1pm_to_6pm);
+  if (!m && !a) return null;
+  // true when the afternoon already has at least as many breaks and no longer stretches than the morning:
+  // then "take more breaks" cannot be what fixes an afternoon that is worse
+  const afternoonAlreadyBreaksMoreAndSitsShorter = !!(m && a && a.breaksTaken >= m.breaksTaken && a.averageStretchMin <= m.averageStretchMin);
+  return { morning_before_12: m, afternoon_1pm_to_6pm: a, afternoonAlreadyBreaksMoreAndSitsShorter };
 }
 
 // When water is drunk, against the target. Days are the days tracking ran, so a day with no water
@@ -223,14 +249,16 @@ What the owner has said about themselves, as context: they tend to drink mostly 
 
 Make each finding a comparison, not a lone figure. For time out of plumb, compare outOfPlumbPct before 12 with after 1pm (morning_before_12 against afternoon_1pm_to_6pm), with neck dropping alongside. For water, lead with how much was drunk by the end of the working day against the daily target (averageMl.by_end_of_working_day), then the share drunk before noon; do not lead with the overall daily average, which can look fine while the day's timing is not.
 
-Rules for the words: a finding is one or two short sentences and must contain at least one concrete figure from the data (a percentage, an amount in ml, an hour). A recommendation is ONE sentence under 25 words: a specific action with a time, an amount or a trigger, not generic advice. Plain, concrete, everyday language, no report tone, no metaphors or slang. The app's own word for slouching is "out of plumb": never write slouch, slouching, slump, slumping or posture in any output, write "out of plumb" (for example "out of plumb 50% of the time"). Never use the raw state identifiers (lateral_left, lateral_right, compression, lean_in, sitting_low) in any output: write neck dropping, sitting low in the chair, leaning left or right, leaning in. "Sitting low" can read higher than the truth on days before 26 September 2026 because of a calibration drift; neck dropping is the steadier signal, so when you cite sitting low, cite neck dropping alongside it, and do not build a recommendation on sitting low alone. If a point's data is too thin to say anything real, say so plainly in that point instead of inventing a pattern.
+Make each recommendation fit the size of the problem and the evidence, not the easiest thing to say. (1) If time out of plumb is 15 or more points higher in one period than another, that is a large gap: never answer it with a token gesture, and never suggest a break shorter than 3 minutes. (2) Only recommend more or shorter breaks if the worse period has LONGER sitting stretches or FEWER breaks than the better one. When afternoonAlreadyBreaksMoreAndSitsShorter is true, say so in the finding (quote the two break counts), because it means breaks are not the cause, and do not recommend more of them. The recommendation must address biggestIncreaseAfterLunch: if it is "sitting low", the action is about how you sit (sit back so your lower back rests on the chair, and raise your screen or laptop to eye level with a separate keyboard), not about your neck; if it is "neck dropping", the action is about screen height so you look straight at it, not down. Both may add recalibrating after lunch. (3) Useful actions for time out of plumb, in order of relevance: when sitting low is the larger part, sit back so your lower back rests on the chair and raise your screen or laptop to eye level (a stand or books, with a separate keyboard); when neck dropping is the larger part, raise the screen so you look straight at it, not down; recalibrate after lunch (the app also re-sets the sitting height itself after a break of a minute or more); stand and walk for 3 to 5 minutes at each break in the worse period; and, because sitting low read higher than the truth before 26 September 2026, say the gap should be checked again after a week on the new calibration. (4) A recommendation may hold up to two linked actions in one sentence of at most 35 words.
+
+Rules for the words: a finding is one or two short sentences and must contain at least one concrete figure from the data (a percentage, an amount in ml, an hour). A recommendation is ONE sentence of at most 35 words: a specific action with a time, an amount or a trigger, not generic advice. Plain, concrete, everyday language, no report tone, no metaphors or slang. The app's own word for slouching is "out of plumb": never write slouch, slouching, slump, slumping or posture in any output, write "out of plumb" (for example "out of plumb 50% of the time"). Never use the raw state identifiers (lateral_left, lateral_right, compression, lean_in, sitting_low) in any output: write neck dropping, sitting low in the chair, leaning left or right, leaning in. "Sitting low" can read higher than the truth on days before 26 September 2026 because of a calibration drift; neck dropping is the steadier signal, so when you cite sitting low, cite neck dropping alongside it, and do not build a recommendation on sitting low alone. If a point's data is too thin to say anything real, say so plainly in that point instead of inventing a pattern.
 
 Respond with strict JSON only, matching the schema given, no markdown fencing, no other text.`;
 }
 
-function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, coverage, lastWeek, slump, hydration }) {
-  const summaries = `Out-of-plumb summary (worked out from the raw data; quote these numbers): ${JSON.stringify(slump)}\n\nWater summary (worked out from the raw data; quote these numbers): ${JSON.stringify(hydration)}\n\n`;
-  const dataBlock = `${summaries}Data coverage this week: tracking was running on ${coverage.daysTracked} of 7 days, about ${coverage.hoursTracked} hours in total. Treat anything under roughly 25 tracked hours as a thin week and say so.\n\nPosture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are out-of-plumb states -- none of them is plumb, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
+function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, coverage, lastWeek, slump, hydration, sitting }) {
+  const summaries = `Out-of-plumb summary (worked out from the raw data; quote these numbers): ${JSON.stringify(slump)}\n\nSitting and breaks (worked out from the raw data; quote these numbers): ${JSON.stringify(sitting)}\n\nWater summary (worked out from the raw data; quote these numbers): ${JSON.stringify(hydration)}\n\n`;
+  const dataBlock = `${summaries}Data coverage this week: tracking was running on ${coverage.daysTracked} of 7 days, about ${coverage.hoursTracked} hours in total. Treat anything under roughly 25 tracked hours as a thin week and say so.\n\nDaily peaks (all five states -- lateral_left, lateral_right, compression, lean_in, sitting_low -- are out-of-plumb states, none of them is plumb): for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
 
   const continuity = lastWeek
     ? `\n\nLast week's recommendations were: ${JSON.stringify(lastWeek.goals)}. Take that into account if it is relevant: if the numbers show the same problem again, say it has continued rather than presenting it as new.`
@@ -261,6 +289,7 @@ function validateAnalysis(p) {
     && typeof x.finding === 'string' && x.finding.trim()
     && typeof x.recommendation === 'string' && x.recommendation.trim());
   if (!ok) throw new Error('reply did not contain exactly two points, each with a finding and a recommendation');
+  if (pts.some((x) => /\b(one|1|two|2)[- ]minute\b/i.test(x.recommendation))) throw new Error('recommendation was a token one or two minute break');
   return {
     patterns: pts.map((x) => `${x.label.trim().toLowerCase()}: ${x.finding.trim()}`).join('\n'),
     goals: pts.map((x) => x.recommendation.trim()),
@@ -281,6 +310,7 @@ async function callOnce(apiKey, ctx, timeoutMs) {
         model: MODEL,
         max_tokens: 3000,
         response_format: { type: 'json_object' },
+        reasoning: { effort: 'low' },   // reasoning models otherwise burn the whole budget thinking (finish_reason length)
         messages: [
           { role: 'system', content: buildSystemPrompt() },
           { role: 'user', content: buildUserPrompt(ctx) }
@@ -349,11 +379,12 @@ export async function generateWeeklyAnalysis({
     c.seconds += r.duration_seconds || 0;
   });
 
-  const [allPostureRows, hydrationRows, lightRows, settingsRows] = await Promise.all([
+  const [allPostureRows, hydrationRows, lightRows, settingsRows, breakRows] = await Promise.all([
     fetchAll(url, key, `posture_events?select=user_id,type,date,start_time,duration_seconds&date=gte.${weekStart}&date=lte.${weekEnd}&type=in.(${POSTURE_TYPES.join(',')})${uf}`),
     fetchAll(url, key, `hydration_events?select=user_id,date,logged_at,volume_ml&date=gte.${weekStart}&date=lte.${weekEnd}${uf}`),
     fetchAll(url, key, `light_readings?select=user_id,logged_at,brightness,skew&date=gte.${weekStart}&date=lte.${weekEnd}${uf}`),
-    fetchAll(url, key, `app_settings?select=user_id,hydration_target_ml,extras${uf}`)
+    fetchAll(url, key, `app_settings?select=user_id,hydration_target_ml,extras${uf}`),
+    fetchAll(url, key, `posture_events?select=user_id,start_time&date=gte.${weekStart}&date=lte.${weekEnd}&type=eq.break${uf}`)
   ]);
   // A single unbroken slouch block over 2 hours is not real posture data: the app used to
   // log the whole time a laptop was asleep as one block (a 15-hour "compression" event on
@@ -393,6 +424,7 @@ export async function generateWeeklyAnalysis({
         lightByHour: lightByUserHour[uid] || {},
         coverage: { daysTracked: coverage.days.size, hoursTracked: Math.round(coverage.seconds / 360) / 10 },
         lastWeek: lastRows[0] || null,
+        sitting: buildSittingSummary(presenceRows.filter((r) => r.user_id === uid), breakRows.filter((r) => r.user_id === uid)),
         slump: buildSlumpSummary(postureRows.filter((r) => r.user_id === uid), presenceRows.filter((r) => r.user_id === uid)),
         hydration: (() => {
           const st = settingsRows.find((r) => r.user_id === uid) || {};

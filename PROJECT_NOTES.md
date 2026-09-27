@@ -61,6 +61,33 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Better Plumb Tips (`weekly-analysis` v8, branch `fix/better-tips`, 2026-09-27)
+
+The owner's criticism of one run: "Take a one-minute break after lunch" is not a fix for a big out-of-plumb gap. Right, and
+the data said more: in 2026-09-21..27 his afternoons are worse (out of plumb 50% against 26% before noon) yet he takes MORE
+breaks in the afternoon (25 against 10) and his sitting stretches are SHORTER (average 23 minutes against 29; only 33% of
+afternoon time is in stretches over an hour, against 66% in the morning). So "more breaks" cannot be the lever. Sitting low is
+the larger part (19% -> 39%; neck dropping 8% -> 10%), and sitting low read high after breaks until the calibration fix
+(#20), so the gap may also be partly measurement.
+- **What changed:** the function now works out (in code) how the sitting is broken up (`buildSittingSummary`: stretches,
+  average and longest, share of time in stretches over an hour, breaks, morning against afternoon) and hands the model two
+  explicit facts: `afternoonAlreadyBreaksMoreAndSitsShorter` and `biggestIncreaseAfterLunch` ("sitting low" or "neck
+  dropping"). The prompt says the recommendation must fit the size of the gap (never a token break; never a break under 3
+  minutes), may only recommend more breaks if the worse period has longer stretches or fewer breaks, and must address the
+  biggest contributor (sitting low: sit back so the lower back rests on the chair and raise the screen or laptop to eye level;
+  neck dropping: raise the screen so you look straight at it), and may add recalibrating after lunch and re-checking after a
+  week on the new calibration. Recommendations may now run to 35 words with up to two linked actions. A recommendation that
+  says a one- or two-minute break is rejected in code, so another model attempt is used.
+- **Result (three live runs, all `gemma-4-26b`):** "Sit back so your lower back rests on the chair and raise your screen to
+  eye level, then recalibrate after lunch." with the finding "out of plumb 49% between 1pm and 6pm compared to 26% before
+  12, sitting low 19% to 39%, neck dropping staying at 10%". Wording varies run to run.
+- **A speed problem found on the way:** the longer prompt made some free reasoning models spend their whole token budget
+  thinking (`finish_reason length`), and one run outlived the roughly 60 seconds after which the gateway drops the connection
+  (the function still finished later). Fixed by dropping the two big raw hour-by-hour tables (the summaries carry the same
+  facts) and asking reasoning models to think briefly (`reasoning: { effort: 'low' }`). Runs now take 6 to 20 seconds. If the
+  page's button ever shows a network error for a run that took over a minute, the row may still have been written: reload.
+- Not verified: the button from the page, the Friday scheduled run, and other weeks' data (only this week was tried).
+
 ### First-run tour (branch `feat/tour`, 2026-09-27)
 
 A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
