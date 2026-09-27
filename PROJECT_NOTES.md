@@ -61,6 +61,32 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Name + PIN sign-in (branch `feat/name-pin`, 2026-09-27)
+
+The owner's concern: someone else typing "Paul" landed in Paul's stats. Now a name has a 4-digit PIN.
+- **Flow:** type a name; the database says what it is. New: choose a PIN (twice) and you are in. Protected: enter the PIN
+  (wrong tries count down from 5, then the name is locked for 15 minutes). The lookup is case-insensitive and uses the
+  stored spelling ("zz_UI_pin_TEST" became "ZZ_ui_pin_test"). `Demo` is an "open" name (no PIN, on purpose). A name that
+  has data but no PIN yet (only Paul, right now, plus the old `default` user) can only get a PIN from a device that has
+  used the name before; from a fresh device it says the name is in use. Someone already signed in without a PIN (Paul)
+  gets a one-time-a-day nudge to set one ("not now" dismisses it for the day). Offline, a name the device already knows
+  still gets in.
+- **Where it lives:** `src/identity.js` (pure decisions and the RPC calls, tested with node), the picker in `src/main.js`
+  (`showUserPicker`, `runPinStep`, `maybeNudgePin`), and the database (`user_pins` table with no access for the public
+  key, `plumb_check_name`, `plumb_set_pin`, `plumb_verify_pin`; migration `add_user_pins`). Verified through the public API
+  (13 cases including lockout and a correct PIN failing while locked, and the public key refused on the table) and in the
+  browser (new name, mismatch, wrong PIN, right PIN, case, fresh device typing "paul", the demo name, the nudge).
+- **What it does NOT do (be honest with anyone who asks):** it guards the name picker. The data tables still accept the
+  public key that is in the page (documented and accepted earlier), so a technical person can read or write another
+  name's rows through the API without any PIN. Real protection needs row-level rules keyed on a per-user token (a
+  bigger change: every table, every fetch, and it would need testing with the demo close). The PIN stops casual
+  impersonation and accidental name clashes.
+- **Window to be aware of:** until Paul sets his PIN, Paul is "unprotected", and someone calling the function directly
+  could claim it first. The owner should set his PIN on his device as soon as this is live.
+- **Forgotten PIN / reset:** in the Supabase SQL editor (or a migration): `delete from public.user_pins where user_id = 'Name'`,
+  then the name is unprotected again and the owner's device can set a new PIN. To make a name open (no PIN):
+  `insert into public.user_pins (user_id, pin_hash) values ('Name', null)`.
+
 ### Tips wording, the camera check, "Ready for the call" (branch `feat/tips-labels-and-ready`, 2026-09-27)
 
 - **Panel wording (owner):** the button reads "run 7 day summary"; the posture point is labelled "out of plumb activity"

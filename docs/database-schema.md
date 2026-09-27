@@ -37,6 +37,7 @@ tool) and run the real client or workflow once. Direct SQL cannot catch a missin
 | `hydration_events` | 34 | all | select | Each drink logged (`volume_ml`, `drink_type`). |
 | `light_readings` | ~280 | all | select | Ambient brightness/skew sample every ~5 min while tracking. |
 | `app_settings` | 1 | select, insert, update | select (added 2026-09-26: the weekly-analysis function reads the water target and working hours) | One row per user: tolerances, timings, hydration sizes, plus `extras` jsonb (see below). |
+| `user_pins` | 1 | none (no grant at all, RLS on with no policies) | select, insert, update, delete | Added 2026-09-27. One row per protected name: bcrypt PIN hash, failed-attempt count and lock time. A null `pin_hash` marks an open name that needs no PIN (`Demo`). Only reachable through the three `plumb_*` functions below. |
 | `weekly_goals` | 1 | select, insert, update | all | The Friday weekly analysis: `patterns`, `goals` (jsonb), `question`, the user's `user_response`. Unique on (user_id, week_start). |
 | `ai_summary` | 0 (new 2026-09-26) | select | select, insert, update | The Monday "ai summary" tab: one row per user (`summary` text, `stats` jsonb, `model`, `generated_at`). Written by `scripts/generate-summary.cjs` via OpenRouter; read by the report's "ai summary" tab. |
 | `calendar_events` | 21 | **none** | all | Meeting **times only** (never titles), `is_call` flag. Synced hourly from a private iCal link. |
@@ -74,6 +75,9 @@ Columns worth knowing (not exhaustive):
 | `_in_call_at(p_user, p_at)` | service_role only | The time-parameterised version. Kept private so nobody can probe arbitrary times to rebuild a schedule. |
 | `camera_review_take(p_user, p_user_cap, p_global_cap) -> boolean` | service_role only | Atomically counts one AI review against the per-user and global daily caps. |
 | `camera_review_refund(p_user)` | service_role only | Gives that count back when a review fails. |
+| `plumb_check_name(p_name) -> jsonb` | anon, authenticated, service_role | Security definer. What is this name? `new`, `unprotected` (has data, no PIN yet), `protected`, `open` or `invalid`; case-insensitive, returns the stored spelling. |
+| `plumb_set_pin(p_name, p_pin) -> jsonb` | anon, authenticated, service_role | Security definer. Sets a 4-digit PIN once (bcrypt); refuses if the name already has one. |
+| `plumb_verify_pin(p_name, p_pin) -> jsonb` | anon, authenticated, service_role | Security definer. Checks a PIN; five wrong tries in a row lock the name for 15 minutes. |
 | `rls_auto_enable()` | event trigger | Supabase-provided helper that enables RLS on new tables. |
 
 ## Edge function
