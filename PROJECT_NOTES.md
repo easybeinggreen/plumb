@@ -78,6 +78,78 @@ ink), mark `#FFFFFF`; the tile has 14-unit rounded corners.
 - Not verified: how the tab icon looks in a real browser tab (the pane has no tab strip); the files load and the paths
   resolve. Not done: a manifest or larger install icons.
 
+### Better Plumb Tips (`weekly-analysis` v8, branch `fix/better-tips`, 2026-09-27)
+
+The owner's criticism of one run: "Take a one-minute break after lunch" is not a fix for a big out-of-plumb gap. Right, and
+the data said more: in 2026-09-21..27 his afternoons are worse (out of plumb 50% against 26% before noon) yet he takes MORE
+breaks in the afternoon (25 against 10) and his sitting stretches are SHORTER (average 23 minutes against 29; only 33% of
+afternoon time is in stretches over an hour, against 66% in the morning). So "more breaks" cannot be the lever. Sitting low is
+the larger part (19% -> 39%; neck dropping 8% -> 10%), and sitting low read high after breaks until the calibration fix
+(#20), so the gap may also be partly measurement.
+- **What changed:** the function now works out (in code) how the sitting is broken up (`buildSittingSummary`: stretches,
+  average and longest, share of time in stretches over an hour, breaks, morning against afternoon) and hands the model two
+  explicit facts: `afternoonAlreadyBreaksMoreAndSitsShorter` and `biggestIncreaseAfterLunch` ("sitting low" or "neck
+  dropping"). The prompt says the recommendation must fit the size of the gap (never a token break; never a break under 3
+  minutes), may only recommend more breaks if the worse period has longer stretches or fewer breaks, and must address the
+  biggest contributor (sitting low: sit back so the lower back rests on the chair and raise the screen or laptop to eye level;
+  neck dropping: raise the screen so you look straight at it), and may add recalibrating after lunch and re-checking after a
+  week on the new calibration. Recommendations may now run to 35 words with up to two linked actions. A recommendation that
+  says a one- or two-minute break is rejected in code, so another model attempt is used.
+- **Result (three live runs, all `gemma-4-26b`):** "Sit back so your lower back rests on the chair and raise your screen to
+  eye level, then recalibrate after lunch." with the finding "out of plumb 49% between 1pm and 6pm compared to 26% before
+  12, sitting low 19% to 39%, neck dropping staying at 10%". Wording varies run to run.
+- **A speed problem found on the way:** the longer prompt made some free reasoning models spend their whole token budget
+  thinking (`finish_reason length`), and one run outlived the roughly 60 seconds after which the gateway drops the connection
+  (the function still finished later). Fixed by dropping the two big raw hour-by-hour tables (the summaries carry the same
+  facts) and asking reasoning models to think briefly (`reasoning: { effort: 'low' }`). Runs now take 6 to 20 seconds. If the
+  page's button ever shows a network error for a run that took over a minute, the row may still have been written: reload.
+- Not verified: the button from the page, the Friday scheduled run, and other weeks' data (only this week was tried).
+
+### First-run tour (branch `feat/tour`, 2026-09-27)
+
+A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
+card. Welcome screen with the tagline ("Plumb is your desk companion and guardian angel, keeping you aligned in every
+way."), then 11 steps (camera, calibrate, the dot and loop, the pop-out window, breaks, hydration, ambient brightness,
+Plumb Tips, charts, how do I look, settings) and a closing card. Next / back / skip; arrow keys, Enter and Escape work.
+- **Code:** `src/tour.js` (the steps, the pure `placeTooltip`, and the DOM runner), the "?" button beside settings in the
+  header (`#tourBtn`), styles in `index.html`, launch code in `src/main.js`. Because it points at real elements, a step
+  whose control is missing or hidden (the pop-out button in a browser without it) is left out automatically.
+- **When it shows:** any time from the "?" button, and once, about a second after sign-up, for a brand-new name (the name
+  picker sets `plumb:tourPending`; `maybeStartTour` consumes it). Finishing or skipping sets `plumb:<name>:tourSeen`.
+- **Verified:** 7 node checks on the card placement (below / above / beside / centred, and always fully on screen across
+  a grid of positions and three window sizes); in the browser at 1280x800, all 13 steps: the spotlight covers each control
+  tightly, the card is fully on screen and never covers its control, back / arrow / Escape / skip all work, no console
+  errors. Not verified: narrow or phone-sized windows, and the auto-start after a real sign-up (needs the PIN change).
+- **Gotcha found while testing:** the pane does not run animation frames unless it is visible, so the tour lays itself out
+  immediately as well as on the next frame, and re-lays out on scroll; the spotlight also slides for 0.25s, so measure
+  after a short wait.
+
+### Name + PIN sign-in (branch `feat/name-pin`, 2026-09-27)
+
+The owner's concern: someone else typing "Paul" landed in Paul's stats. Now a name has a 4-digit PIN.
+- **Flow:** type a name; the database says what it is. New: choose a PIN (twice) and you are in. Protected: enter the PIN
+  (wrong tries count down from 5, then the name is locked for 15 minutes). The lookup is case-insensitive and uses the
+  stored spelling ("zz_UI_pin_TEST" became "ZZ_ui_pin_test"). `Demo` is an "open" name (no PIN, on purpose). A name that
+  has data but no PIN yet (only Paul, right now, plus the old `default` user) can only get a PIN from a device that has
+  used the name before; from a fresh device it says the name is in use. Someone already signed in without a PIN (Paul)
+  gets a one-time-a-day nudge to set one ("not now" dismisses it for the day). Offline, a name the device already knows
+  still gets in.
+- **Where it lives:** `src/identity.js` (pure decisions and the RPC calls, tested with node), the picker in `src/main.js`
+  (`showUserPicker`, `runPinStep`, `maybeNudgePin`), and the database (`user_pins` table with no access for the public
+  key, `plumb_check_name`, `plumb_set_pin`, `plumb_verify_pin`; migration `add_user_pins`). Verified through the public API
+  (13 cases including lockout and a correct PIN failing while locked, and the public key refused on the table) and in the
+  browser (new name, mismatch, wrong PIN, right PIN, case, fresh device typing "paul", the demo name, the nudge).
+- **What it does NOT do (be honest with anyone who asks):** it guards the name picker. The data tables still accept the
+  public key that is in the page (documented and accepted earlier), so a technical person can read or write another
+  name's rows through the API without any PIN. Real protection needs row-level rules keyed on a per-user token (a
+  bigger change: every table, every fetch, and it would need testing with the demo close). The PIN stops casual
+  impersonation and accidental name clashes.
+- **Window to be aware of:** until Paul sets his PIN, Paul is "unprotected", and someone calling the function directly
+  could claim it first. The owner should set his PIN on his device as soon as this is live.
+- **Forgotten PIN / reset:** in the Supabase SQL editor (or a migration): `delete from public.user_pins where user_id = 'Name'`,
+  then the name is unprotected again and the owner's device can set a new PIN. To make a name open (no PIN):
+  `insert into public.user_pins (user_id, pin_hash) values ('Name', null)`.
+
 ### Tips wording, the camera check, "Ready for the call" (branch `feat/tips-labels-and-ready`, 2026-09-27)
 
 - **Panel wording (owner):** the button reads "run 7 day summary"; the posture point is labelled "out of plumb activity"
