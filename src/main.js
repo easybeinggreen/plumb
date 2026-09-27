@@ -67,7 +67,6 @@ const voiceSelect = document.getElementById('voiceSelect');
 const voiceReady = document.getElementById('voiceReady');
 
 const statusCard = document.getElementById('statusCard');
-const pipBtn = document.getElementById('pipBtn');
 const statusValue = document.getElementById('statusValue');
 const statusCaption = document.getElementById('statusCaption');
 
