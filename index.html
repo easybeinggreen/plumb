@@ -980,13 +980,26 @@
 <div class="modal-overlay open" id="userModalOverlay">
   <div class="modal" style="max-width: 360px;">
     <h2 class="modal-title">who's using this?</h2>
-    <p style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;">
-      just a name so your stats don't get mixed up with anyone else's — type the same name on another device and your stats follow you there too. Not a password, not private.
-    </p>
-    <div id="userKnownList" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;" hidden></div>
-    <input type="text" id="userNameInput" placeholder="your name" autocomplete="off"
-      style="width: 100%; box-sizing: border-box; font-family: var(--sans); font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); margin-bottom: 12px;" />
-    <button id="userContinueBtn" class="btn" style="width: 100%; background: var(--ink); color: var(--panel); border-color: var(--ink);">continue</button>
+    <div id="userNameStep">
+      <p style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;">
+        Type your name. New here, you'll choose a 4-digit PIN. Coming back, type the same name and your PIN, on any device, and your stats follow you. The PIN stops someone else signing in as you; it isn't encryption.
+      </p>
+      <div id="userKnownList" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;" hidden></div>
+      <input type="text" id="userNameInput" placeholder="your name" autocomplete="off" maxlength="40"
+        style="width: 100%; box-sizing: border-box; font-family: var(--sans); font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); margin-bottom: 12px;" />
+      <div id="userNameError" role="alert" style="font-size: 12.5px; color: var(--ink-soft); min-height: 16px; margin: -4px 0 10px; line-height: 1.4;"></div>
+      <button id="userContinueBtn" class="btn" style="width: 100%; background: var(--ink); color: var(--panel); border-color: var(--ink);">continue</button>
+    </div>
+    <div id="userPinStep" hidden>
+      <p id="userPinMsg" style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;"></p>
+      <input type="password" id="userPinInput" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="4-digit PIN"
+        style="width: 100%; box-sizing: border-box; font-family: var(--sans); font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); margin-bottom: 12px; letter-spacing: .3em;" />
+      <input type="password" id="userPinConfirm" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="type it again" hidden
+        style="width: 100%; box-sizing: border-box; font-family: var(--sans); font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); margin-bottom: 12px; letter-spacing: .3em;" />
+      <div id="userPinError" role="alert" style="font-size: 12.5px; color: var(--terracotta-dark); min-height: 16px; margin: -4px 0 10px; line-height: 1.4;"></div>
+      <button id="userPinSubmit" class="btn" style="width: 100%; background: var(--ink); color: var(--panel); border-color: var(--ink);">continue</button>
+      <div style="text-align: center; margin-top: 12px;"><button id="userPinBack" class="link-btn" type="button">use a different name</button></div>
+    </div>
   </div>
 </div>
 
