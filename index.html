@@ -713,6 +713,7 @@
 
   <footer>
     voice nudges use a local neural TTS model (Piper) that downloads once and runs fully offline. stats auto-sync to the cloud every ~10s.
+    <div style="margin-top: 6px;"><button id="footerPrivacyLink" class="link-btn" type="button">privacy</button></div>
   </footer>
 </div>
 
@@ -923,6 +924,22 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="privacyOverlay">
+  <div class="modal" style="max-width: 520px;">
+    <button class="modal-close" id="privacyClose">&times;</button>
+    <h2 class="modal-title">privacy</h2>
+    <div style="font-size: 13px; color: var(--ink-soft); line-height: 1.6;">
+      <p><b style="color: var(--ink);">Video never leaves this device.</b> Your webcam feed is processed locally, in your browser, to work out your posture. It is never recorded, uploaded or looked at by anyone — with one exception: if you press "get a fuller AI review" in "how do I look?", one still frame is sent to an AI service (via OpenRouter) to check your hair, clothing and background. That frame isn't saved anywhere afterwards, and nothing else is ever sent unless you press that specific button.</p>
+      <p><b style="color: var(--ink);">What is saved:</b> small numbers only — how long you spent in each posture state, how much water you logged, ambient light readings, and your settings. These sync to Plumb's database roughly every 10 seconds so your stats follow you across devices.</p>
+      <p><b style="color: var(--ink);">The 7 day summary</b> sends your recent posture, hydration and light numbers (never video or images) to a free AI service via OpenRouter, which writes two short tips. Only you see the result.</p>
+      <p><b style="color: var(--ink);">If you connect a calendar,</b> only meeting times are read, never titles or attendees, used only to mute nudges during a call.</p>
+      <p><b style="color: var(--ink);">Your name and PIN are not an account.</b> There is no email, no password reset, and no company behind a login. The PIN exists so someone else can't casually sign in under your name and see your stats or mix them up with theirs — it is a courtesy lock, not encryption, and Plumb has no way to prove who is really typing a name.</p>
+      <p><b style="color: var(--ink);">No advertising, analytics or tracking</b> of any kind runs in Plumb. Nothing is sold or shared beyond the two AI services named above, and only for the one picture or the recent numbers you send them.</p>
+      <p style="margin-bottom: 0;">Plumb is a personal, self-hosted project, not a commercial product or a medical device.</p>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="rationaleOverlay">
   <div class="modal" style="max-width: 560px;">
     <button class="modal-close" id="rationaleClose">&times;</button>
@@ -985,16 +1002,17 @@
 
 <div class="modal-overlay open" id="userModalOverlay">
   <div class="modal" style="max-width: 360px;">
-    <h2 class="modal-title">who's using this?</h2>
+    <h2 class="modal-title">Welcome to Plumb — please enter your name</h2>
     <div id="userNameStep">
       <p style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;">
-        Type your name. New here, you'll choose a 4-digit PIN. Coming back, type the same name and your PIN, on any device, and your stats follow you. The PIN stops someone else signing in as you; it isn't encryption.
+        New here, you'll choose a 4-digit PIN. Coming back, type the same name and your PIN, on any device, and your stats follow you. The PIN stops someone else signing in as you; it isn't encryption.
       </p>
       <div id="userKnownList" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;" hidden></div>
       <input type="text" id="userNameInput" placeholder="your name" autocomplete="off" maxlength="40"
         style="width: 100%; box-sizing: border-box; font-family: var(--sans); font-size: 14px; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--ink-faint-2); background: var(--paper); color: var(--ink); margin-bottom: 12px;" />
       <div id="userNameError" role="alert" style="font-size: 12.5px; color: var(--ink-soft); min-height: 16px; margin: -4px 0 10px; line-height: 1.4;"></div>
       <button id="userContinueBtn" class="btn" style="width: 100%; background: var(--ink); color: var(--panel); border-color: var(--ink);">continue</button>
+      <div style="text-align: center; margin-top: 12px;"><button id="userPrivacyLink" class="link-btn" type="button">privacy</button></div>
     </div>
     <div id="userPinStep" hidden>
       <p id="userPinMsg" style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;"></p>
