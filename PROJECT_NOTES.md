@@ -61,6 +61,23 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Logo and favicon (branch `feat/logo`, 2026-09-27)
+
+The owner's idea: combine the p and the b into a circle with a stem running up and down (and Pb is lead's chemical symbol,
+plumbum, the root of "plumb"). The mark is a circle with a vertical stem tangent to its left side that runs equally above it
+(the b) and below it (the p); it is also a plumb line and its bob, and it echoes the dot in the app. **Version 2, at the
+owner's request: longer stems, and white on green everywhere** (the header shows the same green tile as the favicon, not a dark
+outline on the page). Geometry on a 64 tile: circle centre (32, 32), radius 14; stem x = 18 from y = 7 to 57 (11 units beyond
+the circle each way, was 9); stroke 6.5, round caps; the whole mark is centred in the tile. Colours: tile `#14403B` (the app's
+ink), mark `#FFFFFF`; the tile has 14-unit rounded corners.
+- **Files (`public/`):** `favicon.svg` and `logo.svg` (the same tile), `favicon-32.png`, `apple-touch-icon.png` (180px,
+  square: the phone rounds it). The PNGs were drawn from the same geometry with PIL; if the geometry changes, regenerate all
+  of them together and the inline SVG in the header.
+- **In the page:** the three icon links in `<head>` (Vite adds the `/plumb/` base), and the tile beside the wordmark in the
+  header (42px, level with the wordmark, its left edge on the tagline's). There was no favicon at all before.
+- Not verified: how the tab icon looks in a real browser tab (the pane has no tab strip); the files load and the paths
+  resolve. Not done: a manifest or larger install icons.
+
 ### Better Plumb Tips (`weekly-analysis` v8, branch `fix/better-tips`, 2026-09-27)
 
 The owner's criticism of one run: "Take a one-minute break after lunch" is not a fix for a big out-of-plumb gap. Right, and
