@@ -2,7 +2,7 @@
 // plus a label card), so nothing here can drift from what the page actually has: a step whose control is
 // missing or hidden (for example the pop-out button in a browser without it) is simply left out.
 
-export const TAGLINE = 'Plumb is your desk companion and guardian angel, keeping you aligned in every way.';
+export const TAGLINE = 'Plumb is your deskside companion that helps keep you aligned, focused and healthy throughout your time at the screen.';
 
 // `sel` is the control to point at. Steps without `sel` are centred cards (the welcome and the last one).
 // The order follows the screen: the buttons under the camera, left to right, then the header, then the

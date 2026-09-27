@@ -108,8 +108,8 @@ the larger part (19% -> 39%; neck dropping 8% -> 10%), and sitting low read high
 ### First-run tour (`feat/tour`, then `feat/tour-v2`, 2026-09-27)
 
 A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
-card. Welcome screen with the tagline ("Plumb is your desk companion and guardian angel, keeping you aligned in every
-way."), 18 steps, and a closing card. Next / back / skip; arrow keys, Enter and Escape work.
+card. Welcome screen with the tagline ("Plumb is your deskside companion that helps keep you aligned, focused and healthy
+throughout your time at the screen." -- reworded by the owner after seeing the first draft), 18 steps, and a closing card. Next / back / skip; arrow keys, Enter and Escape work.
 - **Order (v2, at the owner's request: work through it systematically, following the screen):** under the camera, left to
   right: start camera, calibrate plumb position, start a break, nudges on/muted, focus, workstation setup, desk gym, how do I
   look, the manual (the book icon: why the alerts are set this way), settings; then the header: today's wrap, view report
