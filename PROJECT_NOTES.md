@@ -106,24 +106,30 @@ the larger part (19% -> 39%; neck dropping 8% -> 10%), and sitting low read high
   page's button ever shows a network error for a run that took over a minute, the row may still have been written: reload.
 - Not verified: the button from the page, the Friday scheduled run, and other weeks' data (only this week was tried).
 
-### First-run tour (branch `feat/tour`, 2026-09-27)
+### First-run tour (`feat/tour`, then `feat/tour-v2`, 2026-09-27)
 
 A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
-card. Welcome screen with the tagline ("Plumb is your desk companion and guardian angel, keeping you aligned in every
-way."), then 11 steps (camera, calibrate, the dot and loop, the pop-out window, breaks, hydration, ambient brightness,
-Plumb Tips, charts, how do I look, settings) and a closing card. Next / back / skip; arrow keys, Enter and Escape work.
+card. Welcome screen with the tagline ("Plumb is your deskside companion that helps keep you aligned, focused and healthy
+throughout your time at the screen." -- reworded by the owner after seeing the first draft), 18 steps, and a closing card. Next / back / skip; arrow keys, Enter and Escape work.
+- **Order (v2, at the owner's request: work through it systematically, following the screen):** under the camera, left to
+  right: start camera, calibrate plumb position, start a break, nudges on/muted, focus, workstation setup, desk gym, how do I
+  look, the manual (the book icon: why the alerts are set this way), settings; then the header: today's wrap, view report
+  (the charts); then the right-hand column, top to bottom: the dot and loop, hydration, ambient brightness, the break
+  countdown ring, Plumb Tips (the 7 day summary), recent activity. **The pop-out button is deliberately not a step** (the
+  owner: it doesn't work and isn't needed; the status card moves into its small window by itself when the camera starts).
+  The button itself is still on the page: whether to remove it is an open question.
 - **Code:** `src/tour.js` (the steps, the pure `placeTooltip`, and the DOM runner), the "?" button beside settings in the
   header (`#tourBtn`), styles in `index.html`, launch code in `src/main.js`. Because it points at real elements, a step
-  whose control is missing or hidden (the pop-out button in a browser without it) is left out automatically.
+  whose control is missing or hidden is left out automatically.
 - **When it shows:** any time from the "?" button, and once, about a second after sign-up, for a brand-new name (the name
   picker sets `plumb:tourPending`; `maybeStartTour` consumes it). Finishing or skipping sets `plumb:<name>:tourSeen`.
-- **Verified:** 7 node checks on the card placement (below / above / beside / centred, and always fully on screen across
-  a grid of positions and three window sizes); in the browser at 1280x800, all 13 steps: the spotlight covers each control
-  tightly, the card is fully on screen and never covers its control, back / arrow / Escape / skip all work, no console
-  errors. Not verified: narrow or phone-sized windows, and the auto-start after a real sign-up (needs the PIN change).
+- **Verified:** 9 node checks (card placement, and that every step's target really exists in `index.html` and the order is
+  as above); in the browser at 1280x800, all 20 cards: the spotlight covers each control tightly, the card is fully on
+  screen and never covers its control, no console errors. Not verified: narrow or phone-sized windows, and the auto-start
+  after a real sign-up on the live site.
 - **Gotcha found while testing:** the pane does not run animation frames unless it is visible, so the tour lays itself out
   immediately as well as on the next frame, and re-lays out on scroll; the spotlight also slides for 0.25s, so measure
-  after a short wait.
+  after a short wait. If a control is renamed or removed, update `TOUR_STEPS`: the node check will fail if a target vanishes.
 
 ### Name + PIN sign-in (branch `feat/name-pin`, 2026-09-27)
 

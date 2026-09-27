@@ -2,22 +2,39 @@
 // plus a label card), so nothing here can drift from what the page actually has: a step whose control is
 // missing or hidden (for example the pop-out button in a browser without it) is simply left out.
 
-export const TAGLINE = 'Plumb is your desk companion and guardian angel, keeping you aligned in every way.';
+export const TAGLINE = 'Plumb is your deskside companion that helps keep you aligned, focused and healthy throughout your time at the screen.';
 
 // `sel` is the control to point at. Steps without `sel` are centred cards (the welcome and the last one).
+// The order follows the screen: the buttons under the camera, left to right, then the header, then the
+// right-hand column, top to bottom. (The pop-out button is left out on purpose: the card moves into its small
+// window by itself when the camera starts, so the button is not something to learn.)
 export const TOUR_STEPS = [
-  { id: 'welcome', title: 'Welcome to Plumb', body: `${TAGLINE} Here is a quick tour of what it does. It takes about a minute.`, next: 'take the tour' },
-  { id: 'camera', sel: '#cameraToggleBtn', title: 'Start the camera', body: 'Plumb watches how you are sitting through your webcam. The video never leaves this device; only small numbers are saved.' },
-  { id: 'calibrate', sel: '#calibrateBtn', title: 'Set your plumb position', body: 'Sit the way you should be sitting, then press this. That becomes plumb for you. Press it again after a break if you sit differently.' },
-  { id: 'dot', sel: '#statusCard', title: 'The dot and the loop', body: 'The dot shows where you are. Inside the dashed loop you are plumb. Stay outside it for a while and Plumb gives you a spoken nudge.' },
-  { id: 'popout', sel: '#pipBtn', title: 'Pop-out window', body: 'A small always-on-top window that keeps the dot in view while you work in other apps.' },
-  { id: 'breaks', sel: '#breakToggleBtn', title: 'Breaks', body: 'Start a break when you step away, or let Plumb notice. The ring beside it counts down to your next one.' },
-  { id: 'water', sel: '.hydration-col', title: 'Hydration', body: 'Tap glass, mug, can or bottle when you drink. The dashed line shows where you would be if you drank evenly through the day.' },
+  { id: 'welcome', title: 'Welcome to Plumb', body: `${TAGLINE} Here is a quick tour of what it does, in the order you will meet it on the screen.`, next: 'take the tour' },
+
+  // ---- under the camera ----
+  { id: 'camera', sel: '#cameraToggleBtn', title: 'Start the camera', body: 'Plumb watches how you are sitting through your webcam. The video never leaves this device; only small numbers are saved. Press it again to stop.' },
+  { id: 'calibrate', sel: '#calibrateBtn', title: 'Calibrate your plumb position', body: 'Sit the way you should be sitting, then press this. That becomes plumb for you, and everything is measured from it. It is kept for the day, and Plumb re-sets your sitting height itself after a break.' },
+  { id: 'break', sel: '#breakToggleBtn', title: 'Start a break', body: 'Press it when you step away, or just leave: Plumb notices and counts the break. After too long sitting it changes to "time for a break".' },
+  { id: 'nudges', sel: '.switch-item', title: 'Nudges on or muted', body: 'Turns the spoken nudges on or off, for example when you cannot have sound. The message still appears on screen.' },
+  { id: 'focus', sel: '#pomodoroBtn', title: 'Focus', body: 'A distraction-free focus block: every alert pauses until it ends, then you get a short break. Tracking carries on quietly.' },
+  { id: 'workstation', sel: '#ergoWizardBtn', title: 'Workstation setup', body: 'A one-off walkthrough of your desk: eye height against the screen, distance, lighting and desk basics, ending with calibration. Worth doing once.' },
+  { id: 'gym', sel: '#deskGymBtn', title: 'Desk gym', body: 'Five quick seated stretches, each with a short note on why it helps and a link to a demo video. Only when you ask: Plumb never prompts you to do them.' },
+  { id: 'look', sel: '#closeupBtn', title: 'How do I look?', body: 'Before a call: a live mirror, framing and lighting checks and a microphone test, all on this device, plus an optional AI look at your hair, clothes and background. It finishes with Ready for the call.' },
+  { id: 'manual', sel: '#whyBtn', title: 'The manual', body: 'Why Plumb nudges you the way it does: the reasoning and evidence behind each alert and setting, in plain words.' },
+  { id: 'settings', sel: '#gearBtn', title: 'Settings', body: 'Sensitivity, timings, water target and working hours, reminders, the focus timer, the daily wrap, the voice, your camera and your name.' },
+
+  // ---- the header ----
+  { id: 'wrap', sel: '#wrapBtn', title: "Today's wrap", body: 'Your day so far in one window: time tracked, how much of it you were plumb against yesterday, breaks, your longest sit, your roughest hour and your water.' },
+  { id: 'report', sel: '#reportBtn', title: 'Your charts', body: 'Today, this week and this month: how much of the time you were plumb, a colour strip for every minute of every day, with your breaks and your water. Click a day for its detail.' },
+
+  // ---- the right-hand column ----
+  { id: 'dot', sel: '#statusCard', title: 'The dot and the loop', body: 'The dot shows where you are. Inside the dashed loop you are plumb; stay outside it for a while and Plumb gives you a spoken nudge. In Chrome this card moves into a small always-on-top window when you start the camera, so it stays in view.' },
+  { id: 'water', sel: '.hydration-col', title: 'Hydration', body: 'Tap glass, mug, can or bottle when you drink. The dashed line shows where you would be if you drank evenly through your working day.' },
   { id: 'light', sel: '.gauge-col-light', title: 'Ambient brightness', body: 'How bright the room is and which side the light comes from, so you can spot glare before it tires your eyes.' },
-  { id: 'tips', sel: '#weeklyGoalsPanel', title: 'Plumb Tips', body: 'Press run 7 day summary for two points from your last 7 days, each with the numbers behind it and something to do about it.' },
-  { id: 'report', sel: '#reportBtn', title: 'Your charts', body: 'Today, this week and this month: how much of the time you were plumb, minute by minute, with your breaks and water.' },
-  { id: 'look', sel: '#closeupBtn', title: 'How do I look?', body: 'Before a call: a live mirror, framing and lighting checks, a microphone test and an optional AI look at your hair, clothes and background. Finish with Ready for the call.' },
-  { id: 'settings', sel: '#gearBtn', title: 'Settings', body: 'Sensitivity, break and water targets, the voice, reminders, and your name.' },
+  { id: 'ring', sel: '.gauge-col-break', title: 'Break countdown', body: 'The ring counts down to your next break, turns to "break due" when it is time, and the line under it totals your break time today.' },
+  { id: 'tips', sel: '#weeklyGoalsPanel', title: 'Plumb Tips', body: 'Press run 7 day summary for two points from your last 7 days, each with the numbers behind it and something to do about it. It can take a few seconds, sometimes a minute or two.' },
+  { id: 'activity', sel: '#activityToggle', title: 'Recent activity', body: 'A short log of what Plumb has done today: calibrations, breaks and nudges. It stays tucked away until you open it.' },
+
   { id: 'done', title: "That's the tour", body: 'You can take it again any time from the ? button at the top. Start the camera to begin.', next: 'done' }
 ];
 
