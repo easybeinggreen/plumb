@@ -106,6 +106,13 @@ the larger part (19% -> 39%; neck dropping 8% -> 10%), and sitting low read high
   page's button ever shows a network error for a run that took over a minute, the row may still have been written: reload.
 - Not verified: the button from the page, the Friday scheduled run, and other weeks' data (only this week was tried).
 
+**Pop-out button removed (owner, 2026-09-27): it didn't work and wasn't needed.** `#pipBtn` was always `hidden` in the
+markup and had no click handler anywhere in `src/main.js` -- dead since before this session, not something the tour broke.
+The real pop-out (`requestPipWindow`/`movePipContent`, Chrome's Document Picture-in-Picture) is unchanged: it still
+happens automatically when the camera starts, in browsers that support it. Removed: the button element and the unused
+`const pipBtn` line. Verified: no remaining reference to `pipBtn` in the repo; the icon row now shows tour / manual /
+settings; no console errors.
+
 ### First-run tour (`feat/tour`, then `feat/tour-v2`, 2026-09-27)
 
 A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
