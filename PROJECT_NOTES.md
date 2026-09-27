@@ -19,14 +19,15 @@ if you're that reader, this file plus git log/PRs should be enough.
 - **Supabase project** `keacpowuykzcnwwdbjkd`. Edge functions: `camera-review` v7, `weekly-analysis` v2 (both
   `verify_jwt` off, deliberately: the app has no user auth; protection is daily caps + CORS + server-side key).
   New table `ai_summary`. Anthropic is not used anywhere any more (secret deleted); everything AI is OpenRouter free.
-- **Demo login created 2026-09-26:** an `app_settings` row `user_id = 'Demo'` (lateral tolerance 0.03, sustained 3s; every
-  other value copied from Paul's, voice left at the default Alba). Choosing the name Demo on a device loads it (checked in the
-  browser pane: sliders read 0.03 and 3). Undo: `delete from app_settings where user_id = 'Demo'` (via a migration).
-  At 0.03 the dot's wall (1.2x tolerance, see the parked popup item) sits at a 0.036 lean, so expect it to jump to the
-  side and stay there; it is proportionally the same as at 0.07.
-- **Demo on Wednesday 2026-09-30:** the owner sets up a separate 'Demo' login (high sensitivity: lateral tolerance
-  0.03, sustained 3s). Calibration is now persisted per user for the same day (see "Calibration drift" below), so
-  a reload keeps the morning's baseline; press "recalibrate" before the demo anyway so it matches the demo posture.
+- **The demo on Wednesday 2026-09-30 is done as Paul (decided 2026-09-27); the separate 'Demo' login was created on
+  2026-09-26 and deleted on 2026-09-27** (migration `remove_demo_login`: its `app_settings` and `user_pins` rows; it never had
+  any data). Reasons: a Demo login shows an empty history, and copying Paul's data into a name anyone could type would expose it.
+  How to run it: sign in as Paul (PIN). For the high-sensitivity show, Settings -> lateral tolerance 0.03 and sustained 3s
+  just before, and put them back afterwards (Paul's normal values are 0.07 and 45s): they sync to every device, so restoring
+  them matters. At 0.03 the dot's wall (1.2x tolerance, see the parked popup item) sits at a 0.036 lean, so the dot will jump
+  to the side and stay there; it is proportionally the same as at 0.07. To show the sign-up and the tour, create a throwaway
+  name live and delete its rows afterwards. Calibration is persisted per user for the same day (see "Calibration drift"
+  below); press "recalibrate" before the demo anyway so it matches the demo position.
 - **Open items, roughly by importance:**
   1. Verify in real life: the morning after a laptop sleep, the night shows grey "not tracking" (not blue away);
      the popup in the owner's real Chrome; how Angus/Matilda sound reading a real nudge.
@@ -129,7 +130,7 @@ Plumb Tips, charts, how do I look, settings) and a closing card. Next / back / s
 The owner's concern: someone else typing "Paul" landed in Paul's stats. Now a name has a 4-digit PIN.
 - **Flow:** type a name; the database says what it is. New: choose a PIN (twice) and you are in. Protected: enter the PIN
   (wrong tries count down from 5, then the name is locked for 15 minutes). The lookup is case-insensitive and uses the
-  stored spelling ("zz_UI_pin_TEST" became "ZZ_ui_pin_test"). `Demo` is an "open" name (no PIN, on purpose). A name that
+  stored spelling ("zz_UI_pin_TEST" became "ZZ_ui_pin_test"). A null `pin_hash` in `user_pins` makes a name "open" (no PIN); there are none now (the Demo name was removed). A name that
   has data but no PIN yet (only Paul, right now, plus the old `default` user) can only get a PIN from a device that has
   used the name before; from a fresh device it says the name is in use. Someone already signed in without a PIN (Paul)
   gets a one-time-a-day nudge to set one ("not now" dismisses it for the day). Offline, a name the device already knows
@@ -304,7 +305,7 @@ are probably also in play; re-run the same queries after a few days on the new c
   restore-on-reload path in the browser; the live break-return path needs a real session.
 
 Full code review done ahead of a demo on Wednesday 2026-09-30, then the fixes below (branch
-`fix/demo-readiness`). The owner will use a separate **'Demo'** login (own settings row) with the
+`fix/demo-readiness`). The owner will demo as Paul (the separate 'Demo' login was dropped on 2026-09-27) with the
 sensitivity set high (lateral tolerance down to 0.03, "sustained before nudge" down to 3s) to show the dot
 respond to leaning left/right within a few seconds.
 
