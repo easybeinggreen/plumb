@@ -2630,11 +2630,17 @@ function showUserPicker() {
     if (!SYNC_CONFIGURED) { signIn(name); return; } // no server to ask (local development only)
     checking = true; nameError.textContent = 'checking…';
     try {
-      const step = nextStep(await checkName(SUPABASE_URL, SUPABASE_ANON_KEY, name), deviceKnows(name));
+      const check = await checkName(SUPABASE_URL, SUPABASE_ANON_KEY, name);
+      const step = nextStep(check, deviceKnows(name));
       if (step.step === 'signin') { signIn(step.name); return; }
       if (step.step === 'invalid' || step.step === 'blocked') { nameError.textContent = step.msg; return; }
       nameError.textContent = '';
-      runPinStep({ name: step.name, mode: step.step, msg: step.msg, backLabel: 'use a different name', onBack: showNameStep, onDone: signIn });
+      // A brand-new name gets the first-run tour once it is signed in (see the tour section of main.js).
+      const isNewName = check.status === 'new';
+      runPinStep({
+        name: step.name, mode: step.step, msg: step.msg, backLabel: 'use a different name', onBack: showNameStep,
+        onDone: (n) => { if (isNewName) localStorage.setItem('plumb:tourPending', n); signIn(n); }
+      });
     } catch (e) {
       // Offline: a name this device has used before can still get in (it is this person's own device).
       if (deviceKnows(name)) { signIn(known.find((k) => String(k).toLowerCase() === name.toLowerCase())); return; }
