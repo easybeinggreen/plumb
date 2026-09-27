@@ -258,6 +258,7 @@
   .summary-point:first-child { border-top: none; padding-top: 0; }
   .summary-point-label { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink); margin-bottom: 3px; }
   .summary-point-finding { font-size: 13px; line-height: 1.45; color: var(--ink-soft); }
+  .summary-tip-label { color: var(--accent); font-weight: 700; white-space: nowrap; }
   .summary-point-rec { font-size: 13px; line-height: 1.45; font-weight: 600; color: var(--ink); margin-top: 5px; }
   .link-btn { background: none; border: none; padding: 0; font-size: 11.5px; color: var(--ink-soft); text-decoration: underline; cursor: pointer; }
   .link-btn:hover { color: var(--ink); }
@@ -677,7 +678,7 @@
       <div class="panel summary-panel" id="weeklyGoalsPanel">
         <div class="summary-head">
           <div class="summary-title">last 7 days</div>
-          <button id="weeklyGenerateBtn" class="btn-compact" type="button" title="reads your last 7 days of tracking and writes two points, each with the numbers behind it and something to do -- takes up to a couple of minutes">7 days summary</button>
+          <button id="weeklyGenerateBtn" class="btn-compact" type="button" title="reads your last 7 days of tracking and writes two points, each with the numbers behind it and something to do -- takes up to a couple of minutes">run 7 day summary</button>
         </div>
         <div id="weeklyGenerateMsg" class="summary-msg" role="status" aria-live="polite"></div>
         <div id="weeklyBody"><div id="weeklyPoints"></div></div>
@@ -956,6 +957,7 @@
         <div id="closeupMicStatus" class="closeup-mic-status"></div>
         <ul id="closeupMicResults" class="closeup-results"></ul>
       </div>
+      <button id="closeupReadyBtn" class="btn" type="button" style="width:100%;margin-top:16px;">Ready for the call</button>
     </div>
   </div>
 </div>

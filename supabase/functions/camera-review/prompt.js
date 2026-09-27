@@ -17,8 +17,8 @@ Respond with strict JSON only, no markdown fences, no other text.`;
 
 export const USER_PROMPT = `Look at this webcam frame and check these four things:
 
-1. "hair": is the hair tidy overall? Only mark "fix" if a noticeable section is clearly messy or out of place. Ignore a few isolated flyaway strands; they are normal and not worth mentioning.
-2. "clothing": does the visible clothing look neat and suitable for a work video call (creases, collar, stains)? Briefly say what kind of clothing you see.
+1. "hair": is the hair tidy? Mark "fix" when it is visibly untidy: sticking up, tangled, or a clearly messy patch, and say where. Ignore only isolated single strands.
+2. "clothing": say what you see and whether it looks smart, smart-casual or casual for a work video call. Mark "fix" only if it looks creased, stained or untidy (for example a crumpled collar).
 3. "background": is there anything distracting or that the person may not want on camera (clutter, personal items, laundry, mess, visible screens or text)? If the background is plain and tidy, say so.
 4. "behind_head": is any object lined up so it appears to grow out of or sit on the person's head (plant, lamp, picture corner, door frame edge)? If not, say it is clear.
 

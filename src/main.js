@@ -4240,7 +4240,7 @@ async function runAiReview() {
     if (!res.ok) throw new Error(data.message || `The AI review failed (${res.status}).`);
     const rows = (data.items || []).map(it => ({ label: AI_REVIEW_LABELS[it.id] || it.id, status: it.status, msg: it.msg }));
     closeupAiStatus.style.fontWeight = '600';
-    closeupAiStatus.textContent = data.summary || 'Review complete.';
+    closeupAiStatus.textContent = data.summary || (rows.some((r) => r.status === 'fix') ? 'Worth fixing before the call.' : 'You look ready for the call.');
     renderResultRows(closeupAiResults, rows);
   } catch (err) {
     closeupAiStatus.style.fontWeight = '600';
@@ -4256,6 +4256,7 @@ async function runAiReview() {
 
 document.getElementById('closeupBtn').addEventListener('click', openCloseup);
 document.getElementById('closeupClose').addEventListener('click', closeCloseup);
+document.getElementById('closeupReadyBtn').addEventListener('click', closeCloseup); // the natural way to finish: "Ready for the call"
 closeupMicBtn.addEventListener('click', runMicTest);
 closeupAiBtn.addEventListener('click', runAiReview);
 closeupStartCameraBtn.addEventListener('click', () => {
@@ -4606,7 +4607,7 @@ async function loadWeeklyGoals() {
     weeklyBody.hidden = !row;
     if (!row) {
       latestWeeklyGoals = [];
-      if (!weeklyGenerating) weeklyGenerateMsg.textContent = 'No 7 days summary yet. Track for a while, then press 7 days summary.';
+      if (!weeklyGenerating) weeklyGenerateMsg.textContent = 'No 7 day summary yet. Track for a while, then press run 7 day summary.';
       return;
     }
 
@@ -4616,13 +4617,14 @@ async function loadWeeklyGoals() {
     weeklyPointsEl.innerHTML = '';
     const lines = String(row.patterns || '').split('\n').map((l) => l.trim()).filter(Boolean);
     const recs = row.goals || [];
+    const POINT_LABELS = { posture: 'out of plumb activity', 'out of plumb': 'out of plumb activity' };
     lines.forEach((line, i) => {
       const m = line.match(/^([a-z ]+):\s*(.*)$/i);
       const point = document.createElement('div');
       point.className = 'summary-point';
       const label = document.createElement('div');
       label.className = 'summary-point-label';
-      label.textContent = m ? m[1].trim() : 'note';
+      label.textContent = m ? (POINT_LABELS[m[1].trim().toLowerCase()] || m[1].trim()) : 'note';
       const finding = document.createElement('div');
       finding.className = 'summary-point-finding';
       finding.textContent = m ? m[2] : line;
@@ -4631,7 +4633,10 @@ async function loadWeeklyGoals() {
       if (rec) {
         const recEl = document.createElement('div');
         recEl.className = 'summary-point-rec';
-        recEl.textContent = rec;
+        const tip = document.createElement('span');
+        tip.className = 'summary-tip-label';
+        tip.textContent = `Plumb Tip #${i + 1}`;
+        recEl.append(tip, document.createTextNode(' ' + rec));
         const goalTime = parseGoalTime(rec);
         if (goalTime) {
           const btn = document.createElement('button');
@@ -4661,7 +4666,7 @@ async function loadWeeklyGoals() {
 let weeklyGenerating = false;
 weeklyGenerateBtn.addEventListener('click', async () => {
   if (weeklyGenerating) return;
-  if (!SYNC_CONFIGURED || !currentUserId) { weeklyGenerateMsg.textContent = 'The 7 days summary needs cloud sync to be set up.'; return; }
+  if (!SYNC_CONFIGURED || !currentUserId) { weeklyGenerateMsg.textContent = 'The 7 day summary needs cloud sync to be set up.'; return; }
   weeklyGenerating = true;
   weeklyGenerateBtn.disabled = true;
   weeklyGenerateMsg.textContent = 'Working on it. The free AI service is often slow, so this can take up to two minutes…';
