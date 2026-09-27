@@ -9,10 +9,19 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { SYSTEM_PROMPT, USER_PROMPT, CHECK_IDS } from './prompt.js';
 
-// The free router picks whichever free model is available. Named free models were tried
-// individually (2026-09-19) and failed almost every time (timeouts, empty replies, 403/404);
-// the router succeeded roughly 2 in 7 attempts, so askWithRetries keeps trying within a time budget.
-const MODEL = Deno.env.get('CAMERA_REVIEW_MODEL') || 'openrouter/free';
+// Free vision-capable models only, tried three at a time (first valid answer wins). It used to use
+// OpenRouter's general `openrouter/free` router, which picks from ALL free models: on 2026-09-27 only
+// 8 of 17 free models accepted an image at all (one of those is a safety classifier), so the router
+// succeeded roughly 2 attempts in 7. The list below is the free models that take images; override it
+// with the CAMERA_REVIEW_MODELS secret (comma separated) when OpenRouter changes what is free.
+// Checked live on 2026-09-27 with a test frame: the two thinkingmachines/inkling models always return 403,
+// dots-3-note-preview always returns an empty reply, so they are left out; qwen is often rate limited (429)
+// and gemma-4-31b's gateway often times out (502/504), but both do answer sometimes.
+const DEFAULT_MODELS = [
+  'google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free', 'qwen/qwen3.8-27b:free'
+].join(',');
+const MODELS = (Deno.env.get('CAMERA_REVIEW_MODELS') || DEFAULT_MODELS).split(',').map((m) => m.trim()).filter(Boolean);
+const PARALLEL = 3;
 const USER_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_USER_CAP') || 10);
 const GLOBAL_DAILY_CAP = Number(Deno.env.get('CAMERA_REVIEW_GLOBAL_CAP') || 150);
 const MAX_BODY_BYTES = 1_500_000;
@@ -66,37 +75,65 @@ async function askModel(apiKey: string, imageB64: string, model: string, jsonMod
   }
 }
 
-async function askWithRetries(apiKey: string, image: string, model: string) {
+// Some free models reject JSON mode (HTTP 400): that model is retried once without it.
+async function askOne(apiKey: string, image: string, model: string, timeoutMs: number) {
+  try {
+    return await askModel(apiKey, image, model, true, timeoutMs);
+  } catch (e) {
+    if (String((e as Error).message) === 'model_http_400') return await askModel(apiKey, image, model, false, timeoutMs);
+    throw e;
+  }
+}
+
+async function askWithRetries(apiKey: string, image: string) {
   const start = Date.now();
-  let jsonMode = true;
-  let attempt = 0;
+  let next = 0, attempts = 0;
   while (Date.now() - start < BUDGET_MS - 6_000) {
-    attempt++;
     const timeoutMs = Math.min(ATTEMPT_MS, BUDGET_MS - (Date.now() - start));
+    const round = Array.from({ length: Math.min(PARALLEL, MODELS.length) }, () => MODELS[next++ % MODELS.length]);
+    attempts += round.length;
     try {
-      const r = await askModel(apiKey, image, model, jsonMode, timeoutMs);
-      const { items, summary } = normalise(r.parsed);
-      return { items, summary, model: r.model, attempts: attempt };
+      return await Promise.any(round.map(async (model) => {
+        try {
+          const r = await askOne(apiKey, image, model, timeoutMs);
+          const { items, summary } = normalise(r.parsed);
+          return { items, summary, model: r.model, attempts };
+        } catch (e) {
+          console.error(`camera-review ${model} failed: ${String((e as Error).message)}`);
+          throw e;
+        }
+      }));
     } catch (e) {
-      const msg = String((e as Error).message);
-      console.error(`camera-review attempt ${attempt} failed: ${msg}`);
-      if (msg === 'model_http_401') return null; // bad key -- retrying won't help
-      if (msg === 'model_http_400') jsonMode = false; // some free models reject JSON mode
-      await new Promise((r) => setTimeout(r, msg === 'model_http_429' ? 3000 : 500));
+      const errors = ((e as any)?.errors || []).map((x: Error) => String(x.message));
+      if (errors.length > 0 && errors.every((m: string) => m === 'model_http_401')) return null; // bad key: retrying won't help
+      await new Promise((r) => setTimeout(r, 1000));
     }
   }
   return null;
 }
 
+// Free models do not all answer in exactly the requested shape, so this accepts an `items` list whose
+// entries use id/name/check, status/result and msg/message/comment, or an object keyed by the check names.
 function normalise(parsed: any) {
   const byId: Record<string, any> = {};
-  (Array.isArray(parsed?.items) ? parsed.items : []).forEach((it: any) => { if (it && typeof it.id === 'string') byId[it.id] = it; });
+  const list = Array.isArray(parsed?.items) ? parsed.items : Array.isArray(parsed) ? parsed : [];
+  list.forEach((it: any) => {
+    const id = it && (it.id || it.name || it.check || it.item);
+    if (typeof id === 'string') byId[id.toLowerCase().replace(/[^a-z_]/g, '_')] = it;
+  });
+  CHECK_IDS.forEach((id) => { if (!byId[id] && parsed && typeof parsed === 'object' && parsed[id] != null) byId[id] = parsed[id]; });
   const items = CHECK_IDS.map((id) => {
     const it = byId[id];
-    if (!it || typeof it.msg !== 'string') return null;
-    return { id, status: it.status === 'ok' ? 'ok' : 'fix', msg: it.msg.slice(0, 220) };
+    if (it == null) return null;
+    const msg = typeof it === 'string' ? it : (it.msg ?? it.message ?? it.comment ?? it.text);
+    if (typeof msg !== 'string' || !msg.trim()) return null;
+    const st = typeof it === 'object' ? String(it.status ?? it.result ?? '').toLowerCase() : '';
+    return { id, status: ['ok', 'good', 'pass', 'fine'].includes(st) ? 'ok' : 'fix', msg: msg.slice(0, 220) };
   }).filter(Boolean);
-  if (items.length === 0) throw new Error('bad_shape');
+  if (items.length === 0) {
+    console.error(`camera-review bad shape, reply began: ${JSON.stringify(parsed).slice(0, 300)}`);
+    throw new Error('bad_shape');
+  }
   return { items, summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 260) : '' };
 }
 
@@ -123,7 +160,7 @@ Deno.serve(async (req: Request) => {
   if (capErr) return json({ error: 'server_error', message: 'Could not check today\'s usage.' }, 500, origin);
   if (!allowed) return json({ error: 'daily_limit', message: `You've used today's ${USER_DAILY_CAP} AI reviews (or the shared daily limit was reached). Try again tomorrow.` }, 429, origin);
 
-  const result = await askWithRetries(apiKey, image, MODEL);
+  const result = await askWithRetries(apiKey, image);
   if (!result) {
     await supabase.rpc('camera_review_refund', { p_user: userId }); // a failed review shouldn't use up the daily allowance
     return json({ error: 'model_failed', message: 'The free AI service is busy right now and could not finish the review. Please try again in a minute.' }, 502, origin);

@@ -61,6 +61,37 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Tips wording, the camera check, "Ready for the call" (branch `feat/tips-labels-and-ready`, 2026-09-27)
+
+- **Panel wording (owner):** the button reads "run 7 day summary"; the posture point is labelled "out of plumb activity"
+  (the AI's label "posture" or "out of plumb" both map to it); each recommendation is prefixed "Plumb Tip #1" and
+  "Plumb Tip #2". The AI never writes slouch, slump or posture: the prompt says the app's word is "out of plumb", and
+  the data keys it is handed were renamed (`outOfPlumb`, `outOfPlumbPct`). Deployed as `weekly-analysis` v5.
+- **"how do I look?" AI review, why it failed and what changed (`camera-review` v9):** the function used OpenRouter's
+  general free router, which picks from ALL free models; on 2026-09-27 only 8 of 17 free models accept an image at all
+  (one is a safety classifier), which is the recorded "about 2 in 7" success rate. It now tries only image-capable free
+  models, three at once, first valid answer wins. Live per-model findings with a drawn test frame: the two
+  `thinkingmachines/inkling` models always 403, `dots-3-note-preview` always returns an empty reply (both removed);
+  `qwen3.8-27b` is often rate limited (429); `gemma-4-31b` often 502/504; `gemma-4-26b-a4b` answers, but often in a
+  shape the old parser rejected ("bad_shape"), so the parser now accepts common variants (a keyed object, message /
+  comment / text, status or result). After the change: 3 of 3 test runs succeeded in 3.6-6.7s (before: 1 of 3, the
+  failures taking about 2 minutes). The test frame was a drawing (spiky hair, plant behind the head, plain shirt), so this
+  shows the pipeline works and the judgement was right on those points, not how well it judges a real face. The model
+  list is overridable with the `CAMERA_REVIEW_MODELS` secret when OpenRouter changes what is free. A failed shape logs
+  the first 300 characters of the model's own reply (never the picture).
+- **Hair and clothing were never removed from the AI review**; they only appear when the review succeeds. The hair rule
+  is now a middle setting (flags visibly untidy hair: sticking up, tangled, a messy patch; ignores only isolated single
+  strands; the older setting flagged stray strands and was too strict) and clothing now says smart, smart-casual or
+  casual. Without the AI the local checks remain (framing, headroom, head tilt, face brightness, left/right lighting,
+  backlight, glare, distance, microphone); hair, clothing and the background genuinely need a vision model.
+- **"Ready for the call"** is a full-width button at the bottom of the "how do I look?" window (it closes the window);
+  when the AI leaves its summary empty the page says "Worth fixing before the call." or "You look ready for the call."
+- **Open questions put to the owner, not built:** (1) the name picker only recognises names already used ON THAT
+  DEVICE; a name that exists in the database but not on this device is simply accepted, so anyone typing "Paul" sees
+  and can write to Paul's data (there is no authentication; the anon key has full rights on the core tables). A soft
+  "new or returning?" prompt is easy but does not stop impersonation; a short PIN or a real login does. (2) A first-run
+  tour.
+
 ### "last 7 days" panel and the two-point AI analysis (branch `feat/two-point-analysis`, 2026-09-26)
 
 The owner rejected the tabbed summary (#25/#26: "today so far" is covered by the chart, and a block of figures is not
