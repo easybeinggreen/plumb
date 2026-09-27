@@ -61,6 +61,25 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### First-run tour (branch `feat/tour`, 2026-09-27)
+
+A click-through of the main features: a spotlight on the REAL control (a huge box-shadow dims everything else) and a label
+card. Welcome screen with the tagline ("Plumb is your desk companion and guardian angel, keeping you aligned in every
+way."), then 11 steps (camera, calibrate, the dot and loop, the pop-out window, breaks, hydration, ambient brightness,
+Plumb Tips, charts, how do I look, settings) and a closing card. Next / back / skip; arrow keys, Enter and Escape work.
+- **Code:** `src/tour.js` (the steps, the pure `placeTooltip`, and the DOM runner), the "?" button beside settings in the
+  header (`#tourBtn`), styles in `index.html`, launch code in `src/main.js`. Because it points at real elements, a step
+  whose control is missing or hidden (the pop-out button in a browser without it) is left out automatically.
+- **When it shows:** any time from the "?" button, and once, about a second after sign-up, for a brand-new name (the name
+  picker sets `plumb:tourPending`; `maybeStartTour` consumes it). Finishing or skipping sets `plumb:<name>:tourSeen`.
+- **Verified:** 7 node checks on the card placement (below / above / beside / centred, and always fully on screen across
+  a grid of positions and three window sizes); in the browser at 1280x800, all 13 steps: the spotlight covers each control
+  tightly, the card is fully on screen and never covers its control, back / arrow / Escape / skip all work, no console
+  errors. Not verified: narrow or phone-sized windows, and the auto-start after a real sign-up (needs the PIN change).
+- **Gotcha found while testing:** the pane does not run animation frames unless it is visible, so the tour lays itself out
+  immediately as well as on the next frame, and re-lays out on scroll; the spotlight also slides for 0.25s, so measure
+  after a short wait.
+
 ### Name + PIN sign-in (branch `feat/name-pin`, 2026-09-27)
 
 The owner's concern: someone else typing "Paul" landed in Paul's stats. Now a name has a 4-digit PIN.
