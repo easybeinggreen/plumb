@@ -264,6 +264,18 @@
   .link-btn:hover { color: var(--ink); }
   .summary-foot { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--ink-faint); }
   .summary-foot .alert-feed { margin-top: 6px; }
+  /* the tour: a spotlight on the real control (the huge shadow dims everything else) and a label card */
+  .tour-root { position: fixed; inset: 0; z-index: 10000; }
+  .tour-root.tour-centred { background: rgba(10,38,38,0.62); }
+  .tour-hole { position: fixed; border-radius: 14px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(10,38,38,0.62), 0 0 0 2px var(--accent); transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease; }
+  .tour-card { position: fixed; width: 320px; max-width: calc(100vw - 24px); box-sizing: border-box; background: var(--panel); color: var(--ink); border-radius: 16px; padding: 18px 20px 16px; box-shadow: 0 12px 40px rgba(0,0,0,0.35); outline: none; }
+  .tour-centred .tour-card { width: 400px; }
+  .tour-count { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 4px; }
+  .tour-title { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+  .tour-body { font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); margin: 0 0 14px; }
+  .tour-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .tour-nav { display: flex; gap: 8px; margin-left: auto; }
+  .tour-next { padding: 7px 16px; }
   .goal-remind { margin-left: 6px; border: 1.5px solid var(--ink-faint-2); background: transparent; color: var(--ink-soft); font-size: 10.5px; padding: 1px 8px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
   .goal-remind:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
 
@@ -580,6 +592,9 @@
           <div class="icon-group">
             <button id="pipBtn" class="icon-btn" title="pop out a small always-on-top status window" type="button" hidden>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+          </button>
+            <button id="tourBtn" class="icon-btn" title="take a tour of Plumb" aria-label="take a tour of Plumb" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 2.5-3 4"/><line x1="12" y1="17.5" x2="12.01" y2="17.5"/></svg>
           </button>
             <button id="whyBtn" class="icon-btn" title="why Plumb nudges you the way it does: the reasoning and evidence behind each alert" aria-label="why the alerts are set this way" type="button">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5v-15z"/><path d="M4 20.5A2.5 2.5 0 006.5 18H20v3H6.5A2.5 2.5 0 014 20.5z"/><line x1="8.5" y1="7.5" x2="15.5" y2="7.5"/></svg>

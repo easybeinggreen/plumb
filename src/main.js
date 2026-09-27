@@ -3,6 +3,7 @@ import * as piperTTS from '@mintplex-labs/piper-tts-web';
 import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } from './closeup.js';
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
 import { dotPosition } from './glyph.js';
+import { startTour } from './tour.js';
 import { pruneSamples, baselineFromSamples, noseRebaseDecision, parseStoredBaseline, NOSE_REBASE_SETTLE_MS } from './calibration.js';
 import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
@@ -4701,11 +4702,29 @@ document.getElementById('activityToggle').addEventListener('click', () => {
   document.getElementById('activityToggle').textContent = alertFeed.hidden ? 'recent activity' : 'hide activity';
 });
 
+// ---- Tour ----
+// A click-through of the main features (src/tour.js). It starts from the ? button, and once for a brand-new
+// name right after they sign up (the name picker sets `plumb:tourPending`).
+function runTour() {
+  if (document.querySelector('.tour-root')) return;
+  startTour({ onClose: () => { try { localStorage.setItem(`plumb:${currentUserId}:tourSeen`, '1'); } catch (e) { /* storage blocked */ } } });
+}
+document.getElementById('tourBtn').addEventListener('click', runTour);
+function maybeStartTour() {
+  try {
+    const pending = localStorage.getItem('plumb:tourPending');
+    if (!pending || pending !== currentUserId) return;
+    localStorage.removeItem('plumb:tourPending');
+    setTimeout(runTour, 1200); // let the page settle first
+  } catch (e) { /* storage blocked */ }
+}
+
 // ---- Init ----
 maybeSwitchDay();
 fetchAndApplyAppSettings();
 reconcileTodayFromCloud();
 loadWeeklyGoals();
+maybeStartTour();
 checkCallStatus();
 setInterval(checkCallStatus, CALL_POLL_MS);
 setInterval(() => {
