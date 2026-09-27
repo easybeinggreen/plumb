@@ -61,6 +61,21 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Logo and favicon (branch `feat/logo`, 2026-09-27)
+
+The owner's idea: combine the p and the b into a circle with a stem running up and down (and Pb is lead's chemical symbol,
+plumbum, the root of "plumb"). The mark is a circle with a vertical stem tangent to its left side that runs equally above it
+(the b) and below it (the p); it is also a plumb line and its bob, and it echoes the dot in the app. Geometry on a 64 grid:
+circle centre (37, 32), radius 15; stem x = 22 from y = 8 to 56; stroke 6.5, round caps. Colours are the app's: ink
+`#14403B` and cream `#F5F2EC`.
+- **Files (`public/`):** `favicon.svg` (cream mark on an ink rounded tile), `favicon-32.png`, `apple-touch-icon.png` (180px,
+  square: the phone rounds it), `logo.svg` (the mark alone in ink, for documents). The PNGs were drawn from the same geometry
+  with PIL; if the geometry changes, regenerate all four together.
+- **In the page:** the three icon links in `<head>` (Vite adds the `/plumb/` base), and the mark beside the wordmark in the
+  header, its box trimmed to the ink so its left edge lines up with the tagline. There was no favicon at all before.
+- Not verified: how the tab icon looks in a real browser tab (the pane has no tab strip); the files load and the paths
+  resolve. Not done: a manifest or larger install icons.
+
 ### Tips wording, the camera check, "Ready for the call" (branch `feat/tips-labels-and-ready`, 2026-09-27)
 
 - **Panel wording (owner):** the button reads "run 7 day summary"; the posture point is labelled "out of plumb activity"

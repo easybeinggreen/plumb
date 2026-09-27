@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>plumb — aligned for life</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Karla:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -41,7 +44,9 @@
 
   header { display: flex; align-items: flex-end; justify-content: space-between; padding: 26px 0 18px; gap: 16px; flex-wrap: wrap; }
   .brand { display: flex; flex-direction: column; gap: 2px; }
+  .wordmark-slot { display: flex; align-items: center; gap: 8px; }
   .wordmark-slot svg { height: 44px; width: auto; display: block; }
+  .wordmark-slot .brand-mark { height: 40px; }
   .strap { font-size: 13px; color: var(--ink-soft); font-weight: 400; }
   .btn-nav {
     font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--ink); background: transparent;
@@ -520,6 +525,9 @@
   <header>
     <div class="brand">
       <div class="wordmark-slot">
+        <svg class="brand-mark" viewBox="18.5 4.5 37 55" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Plumb">
+          <g fill="none" stroke="#14403B" stroke-width="6.5" stroke-linecap="round"><circle cx="37" cy="32" r="15"/><line x1="22" y1="8" x2="22" y2="56"/></g>
+        </svg>
         <svg viewBox="0 0 150 40" xmlns="http://www.w3.org/2000/svg">
           <text x="0" y="31" font-family="Space Grotesk" font-weight="600" font-size="34" fill="#14403B" letter-spacing="-0.5">plumb</text>
         </svg>
