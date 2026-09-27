@@ -65,14 +65,16 @@ if you're that reader, this file plus git log/PRs should be enough.
 
 The owner's idea: combine the p and the b into a circle with a stem running up and down (and Pb is lead's chemical symbol,
 plumbum, the root of "plumb"). The mark is a circle with a vertical stem tangent to its left side that runs equally above it
-(the b) and below it (the p); it is also a plumb line and its bob, and it echoes the dot in the app. Geometry on a 64 grid:
-circle centre (37, 32), radius 15; stem x = 22 from y = 8 to 56; stroke 6.5, round caps. Colours are the app's: ink
-`#14403B` and cream `#F5F2EC`.
-- **Files (`public/`):** `favicon.svg` (cream mark on an ink rounded tile), `favicon-32.png`, `apple-touch-icon.png` (180px,
-  square: the phone rounds it), `logo.svg` (the mark alone in ink, for documents). The PNGs were drawn from the same geometry
-  with PIL; if the geometry changes, regenerate all four together.
-- **In the page:** the three icon links in `<head>` (Vite adds the `/plumb/` base), and the mark beside the wordmark in the
-  header, its box trimmed to the ink so its left edge lines up with the tagline. There was no favicon at all before.
+(the b) and below it (the p); it is also a plumb line and its bob, and it echoes the dot in the app. **Version 2, at the
+owner's request: longer stems, and white on green everywhere** (the header shows the same green tile as the favicon, not a dark
+outline on the page). Geometry on a 64 tile: circle centre (32, 32), radius 14; stem x = 18 from y = 7 to 57 (11 units beyond
+the circle each way, was 9); stroke 6.5, round caps; the whole mark is centred in the tile. Colours: tile `#14403B` (the app's
+ink), mark `#FFFFFF`; the tile has 14-unit rounded corners.
+- **Files (`public/`):** `favicon.svg` and `logo.svg` (the same tile), `favicon-32.png`, `apple-touch-icon.png` (180px,
+  square: the phone rounds it). The PNGs were drawn from the same geometry with PIL; if the geometry changes, regenerate all
+  of them together and the inline SVG in the header.
+- **In the page:** the three icon links in `<head>` (Vite adds the `/plumb/` base), and the tile beside the wordmark in the
+  header (42px, level with the wordmark, its left edge on the tagline's). There was no favicon at all before.
 - Not verified: how the tab icon looks in a real browser tab (the pane has no tab strip); the files load and the paths
   resolve. Not done: a manifest or larger install icons.
 
