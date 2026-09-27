@@ -36,7 +36,7 @@ tool) and run the real client or workflow once. Direct SQL cannot catch a missin
 | `posture_daily_summary` | ~260 | select | select, insert, update | Nightly read-side cache of `posture_events` per (date, user, type). Written by `scripts/rollup-summary.cjs`. |
 | `hydration_events` | 34 | all | select | Each drink logged (`volume_ml`, `drink_type`). |
 | `light_readings` | ~280 | all | select | Ambient brightness/skew sample every ~5 min while tracking. |
-| `app_settings` | 1 | select, insert, update | none | One row per user: tolerances, timings, hydration sizes, plus `extras` jsonb (see below). |
+| `app_settings` | 1 | select, insert, update | select (added 2026-09-26: the weekly-analysis function reads the water target and working hours) | One row per user: tolerances, timings, hydration sizes, plus `extras` jsonb (see below). |
 | `weekly_goals` | 1 | select, insert, update | all | The Friday weekly analysis: `patterns`, `goals` (jsonb), `question`, the user's `user_response`. Unique on (user_id, week_start). |
 | `ai_summary` | 0 (new 2026-09-26) | select | select, insert, update | The Monday "ai summary" tab: one row per user (`summary` text, `stats` jsonb, `model`, `generated_at`). Written by `scripts/generate-summary.cjs` via OpenRouter; read by the report's "ai summary" tab. |
 | `calendar_events` | 21 | **none** | all | Meeting **times only** (never titles), `is_call` flag. Synced hourly from a private iCal link. |

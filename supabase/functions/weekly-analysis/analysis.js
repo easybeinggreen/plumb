@@ -6,10 +6,13 @@
 // Plain ES module using only fetch, so it runs unchanged in Node 22 and Deno.
 //
 // Aggregates the last 7 days of posture, hydration and ambient-light data per
-// user into hour-of-day buckets, asks a free OpenRouter model to describe how
-// the day tends to unfold and to propose goals, and upserts the result into
-// weekly_goals (unique on user_id + week_start) for the app to show and for
-// next week's run to reference for continuity.
+// user, works out the two things the owner cares about in code (when water is
+// drunk against the target, and whether slumping rises after lunch), asks a free
+// OpenRouter model for exactly TWO points, each a finding backed by numbers plus
+// one recommendation, and upserts the result into weekly_goals (unique on
+// user_id + week_start). The row keeps its old shape: `patterns` is two lines
+// ("hydration: <finding>"), `goals` is the two recommendations in the same order,
+// `question` and `tracker_reminder` are left empty.
 //
 // Uses OpenRouter's `openrouter/free` router. It used to be pinned to
 // deepseek/deepseek-v4-flash-0731:free (the most reliable of several tested),
@@ -138,6 +141,75 @@ function buildLightByHour(rows) {
   return out;
 }
 
+// Spreads a block across the Brisbane hours it covers, in whole-minute chunks.
+function spreadByHour(bucket, startIso, durationSec) {
+  const start = new Date(startIso).getTime();
+  if (!Number.isFinite(start)) return;
+  for (let t = 0; t < durationSec; t += 60) {
+    const h = new Date(start + t * 1000 + BRISBANE_OFFSET_MS).getUTCHours();
+    bucket[h] = (bucket[h] || 0) + Math.min(60, durationSec - t);
+  }
+}
+
+const pctOf = (n, d) => (d > 0 ? Math.round((Math.min(n, d) / d) * 100) : 0);
+
+// Slumping = neck dropping (compression) + sitting low. Left/right lean is reported separately: the
+// owner's view is that it is fine and the slump is the problem. Everything is worked out here, from the
+// raw rows, so the model quotes numbers instead of estimating them from an hourly table.
+export function buildSlumpSummary(postureRows, presenceRows) {
+  const trackedByHour = {}, neckByHour = {}, lowByHour = {};
+  let tracked = 0, neck = 0, low = 0, lateral = 0, leanIn = 0;
+  presenceRows.forEach((r) => { const d = r.duration_seconds || 0; tracked += d; if (r.start_time) spreadByHour(trackedByHour, r.start_time, d); });
+  postureRows.forEach((r) => {
+    const d = r.duration_seconds || 0;
+    if (r.type === 'compression') { neck += d; if (r.start_time) spreadByHour(neckByHour, r.start_time, d); }
+    else if (r.type === 'sitting_low') { low += d; if (r.start_time) spreadByHour(lowByHour, r.start_time, d); }
+    else if (r.type === 'lateral_left' || r.type === 'lateral_right') lateral += d;
+    else if (r.type === 'lean_in') leanIn += d;
+  });
+  if (tracked < 3600) return null;
+  const period = (from, to) => {
+    let t = 0, n = 0, l = 0;
+    for (let h = from; h <= to; h++) { t += trackedByHour[h] || 0; n += neckByHour[h] || 0; l += lowByHour[h] || 0; }
+    return t >= 1800 ? { trackedMin: Math.round(t / 60), slumpPct: pctOf(n + l, t), neckDroppingPct: pctOf(n, t), sittingLowPct: pctOf(l, t) } : null;
+  };
+  const byHour = Object.keys(trackedByHour).map(Number).sort((a, b) => a - b).filter((h) => trackedByHour[h] >= 1800)
+    .map((h) => ({ hour: h, trackedMin: Math.round(trackedByHour[h] / 60), slumpPct: pctOf((neckByHour[h] || 0) + (lowByHour[h] || 0), trackedByHour[h]) }));
+  return {
+    trackedHours: Math.round(tracked / 360) / 10,
+    shareOfTrackedTimePct: { slumping: pctOf(neck + low, tracked), neckDropping: pctOf(neck, tracked), sittingLow: pctOf(low, tracked), leaningLeftOrRight: pctOf(lateral, tracked), leaningIn: pctOf(leanIn, tracked) },
+    morning_before_12: period(5, 11),
+    lunchtime_12_to_1pm: period(12, 12),
+    afternoon_1pm_to_6pm: period(13, 18),
+    byHour
+  };
+}
+
+// When water is drunk, against the target. Days are the days tracking ran, so a day with no water
+// logged counts as zero rather than being ignored.
+export function buildHydrationSummary(rows, { targetMl, startHour, endHour, trackedDays }) {
+  const perDay = {};
+  rows.forEach((r) => {
+    const h = brisbaneHour(r.logged_at), v = r.volume_ml || 0;
+    const d = perDay[r.date] || (perDay[r.date] = { total: 0, before12: 0, noonTo3: 0, from3: 0, byEnd: 0 });
+    d.total += v;
+    if (h < 12) d.before12 += v; else if (h < 15) d.noonTo3 += v; else d.from3 += v;
+    if (h < endHour) d.byEnd += v;
+  });
+  const days = Math.max(trackedDays, Object.keys(perDay).length);
+  if (days === 0) return null;
+  const sum = (k) => Object.values(perDay).reduce((a, d) => a + d[k], 0);
+  const avg = (k) => Math.round(sum(k) / days);
+  const total = sum('total');
+  return {
+    daysTracked: days, daysWithAnyWaterLogged: Object.keys(perDay).length,
+    dailyTargetMl: targetMl, workingHours: `${String(startHour).padStart(2, '0')}:00 to ${String(endHour).padStart(2, '0')}:00`,
+    averageLoggedPerDayMl: avg('total'), averagePctOfTarget: targetMl > 0 ? pctOf(avg('total'), targetMl) : null,
+    averageMl: { before_noon: avg('before12'), noon_to_3pm: avg('noonTo3'), from_3pm: avg('from3'), by_end_of_working_day: avg('byEnd') },
+    shareOfWaterDrunkBeforeNoonPct: total > 0 ? pctOf(sum('before12'), total) : null
+  };
+}
+
 function buildSystemPrompt() {
   return `You are writing a private weekly reflection for someone using Plumb, a self-tracking posture/hydration/ambient-light app. You are not a doctor -- never diagnose a condition, never make clinical claims. This is a casual self-tracking tool, not a health device. Never invent a pattern the numbers don't actually support -- if something is ambiguous or a domain's data is too sparse to say anything real, say so plainly instead of overstating it.
 
@@ -145,25 +217,27 @@ Critical: the posture data is summed across the whole week, which can make one u
 
 Critical: the ambient-light data includes "n", the number of readings that hour's average is built from. An hour with only 1-2 readings can average out to an extreme value purely by chance (one reading taken right as the camera started, or briefly covered) and look like a dramatic standout next to hours built from 15-25 readings -- that is noise, not a lighting pattern, no matter how extreme the number looks. Only treat an hour's brightness/skew as meaningful if it has a reasonable sample count roughly in line with neighboring hours (as a rule of thumb, treat anything under 5 readings as too sparse to draw a conclusion from) -- otherwise leave that hour out of the light pattern entirely rather than naming it as "the" bright or dark hour.
 
-Style for the "patterns" field: it must be SHORT and scannable, not a paragraph. Exactly three labelled lines, in this order, each on its own line and each starting with its label: "posture: ", "hydration: ", "light: ". Each line is at most two short sentences (aim for under 30 words total per line). Lead with the single most useful finding for that domain; skip everything else. Plain, concrete, everyday language -- no report tone, no poetry. Do not invent casual-sounding metaphors, slang, or filler phrases to sound relatable (e.g. never write things like "stacks into a long hunchy block," "gets sticky," "rolls in," "a quiet pocket") -- if a sentence would only make sense as a vibe rather than a literal description, rewrite it as a literal description instead. Never use the raw state identifiers (lateral_left, lateral_right, compression, lean_in, sitting_low) in any output field -- write them in plain words: leaning left, leaning right, neck dropping, leaning in toward the screen, sitting low in the chair. Do not list every posture state -- only mention the one that matters most, plus at most one short clause on the rest. At most one specific number per line, only when it strengthens the point. Do not recite the data back.
+What to write: exactly TWO points, most useful first. Each point is a FINDING backed by the numbers you were given, followed by one RECOMMENDATION. The person wants to be told what to do, not shown a report. Choose the two points that matter most from: when water is drunk against the daily target, slumping (neck dropping and sitting low) and whether it gets worse after lunch, breaks, and light. Unless the numbers clearly show something more important, make them hydration and slumping. Left/right leaning is not a problem to raise unless it is large (over about 15% of tracked time).
+
+What the owner has said about themselves, as context: they tend to drink mostly in the morning and reach the end of the day under their target, and they tend to slump after lunch. Use these ONLY if this week's numbers support them, and never state one without quoting the number that shows it. If the numbers say otherwise, say what they do show. Recommendations you may use when the numbers justify them: keep drinking through the afternoon (say roughly how much and by when), recalibrate after lunch (the app also re-sets the sitting height itself after a break of a minute or more), and take a short break at regular intervals through the afternoon.
+
+Make each finding a comparison, not a lone figure. For slumping, compare the slumping percentage before 12 with the percentage after 1pm (morning_before_12 against afternoon_1pm_to_6pm), with neck dropping alongside. For water, lead with how much was drunk by the end of the working day against the daily target (averageMl.by_end_of_working_day), then the share drunk before noon; do not lead with the overall daily average, which can look fine while the day's timing is not.
+
+Rules for the words: a finding is one or two short sentences and must contain at least one concrete figure from the data (a percentage, an amount in ml, an hour). A recommendation is ONE sentence under 25 words: a specific action with a time, an amount or a trigger, not generic advice. Plain, concrete, everyday language, no report tone, no metaphors or slang. Never use the raw state identifiers (lateral_left, lateral_right, compression, lean_in, sitting_low) in any output: write neck dropping, sitting low in the chair, leaning left or right, leaning in. "Sitting low" can read higher than the truth on days before 26 September 2026 because of a calibration drift; neck dropping is the steadier signal, so when you cite sitting low, cite neck dropping alongside it, and do not build a recommendation on sitting low alone. If a point's data is too thin to say anything real, say so plainly in that point instead of inventing a pattern.
 
 Respond with strict JSON only, matching the schema given, no markdown fencing, no other text.`;
 }
 
-function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, coverage, lastWeek }) {
-  const dataBlock = `Data coverage this week: tracking was running on ${coverage.daysTracked} of 7 days, about ${coverage.hoursTracked} hours in total. Treat anything under roughly 25 tracked hours as a thin week and say so.\n\nPosture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are slouch/problem states -- none of them is good posture, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
+function buildUserPrompt({ postureByHour, dailyPeaks, hydrationByHour, lightByHour, coverage, lastWeek, slump, hydration }) {
+  const summaries = `Slumping summary (worked out from the raw data; quote these numbers): ${JSON.stringify(slump)}\n\nWater summary (worked out from the raw data; quote these numbers): ${JSON.stringify(hydration)}\n\n`;
+  const dataBlock = `${summaries}Data coverage this week: tracking was running on ${coverage.daysTracked} of 7 days, about ${coverage.hoursTracked} hours in total. Treat anything under roughly 25 tracked hours as a thin week and say so.\n\nPosture data: seconds spent in each state, by hour of day (24h, local time), summed across the week -- see the daily-peaks list below before drawing conclusions from this, since a week-long sum can hide day-to-day inconsistency. All five states (lateral_left, lateral_right, compression, lean_in, sitting_low) are slouch/problem states -- none of them is good posture, so more time in any of them at a given hour is worse, not a recovery from another one:\n${JSON.stringify(postureByHour)}\n\nDaily peaks: for each state, only the days with a meaningful amount of that state (under a minute or two total that day is omitted as noise), which hour was worst that specific day:\n${JSON.stringify(dailyPeaks)}\n\nHydration: total ml logged, by hour of day, summed across the week:\n${JSON.stringify(hydrationByHour)}\n\nAmbient light: average brightness (0=dark, 1=bright), average left/right skew (positive=brighter on right), and "n" = how many readings that hour's average came from, by hour of day -- see the instructions above about treating low-n hours as noise, not pattern:\n${JSON.stringify(lightByHour)}`;
 
   const continuity = lastWeek
-    ? `\n\nLast week's goals were: ${JSON.stringify(lastWeek.goals)}. They were asked: "${lastWeek.question}" and replied: "${lastWeek.user_response || '(no reply logged)'}". Take that into account if it's relevant -- don't repeat a goal they already addressed or rejected without acknowledging it.`
+    ? `\n\nLast week's recommendations were: ${JSON.stringify(lastWeek.goals)}. Take that into account if it is relevant: if the numbers show the same problem again, say it has continued rather than presenting it as new.`
     : '';
 
-  const task = `Using only the data above, write:
-1. "patterns": a single string of exactly three lines separated by newline characters, "posture: ...", "hydration: ...", "light: ..." -- following the strict brevity and style rules above.
-2. "goals": exactly 3 actions, in the order posture, hydration, light. Each is ONE sentence under 25 words: a specific action with a time or trigger. Each must be tied to a real, cross-day-consistent pattern (not generic advice, not built on a single outlier day or a low-n light hour). If a domain's pattern is too weak or sparse to justify an action, make that slot a short "keep tracking" style goal saying what data is missing, instead of inventing one. Do not include an alarm/reminder instruction unless it is a plain time of day the person can act on themselves.
-3. "question": one short question inviting the person to confirm, adjust, or reject one of the three goals -- answerable in a sentence.
-4. "trackerReminder": one short sentence. State the actual data coverage given above (days tracked out of 7, roughly how many hours) and say plainly that the app needs to be running most of the day for the analysis to be reliable.
-
-Respond as JSON: {"patterns": string, "goals": [string, string, string], "question": string, "trackerReminder": string}`;
+  const task = `Using only the data above, write exactly two points as JSON: {"points": [{"label": string, "finding": string, "recommendation": string}, {"label": string, "finding": string, "recommendation": string}]}
+"label" is one lowercase word for the topic ("hydration", "posture", "breaks" or "light"). Follow the rules above for findings and recommendations.`;
 
   return `${dataBlock}${continuity}\n\n${task}`;
 }
@@ -181,15 +255,17 @@ function extractJson(raw) {
 }
 
 function validateAnalysis(p) {
-  const okGoals = Array.isArray(p?.goals) && p.goals.length === 3 && p.goals.every((g) => typeof g === 'string' && g.trim());
-  if (typeof p?.patterns !== 'string' || !p.patterns.trim() || !okGoals || typeof p?.question !== 'string') {
-    throw new Error('reply was missing patterns, three goals or a question');
-  }
+  const pts = p && p.points;
+  const ok = Array.isArray(pts) && pts.length === 2 && pts.every((x) => x
+    && typeof x.label === 'string' && x.label.trim()
+    && typeof x.finding === 'string' && x.finding.trim()
+    && typeof x.recommendation === 'string' && x.recommendation.trim());
+  if (!ok) throw new Error('reply did not contain exactly two points, each with a finding and a recommendation');
   return {
-    patterns: p.patterns.trim(),
-    goals: p.goals.map((g) => g.trim()),
-    question: p.question.trim(),
-    trackerReminder: typeof p.trackerReminder === 'string' ? p.trackerReminder.trim() : ''
+    patterns: pts.map((x) => `${x.label.trim().toLowerCase()}: ${x.finding.trim()}`).join('\n'),
+    goals: pts.map((x) => x.recommendation.trim()),
+    question: '',
+    trackerReminder: ''
   };
 }
 
@@ -265,7 +341,7 @@ export async function generateWeeklyAnalysis({
   log.log(`Analyzing week ${weekStart} to ${weekEnd}${userId ? ` for ${userId}` : ''}`);
   const uf = userId ? `&user_id=eq.${encodeURIComponent(userId)}` : '';
 
-  const presenceRows = await fetchAll(url, key, `posture_events?select=user_id,date,duration_seconds&date=gte.${weekStart}&date=lte.${weekEnd}&type=eq.presence${uf}`);
+  const presenceRows = await fetchAll(url, key, `posture_events?select=user_id,date,start_time,duration_seconds&date=gte.${weekStart}&date=lte.${weekEnd}&type=eq.presence${uf}`);
   const coverageByUser = {};
   presenceRows.forEach((r) => {
     const c = coverageByUser[r.user_id] || (coverageByUser[r.user_id] = { days: new Set(), seconds: 0 });
@@ -273,10 +349,11 @@ export async function generateWeeklyAnalysis({
     c.seconds += r.duration_seconds || 0;
   });
 
-  const [allPostureRows, hydrationRows, lightRows] = await Promise.all([
+  const [allPostureRows, hydrationRows, lightRows, settingsRows] = await Promise.all([
     fetchAll(url, key, `posture_events?select=user_id,type,date,start_time,duration_seconds&date=gte.${weekStart}&date=lte.${weekEnd}&type=in.(${POSTURE_TYPES.join(',')})${uf}`),
-    fetchAll(url, key, `hydration_events?select=user_id,logged_at,volume_ml&date=gte.${weekStart}&date=lte.${weekEnd}${uf}`),
-    fetchAll(url, key, `light_readings?select=user_id,logged_at,brightness,skew&date=gte.${weekStart}&date=lte.${weekEnd}${uf}`)
+    fetchAll(url, key, `hydration_events?select=user_id,date,logged_at,volume_ml&date=gte.${weekStart}&date=lte.${weekEnd}${uf}`),
+    fetchAll(url, key, `light_readings?select=user_id,logged_at,brightness,skew&date=gte.${weekStart}&date=lte.${weekEnd}${uf}`),
+    fetchAll(url, key, `app_settings?select=user_id,hydration_target_ml,extras${uf}`)
   ]);
   // A single unbroken slouch block over 2 hours is not real posture data: the app used to
   // log the whole time a laptop was asleep as one block (a 15-hour "compression" event on
@@ -315,7 +392,16 @@ export async function generateWeeklyAnalysis({
         hydrationByHour: hydrationByUserHour[uid] || {},
         lightByHour: lightByUserHour[uid] || {},
         coverage: { daysTracked: coverage.days.size, hoursTracked: Math.round(coverage.seconds / 360) / 10 },
-        lastWeek: lastRows[0] || null
+        lastWeek: lastRows[0] || null,
+        slump: buildSlumpSummary(postureRows.filter((r) => r.user_id === uid), presenceRows.filter((r) => r.user_id === uid)),
+        hydration: (() => {
+          const st = settingsRows.find((r) => r.user_id === uid) || {};
+          const pace = (st.extras && st.extras.hydrationPace) || {};
+          const hourOf = (hhmm, dflt) => { const m = /^(\d{1,2}):\d{2}$/.exec(hhmm || ''); return m ? Number(m[1]) : dflt; };
+          return buildHydrationSummary(hydrationRows.filter((r) => r.user_id === uid), {
+            targetMl: st.hydration_target_ml || 1000, startHour: hourOf(pace.start, 8), endHour: hourOf(pace.end, 16), trackedDays: coverage.days.size
+          });
+        })()
       }, { attemptMs, budgetMs, attempts, parallel, log });
 
       // Upsert on (user_id, week_start): regenerating the same week replaces that
