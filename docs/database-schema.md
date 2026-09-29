@@ -49,7 +49,9 @@ Columns worth knowing (not exhaustive):
   `type`, `duration_seconds`, `user_id` (default `'default'`), `ended_by`, `kind`,
   `pre_break_sitting_seconds`, `lateness_seconds`, `device_label`.
 - `app_settings`: `tolerance` (lateral), `compression`, `lean`, `sink`, `sustain`,
-  `break_interval`, `stillness`, `hydration_target_ml`, `glass_ml`, `mug_ml`, `can_ml`,
+  `nudge_cooldown_sec` (added 2026-09-29: minimum seconds between repeated spoken posture nudges,
+  UI range 0-60, default 30; null on rows saved before this column existed, which the app treats as
+  the default), `break_interval`, `stillness`, `hydration_target_ml`, `glass_ml`, `mug_ml`, `can_ml`,
   `bottle_ml`, `updated_at`, `user_id`, `extras jsonb`.
 - `app_settings.extras` (jsonb, added 2026-09-20) holds settings that sync across
   devices: `hydrationPace {on,start,end}`, `reminders [ {id,text,kind,time,everyMin,weekdaysOnly,enabled} ]`,
