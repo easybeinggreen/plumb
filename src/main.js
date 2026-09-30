@@ -2106,18 +2106,42 @@ function logPresenceDiag(lm, why) {
 }
 window.plumbPresenceDiag = () => JSON.parse(localStorage.getItem(PRESENCE_DIAG_KEY) || '[]');
 
+// #overlay is CSS-mirrored (scaleX(-1), for the selfie view), which reads plain fillText() as
+// mirror-written -- confirmed by the owner during a real calibration. The fix draws the text
+// normally onto this small offscreen canvas (created once, reused every frame rather than
+// reallocated at ~60fps), then stamps that whole image onto the main canvas through a local
+// flip: translate to the box's raw top-right corner, then scale(-1,1), so the image lands
+// filling the exact same raw region the box background does. That local flip mirrors the
+// already-normal text once; the outer CSS mirror then mirrors it a second time back to
+// normal, landing in the same on-screen corner as before. (A direct fillText()-under-
+// scale(-1,1) was tried first and rejected: it also reverses the direction text advances in,
+// so it draws mostly off the edge of the box instead of filling it -- verified with a standalone
+// side-by-side test before touching this function a second time.)
+const READOUT_BOX = { w: 130, lineH: 14, pad: 6 };
+READOUT_BOX.h = 3 * READOUT_BOX.lineH + READOUT_BOX.pad * 2 - 4; // 3 lines, matches `lines` below
+const readoutCanvas = document.createElement('canvas');
+readoutCanvas.width = READOUT_BOX.w;
+readoutCanvas.height = READOUT_BOX.h;
+const readoutCtx = readoutCanvas.getContext('2d');
 function drawExperimentalReadout(eyeTilt, eyeDist, noseOff) {
-  ctx.font = '11px Karla, sans-serif';
   const lines = [
     `eye tilt: ${eyeTilt.toFixed(1)}°`,
     `eye dist: ${eyeDist.toFixed(3)}`,
     `nose off: ${noseOff.x.toFixed(3)}, ${noseOff.y.toFixed(3)}`
   ];
-  const boxW = 130, lineH = 14, pad = 6;
+  const { w: boxW, lineH, pad, h } = READOUT_BOX;
   ctx.fillStyle = 'rgba(10,38,38,0.65)';
-  ctx.fillRect(6, 6, boxW, lines.length * lineH + pad * 2 - 4);
-  ctx.fillStyle = '#F0DAC7';
-  lines.forEach((line, i) => ctx.fillText(line, 6 + pad, 6 + pad + lineH * (i + 1) - 4));
+  ctx.fillRect(6, 6, boxW, h);
+
+  readoutCtx.clearRect(0, 0, boxW, h);
+  readoutCtx.font = '11px Karla, sans-serif';
+  readoutCtx.fillStyle = '#F0DAC7';
+  lines.forEach((line, i) => readoutCtx.fillText(line, pad, pad + lineH * (i + 1) - 4));
+  ctx.save();
+  ctx.translate(6 + boxW, 6);
+  ctx.scale(-1, 1);
+  ctx.drawImage(readoutCanvas, 0, 0);
+  ctx.restore();
   // Both callers of this (alignPreviewFrame during the pre-tracking
   // countdown, and the main loop once tracking's live) already compute
   // these values every frame -- feeding the wizard's diagram from here
