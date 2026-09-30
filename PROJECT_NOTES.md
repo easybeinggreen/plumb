@@ -62,6 +62,30 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Calibration debug readout was drawing mirror-written text (branch `fix/readout-mirrored-text`,
+2026-09-30, demo day)
+
+The owner reported the small numbers box in the top-right, visible only while calibrating (the raw camera
+view -- `#overlay` -- is only ever shown then; once tracking starts it's hidden off-screen), was "back to
+front." Real cause: `#overlay` has `transform: scaleX(-1)` (the selfie mirror), and
+`drawExperimentalReadout()` was drawing plain `fillText()` onto it, which the CSS mirror then displays as
+mirror-written (backwards) text -- the box's position was already correct (raw-left draws to screen-right,
+which is why it appears top-RIGHT), only the glyphs themselves read backwards.
+- **Fix:** the three lines are now rendered normally onto a small offscreen canvas (created once, reused
+  every frame rather than reallocated at ~60fps), then stamped onto the real canvas through a local flip
+  (translate to the box's raw top-right corner, then `scale(-1,1)`) sized to land in the exact same raw
+  region the background box already occupies. That local flip plus the outer CSS flip cancel out, so it
+  reads normally in the same on-screen corner as before -- position and everything else on screen
+  deliberately untouched, as asked.
+- **A first attempt (`ctx.scale(-1,1)` directly around the existing `fillText` calls) was tried and
+  rejected before shipping anything:** it also reverses the direction the text advances in, so most of each
+  line draws off the edge of the box instead of filling it. Caught with a standalone side-by-side test
+  (three canvases, the real code paths, served over a local HTTP server so the script actually ran) before
+  touching `main.js` a second time, not by guessing.
+- **Verified:** the exact shipped code, copied verbatim into that same standalone test, renders correctly
+  -- confirmed by screenshot. Not verified with the real camera/landmarks (no webcam in this environment);
+  the owner should glance at it on the next calibration.
+
 ### Logo and favicon (branch `feat/logo`, 2026-09-27)
 
 The owner's idea: combine the p and the b into a circle with a stem running up and down (and Pb is lead's chemical symbol,
