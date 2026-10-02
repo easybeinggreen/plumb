@@ -1002,7 +1002,13 @@
 
 <div class="modal-overlay open" id="userModalOverlay">
   <div class="modal" style="max-width: 360px;">
-    <h2 class="modal-title">Welcome to Plumb — please enter your name</h2>
+    <h2 class="modal-title" id="userModalTitle">Welcome to Plumb — please enter your name</h2>
+    <div id="userMobileStep" hidden>
+      <p style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;">
+        Plumb watches your posture through a webcam while you sit at a desk, and keeps an always-on-top window open alongside your work — neither of those is something a phone can do. It's built for a desktop or laptop with a webcam.
+      </p>
+      <button id="userMobileContinueBtn" class="link-btn" type="button" style="font-size: 12.5px;">I'm on a desktop with a webcam — continue anyway</button>
+    </div>
     <div id="userNameStep">
       <p style="font-size: 13px; color: var(--ink-soft); margin: -8px 0 16px; line-height: 1.5;">
         New here, you'll choose a 4-digit PIN. Coming back, type the same name and your PIN, on any device, and your stats follow you. The PIN stops someone else signing in as you; it isn't encryption.

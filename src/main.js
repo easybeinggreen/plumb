@@ -2618,6 +2618,28 @@ function showUserPicker() {
   const nameError = document.getElementById('userNameError');
   const knownList = document.getElementById('userKnownList');
   const continueBtn = document.getElementById('userContinueBtn');
+  const modalTitle = document.getElementById('userModalTitle');
+  const mobileStep = document.getElementById('userMobileStep');
+  const mobileContinueBtn = document.getElementById('userMobileContinueBtn');
+  const nameStep = document.getElementById('userNameStep');
+
+  // The core feature is a webcam pointed at a desk plus a desktop-only always-on-top window
+  // (documentPictureInPicture), so a phone has nothing to actually show. Warn once per device
+  // rather than let someone type a name and set a PIN before discovering that.
+  const isPhoneOrTablet = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const mobileWarningSeen = localStorage.getItem('plumb:mobileWarningSeen') === '1';
+  if (isPhoneOrTablet && !mobileWarningSeen) {
+    modalTitle.textContent = "You're on a phone";
+    mobileStep.hidden = false;
+    nameStep.hidden = true;
+    mobileContinueBtn.addEventListener('click', () => {
+      localStorage.setItem('plumb:mobileWarningSeen', '1');
+      mobileStep.hidden = true;
+      modalTitle.textContent = 'Welcome to Plumb — please enter your name';
+      nameStep.hidden = false;
+      input.focus();
+    }, { once: true });
+  }
 
   const known = JSON.parse(localStorage.getItem('plumb:knownUsers') || '[]');
   const deviceKnows = (name) => known.some((k) => String(k).toLowerCase() === name.toLowerCase());
@@ -2675,7 +2697,7 @@ function showUserPicker() {
   continueBtn.addEventListener('click', () => submit(input.value));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(input.value); });
   overlay.classList.add('open');
-  input.focus();
+  if (!(isPhoneOrTablet && !mobileWarningSeen)) input.focus();
 }
 
 // Someone already signed in from before PINs existed has a name with data but no PIN, which anyone could

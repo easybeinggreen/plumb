@@ -62,6 +62,37 @@ if you're that reader, this file plus git log/PRs should be enough.
   mascot); the app's own vocabulary is **plumb / out of plumb**; spoken lines avoid the word "posture" (mispronounced
   by every voice); popup small and stacked with the text below; message in green with orange text; free tier only.
 
+### Mobile sign-in notice (branch `feat/mobile-sign-in-notice`, 2026-10-02)
+
+The demo link was shared with judges on 2026-10-01. Checked Supabase's raw API access logs (`query_logs`,
+`edge_logs`) afterwards, since GitHub Pages itself keeps no access log at all: three genuinely distinct
+devices (different city, ISP, OS/browser fingerprint -- not the owner's own Brisbane connection, and not a
+VPN hopping cities while polling the owner's own signed-in data, which is a separate pattern also present in
+the logs) loaded the page around the likely demo window, but none of them ever called `plumb_check_name` --
+meaning nobody typed a name and pressed continue. Two of the three were a phone (Android) and an iPhone.
+That matters because Plumb's actual feature -- a webcam pointed at a desk, plus an always-on-top window via
+`documentPictureInPicture` (`main.js` `requestWindow()`, guarded by `'documentPictureInPicture' in window`,
+which is false on every phone) -- has nothing to show on a phone even after a perfect sign-in. The app had
+zero device detection anywhere, so a phone visitor got the identical "type your name, now invent a PIN"
+modal as a desktop visitor, with no hint they were on the wrong device until after paying that cost.
+- **Fix:** `showUserPicker()` in `main.js` now checks `navigator.userAgent` against
+  `/Android|iPhone|iPad|iPod|Mobile/i` before showing the name step. On a match (once per device --
+  `localStorage['plumb:mobileWarningSeen']`), a new `#userMobileStep` panel explains the webcam/desktop
+  requirement instead, with a "continue anyway" link for the rare legitimate case (e.g. a touch laptop)
+  that reveals the normal name step and remembers the choice. Desktop UAs are unaffected -- go straight to
+  the existing name step exactly as before.
+- **Verified:** built and served locally under a `/plumb/` path prefix (the GitHub Pages base path -- an
+  earlier attempt serving `dist/` at root silently 404'd the module script, which looked like the new code
+  wasn't running at all until the 404s were noticed in the console). Confirmed via emulated mobile UA +
+  touch viewport: the phone notice shows, "continue anyway" reveals the name step and sets the
+  once-per-device flag. Confirmed via desktop UA: unchanged, straight to the name step. Not verified on a
+  real phone.
+- **Not chased down:** the one genuinely desktop drop-off in the same log data (Mac, Chrome, Sydney,
+  Starlink, ~14 requests over 30s then nothing) -- this fix doesn't address that one. If it recurs, the
+  earlier theory (committing to a name + inventing a PIN before seeing anything at all is real friction for
+  someone briefly evaluating) is still the live hypothesis; a "look around before signing in" path would be
+  the next thing to try, separate from this change.
+
 ### Calibration debug readout was drawing mirror-written text (branch `fix/readout-mirrored-text`,
 2026-09-30, demo day)
 
