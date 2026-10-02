@@ -87,6 +87,7 @@ const compressionToleranceSlider = document.getElementById('compressionTolerance
 const leanToleranceSlider = document.getElementById('leanToleranceSlider');
 const sinkToleranceSlider = document.getElementById('sinkToleranceSlider');
 const sustainSlider = document.getElementById('sustainSlider');
+const nudgeCooldownSlider = document.getElementById('nudgeCooldownSlider');
 const breakSlider = document.getElementById('breakSlider');
 const stillnessSlider = document.getElementById('stillnessSlider');
 const toleranceVal = document.getElementById('toleranceVal');
@@ -94,6 +95,7 @@ const compressionToleranceVal = document.getElementById('compressionToleranceVal
 const leanToleranceVal = document.getElementById('leanToleranceVal');
 const sinkToleranceVal = document.getElementById('sinkToleranceVal');
 const sustainVal = document.getElementById('sustainVal');
+const nudgeCooldownVal = document.getElementById('nudgeCooldownVal');
 const breakVal = document.getElementById('breakVal');
 const stillnessVal = document.getElementById('stillnessVal');
 
@@ -188,7 +190,9 @@ let lastMovementAt = null;
 let lastStillnessNudgeAt = 0;
 let lastBreakNudgeAt = 0;
 const STILLNESS_MOVE_THRESHOLD = 0.03;
-const POSTURE_NUDGE_COOLDOWN_MS = 30 * 1000; // was 5000ms -- see comment at its use in loop()
+// The minimum gap between repeated posture nudges used to be a fixed 30s (itself raised from an
+// earlier 5s that read as relentless nagging during a long slouch) -- now the "repeat nudge gap"
+// slider in Settings, read live in loop() same as the other tolerances/timings.
 
 // ---- Directional brightness ----
 // Sampled off the same video frame everything else already reads, split
@@ -4562,12 +4566,12 @@ function loop() {
           : currentType === 'sitting_low' ? 'sitting low'
           : 'leaning in';
         setStatus(dur > sus ? 'sustained' : 'mild', label, `${Math.round(dur / 1000)}s and counting`);
-        // At least POSTURE_NUDGE_COOLDOWN_MS between repeated posture nudges --
-        // this used to be 5000ms, which read as relentless nagging every 5s
-        // while a sustained slouch held (the user's own words: "keeps
-        // rolling"). Break (60s) and stillness (60s) nudges were already
-        // fine; this was the one actually out of step with the rest.
-        if (dur > sus && Date.now() - lastPostureNudgeAt > POSTURE_NUDGE_COOLDOWN_MS) {
+        // The gap before a REPEAT nudge, adjustable in Settings ("repeat nudge gap"; 0-60s).
+        // Separate from `sus` above (which gates the FIRST nudge and the ring's own "sustained"
+        // pulse, unaffected by this). At 0 there is no floor left, so a held slouch can nudge on
+        // nearly every frame -- that's a real consequence of 0, not a bug, see its "i" tooltip.
+        const nudgeCooldownMs = Number(nudgeCooldownSlider.value) * 1000;
+        if (dur > sus && Date.now() - lastPostureNudgeAt > nudgeCooldownMs) {
           let phrase;
           if (currentType === 'compression') { phrase = SLUMP_PHRASES[slumpIdx % SLUMP_PHRASES.length]; slumpIdx++; }
           else if (currentType === 'lateral_left') { phrase = LEFT_PHRASES[leftIdx % LEFT_PHRASES.length]; leftIdx++; }
@@ -4876,6 +4880,7 @@ function loadTuning() {
     if (saved.lean !== undefined) leanToleranceSlider.value = saved.lean;
     if (saved.sink !== undefined) sinkToleranceSlider.value = saved.sink;
     if (saved.sustain !== undefined) sustainSlider.value = saved.sustain;
+    if (saved.nudgeCooldown !== undefined) nudgeCooldownSlider.value = saved.nudgeCooldown;
     if (saved.breakInterval !== undefined) breakSlider.value = saved.breakInterval;
     if (saved.stillness !== undefined) stillnessSlider.value = saved.stillness;
   } catch (e) { console.warn(e); }
@@ -4889,6 +4894,7 @@ function saveTuning(col) {
     lean: leanToleranceSlider.value,
     sink: sinkToleranceSlider.value,
     sustain: sustainSlider.value,
+    nudgeCooldown: nudgeCooldownSlider.value,
     breakInterval: breakSlider.value,
     stillness: stillnessSlider.value
   }));
@@ -4913,6 +4919,7 @@ function settingColumnValue(col) {
     case 'lean': return Number(leanToleranceSlider.value);
     case 'sink': return Number(sinkToleranceSlider.value);
     case 'sustain': return Number(sustainSlider.value);
+    case 'nudge_cooldown_sec': return Number(nudgeCooldownSlider.value);
     case 'break_interval': return Number(breakSlider.value);
     case 'stillness': return Number(stillnessSlider.value);
     case 'hydration_target_ml': return hydrationTargetMl;
@@ -4976,6 +4983,7 @@ async function fetchAndApplyAppSettings() {
     if (s.lean != null) leanToleranceSlider.value = s.lean;
     if (s.sink != null) sinkToleranceSlider.value = s.sink;
     if (s.sustain != null) sustainSlider.value = s.sustain;
+    if (s.nudge_cooldown_sec != null) nudgeCooldownSlider.value = s.nudge_cooldown_sec;
     if (s.break_interval != null) breakSlider.value = s.break_interval;
     if (s.stillness != null) stillnessSlider.value = s.stillness;
     if (s.hydration_target_ml != null) { hydrationTargetMl = s.hydration_target_ml; localStorage.setItem(HYDRATION_TARGET_KEY, String(hydrationTargetMl)); }
@@ -5002,7 +5010,8 @@ async function fetchAndApplyAppSettings() {
     }
     localStorage.setItem(TUNING_KEY, JSON.stringify({
       tolerance: toleranceSlider.value, compression: compressionToleranceSlider.value, lean: leanToleranceSlider.value,
-      sink: sinkToleranceSlider.value, sustain: sustainSlider.value, breakInterval: breakSlider.value, stillness: stillnessSlider.value
+      sink: sinkToleranceSlider.value, sustain: sustainSlider.value, nudgeCooldown: nudgeCooldownSlider.value,
+      breakInterval: breakSlider.value, stillness: stillnessSlider.value
     }));
     // Repaint everything that reads these values so a remote-newer setting shows immediately.
     toleranceVal.textContent = toleranceSlider.value;
@@ -5010,11 +5019,12 @@ async function fetchAndApplyAppSettings() {
     leanToleranceVal.textContent = leanToleranceSlider.value;
     sinkToleranceVal.textContent = sinkToleranceSlider.value;
     sustainVal.textContent = `${sustainSlider.value}s`;
+    nudgeCooldownVal.textContent = `${nudgeCooldownSlider.value}s`;
     breakVal.textContent = `${breakSlider.value} min`;
     stillnessVal.textContent = `${stillnessSlider.value} min`;
     hydrationTargetInput.value = hydrationTargetMl;
     Object.entries(hydrationSizeInputs).forEach(([key, input]) => { input.value = hydrationSizes[key]; hydrationButtons[key].title = `${key} — ${hydrationSizes[key]}ml`; });
-    [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
+    [toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, nudgeCooldownSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
     renderHydration();
   } catch (err) {
     console.warn('fetchAndApplyAppSettings:', err);
@@ -5032,10 +5042,11 @@ compressionToleranceVal.textContent = compressionToleranceSlider.value;
 leanToleranceVal.textContent = leanToleranceSlider.value;
 sinkToleranceVal.textContent = sinkToleranceSlider.value;
 sustainVal.textContent = `${sustainSlider.value}s`;
+nudgeCooldownVal.textContent = `${nudgeCooldownSlider.value}s`;
 breakVal.textContent = `${breakSlider.value} min`;
 stillnessVal.textContent = `${stillnessSlider.value} min`;
 
-[toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
+[toleranceSlider, compressionToleranceSlider, leanToleranceSlider, sinkToleranceSlider, sustainSlider, nudgeCooldownSlider, breakSlider, stillnessSlider].forEach(paintSliderTrack);
 
 toleranceSlider.addEventListener('input', () => {
   toleranceVal.textContent = toleranceSlider.value;
@@ -5061,6 +5072,11 @@ sustainSlider.addEventListener('input', () => {
   sustainVal.textContent = `${sustainSlider.value}s`;
   paintSliderTrack(sustainSlider);
   saveTuning('sustain');
+});
+nudgeCooldownSlider.addEventListener('input', () => {
+  nudgeCooldownVal.textContent = `${nudgeCooldownSlider.value}s`;
+  paintSliderTrack(nudgeCooldownSlider);
+  saveTuning('nudge_cooldown_sec');
 });
 breakSlider.addEventListener('input', () => {
   breakVal.textContent = `${breakSlider.value} min`;
@@ -5107,6 +5123,12 @@ const RESEARCH_INFO = {
     short: "Spinal tissue can start to temporarily deform (\u201ccreep\u201d) when held in one flexed position \u2014 studies put that starting somewhere between about 5 and 20+ minutes, depending on severity.",
     long: "This 45s default is a practical trigger for \u201cyou've probably drifted, worth adjusting\u201d \u2014 it isn't a literal claim that tissue creep begins at 45 seconds. The creep research itself operates on a scale of minutes, not tens of seconds; the nudge timing is deliberately conservative so you get a chance to self-correct well before that longer timescale matters.",
     source: 'Source: McGill & Brown 1992; Shin et al. 2009; Korakakis et al. 2017 (proprioception change at 10 min). Ranges vary by study.'
+  },
+  nudgeCooldown: {
+    title: 'repeat nudge gap',
+    short: "How long Plumb waits before repeating a spoken posture nudge while you stay out of plumb, so a long slouch doesn't turn into constant nagging.",
+    long: "This is the minimum gap between spoken posture nudges of any kind — leaning left, leaning right, neck dropping, sitting low and leaning in all share the one timer, so switching which way you're out of plumb doesn't get around it. It's separate from “sustained before nudge” above: that decides how long before the FIRST nudge (and when the dot's ring flips to its \"sustained\" pulse, which reacts immediately regardless of this setting); this decides the gap before a REPEAT. Set it to 0 and there is no floor left — a held slouch can nudge on nearly every frame.",
+    source: 'Source: not based on a specific study — the 30s default balances a real chance to notice the nudge against nagging during a long slouch (raised from an earlier 5s that read as relentless).'
   },
   breakInterval: {
     title: 'break reminder interval',

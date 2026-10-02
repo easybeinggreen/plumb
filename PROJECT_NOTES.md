@@ -168,6 +168,28 @@ happens automatically when the camera starts, in browsers that support it. Remov
 `const pipBtn` line. Verified: no remaining reference to `pipBtn` in the repo; the icon row now shows tour / manual /
 settings; no console errors.
 
+### Repeat nudge gap made adjustable (branch `feat/nudge-cooldown-setting`, 2026-09-29)
+
+The owner set "sustained before nudge" to 3s for demo testing and reported a nudge took ~20s to appear. Real
+cause, traced in this session: a SEPARATE, previously-hardcoded 30s minimum gap between repeated spoken posture
+nudges (`POSTURE_NUDGE_COOLDOWN_MS`), shared across all five posture types (left, right, neck, sitting low,
+lean-in) and not shown anywhere in Settings -- "sustained before nudge" only gates the FIRST nudge (and the
+dot's ring flipping to its "sustained" pulse, which is unaffected by the gap and still reacts within 3s every
+time). The owner almost certainly triggered a second nudge inside the 30s window left by the first.
+- **Now a Settings slider, "repeat nudge gap", 0-60s, default 30** (`#nudgeCooldownSlider`), read live in
+  `loop()` in place of the old constant, synced the same way as every other tolerance/timing slider (its own
+  `app_settings` column `nudge_cooldown_sec`, migration `add_nudge_cooldown_setting` already applied; existing
+  rows are null and the app treats null as the 30s default, so nobody's saved settings changed). Its "i"
+  tooltip is explicit that 0 removes the floor entirely -- a held slouch can then nudge on nearly every frame --
+  since that's a real, asked-for consequence of the 0-60 range, not a bug to silently clamp away.
+- **Verified live** with a throwaway signed-in user (row deleted afterward): the slider's default, range and
+  tooltip render correctly; moving it to 5s pushes `nudge_cooldown_sec=5` to the real database within the
+  existing 600ms debounce; a full page reload fetches it back correctly; no console errors. Paul's own row was
+  read but not written during this test (confirmed: still `nudge_cooldown_sec` null, his other demo-prep values
+  -- `sustain=3`, `tolerance=0.04` -- untouched).
+- **Not yet set for Paul specifically** -- he will get the 30s default until he opens Settings and moves the new
+  slider himself, or asks for a value to be set directly in the database ahead of the 2026-09-30 demo.
+
 ### Sign-in wording and a privacy statement (branch `feat/privacy-and-wording`, 2026-09-27)
 
 - **Sign-in title changed at the owner's request:** "who's using this?" -> "Welcome to Plumb --  please enter your
