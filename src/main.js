@@ -4,7 +4,7 @@ import { analyzeCloseup, analyzeMic, estimateDistanceCm, CLOSEUP_THRESHOLDS } fr
 import { DESK_GYM, DESK_GYM_NOTE, youtubeSearchUrl } from './deskgym.js';
 import { dotPosition } from './glyph.js';
 import { startTour } from './tour.js';
-import { isValidPin, checkName, setPin, verifyPin, nextStep, verifyMessage, setPinMessage } from './identity.js';
+import { checkName, nextStep } from './identity.js';
 import { pruneSamples, baselineFromSamples, noseRebaseDecision, parseStoredBaseline, NOSE_REBASE_SETTLE_MS } from './calibration.js';
 import { normaliseUserName, hhmmToMinutes, minutesToHhmm, minutesNow, paceStatus, paceLabel, hydrationNudgeText, shouldNudgeHydration, reminderDue, parseGoalTime, describeReminder, newPomodoroState, rolloverPomodoro, startFocus, stopPomodoro, tickPomodoro, pomodoroRemainingMs, formatMmSs, pomodoroBlocksAlert, buildDayWrap, sittingWellPct } from './companion.js';
 
@@ -2571,47 +2571,9 @@ document.getElementById('switchUserBtn').addEventListener('click', () => {
   location.reload();
 });
 
-// Not real auth -- see the comment at the top of the file. A name is just
-// stashed in localStorage; requestWindow() etc. never see it. Reloads after
-// submit so every key/query built from currentUserId picks it up cleanly,
-// rather than threading a "no user yet" state through the whole file.
-// Shows the PIN screen inside the same overlay as the name picker. `mode` is 'create' (choose a PIN, twice)
-// or 'enter'. Used by the picker, and by the one-time nudge for someone already signed in without a PIN.
-function runPinStep({ name, mode, msg, backLabel, onBack, onDone }) {
-  const $ = (id) => document.getElementById(id);
-  const pinInput = $('userPinInput'), pinConfirm = $('userPinConfirm'), pinError = $('userPinError'), pinSubmit = $('userPinSubmit');
-  $('userModalOverlay').classList.add('open');
-  $('userNameStep').hidden = true;
-  $('userPinStep').hidden = false;
-  $('userPinMsg').textContent = msg;
-  pinInput.value = ''; pinConfirm.value = ''; pinError.textContent = '';
-  pinConfirm.hidden = mode !== 'create';
-  $('userPinBack').textContent = backLabel;
-  $('userPinBack').onclick = onBack;
-  let busy = false;
-  pinSubmit.onclick = async () => {
-    if (busy) return;
-    const pin = pinInput.value.trim();
-    if (!isValidPin(pin)) { pinError.textContent = 'The PIN must be exactly 4 digits.'; return; }
-    if (mode === 'create' && pin !== pinConfirm.value.trim()) { pinError.textContent = "The two PINs don't match."; return; }
-    busy = true; pinSubmit.disabled = true; pinError.textContent = '';
-    try {
-      const res = mode === 'create' ? await setPin(SUPABASE_URL, SUPABASE_ANON_KEY, name, pin) : await verifyPin(SUPABASE_URL, SUPABASE_ANON_KEY, name, pin);
-      if (res && res.ok) { onDone(res.name || name); return; }
-      pinError.textContent = mode === 'create' ? setPinMessage(res) : verifyMessage(res);
-      pinInput.value = ''; pinConfirm.value = ''; pinInput.focus();
-    } catch (e) {
-      pinError.textContent = "Couldn't reach the server. Check your connection and try again.";
-    } finally { busy = false; pinSubmit.disabled = false; }
-  };
-  const enter = (e) => { if (e.key === 'Enter') pinSubmit.onclick(); };
-  pinInput.onkeydown = enter; pinConfirm.onkeydown = enter;
-  pinInput.focus();
-}
-
-// Not real auth -- see src/identity.js for what the PIN does and does not protect. A name is stashed in
-// localStorage; reloads after sign-in so every key/query built from currentUserId picks it up cleanly,
-// rather than threading a "no user yet" state through the whole file.
+// Not real auth -- see src/identity.js. A name is just stashed in localStorage; reloads after
+// sign-in so every key/query built from currentUserId picks it up cleanly, rather than threading
+// a "no user yet" state through the whole file.
 function showUserPicker() {
   const overlay = document.getElementById('userModalOverlay');
   const input = document.getElementById('userNameInput');
@@ -2654,18 +2616,14 @@ function showUserPicker() {
     knownList.appendChild(btn);
   });
 
-  function signIn(name) {
+  function signIn(name, isNewName) {
+    // A brand-new name gets the first-run tour (see the tour section of main.js).
+    if (isNewName) localStorage.setItem('plumb:tourPending', name);
     const knownSet = new Set(known);
     knownSet.add(name);
     localStorage.setItem('plumb:knownUsers', JSON.stringify([...knownSet]));
     localStorage.setItem('plumb:userId', name);
     location.reload();
-  }
-  function showNameStep() {
-    document.getElementById('userPinStep').hidden = true;
-    document.getElementById('userNameStep').hidden = false;
-    nameError.textContent = '';
-    input.focus();
   }
 
   let checking = false;
@@ -2678,15 +2636,8 @@ function showUserPicker() {
     try {
       const check = await checkName(SUPABASE_URL, SUPABASE_ANON_KEY, name);
       const step = nextStep(check, deviceKnows(name));
-      if (step.step === 'signin') { signIn(step.name); return; }
-      if (step.step === 'invalid' || step.step === 'blocked') { nameError.textContent = step.msg; return; }
-      nameError.textContent = '';
-      // A brand-new name gets the first-run tour once it is signed in (see the tour section of main.js).
-      const isNewName = check.status === 'new';
-      runPinStep({
-        name: step.name, mode: step.step, msg: step.msg, backLabel: 'use a different name', onBack: showNameStep,
-        onDone: (n) => { if (isNewName) localStorage.setItem('plumb:tourPending', n); signIn(n); }
-      });
+      if (step.step === 'signin') { signIn(step.name, check.status === 'new'); return; }
+      nameError.textContent = step.msg;
     } catch (e) {
       // Offline: a name this device has used before can still get in (it is this person's own device).
       if (deviceKnows(name)) { signIn(known.find((k) => String(k).toLowerCase() === name.toLowerCase())); return; }
@@ -2700,25 +2651,6 @@ function showUserPicker() {
   if (!(isPhoneOrTablet && !mobileWarningSeen)) input.focus();
 }
 
-// Someone already signed in from before PINs existed has a name with data but no PIN, which anyone could
-// claim. Ask once a day until they set one ("not now" dismisses it for today).
-async function maybeNudgePin() {
-  if (!currentUserId || !SYNC_CONFIGURED) return;
-  const flag = `plumb:${currentUserId}:pinNudge`;
-  try {
-    if (localStorage.getItem(flag) === today()) return;
-    const check = await checkName(SUPABASE_URL, SUPABASE_ANON_KEY, currentUserId);
-    if (!check || check.status !== 'unprotected') return;
-    const overlay = document.getElementById('userModalOverlay');
-    runPinStep({
-      name: check.name, mode: 'create',
-      msg: `${check.name} has no PIN yet, so anyone could sign in as you by typing your name. Choose a 4-digit PIN to keep it yours. You will need it to sign in on another device.`,
-      backLabel: 'not now',
-      onBack: () => { localStorage.setItem(flag, today()); overlay.classList.remove('open'); },
-      onDone: () => { overlay.classList.remove('open'); showToast('PIN set. Use it to sign in on any other device.'); }
-    });
-  } catch (e) { /* offline or the server is busy: try again next time */ }
-}
 settingsModalClose.addEventListener('click', () => settingsModalOverlay.classList.remove('open'));
 
 function setStatus(mode, text, caption) {
@@ -4860,7 +4792,6 @@ fetchAndApplyAppSettings();
 reconcileTodayFromCloud();
 loadWeeklyGoals();
 maybeStartTour();
-maybeNudgePin();
 checkCallStatus();
 setInterval(checkCallStatus, CALL_POLL_MS);
 setInterval(() => {
